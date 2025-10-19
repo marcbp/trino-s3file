@@ -1,2 +1,6 @@
-docker/data/
+docker/minio/data/
+docker/data
 bin/
+target/
+*.jar
+.*

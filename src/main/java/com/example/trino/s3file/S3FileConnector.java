@@ -3,8 +3,8 @@ package com.example.trino.s3file;
 import io.trino.spi.connector.Connector;
 import io.trino.spi.connector.ConnectorMetadata;
 import io.trino.spi.connector.ConnectorSession;
-import io.trino.spi.connector.ConnectorSplit;
 import io.trino.spi.connector.ConnectorSplitManager;
+import com.example.trino.s3file.S3FileLogger;
 import io.trino.spi.connector.ConnectorSplitSource;
 import io.trino.spi.connector.ConnectorTableHandle;
 import io.trino.spi.connector.ConnectorTransactionHandle;
@@ -12,10 +12,9 @@ import io.trino.spi.connector.Constraint;
 import io.trino.spi.connector.DynamicFilter;
 import io.trino.spi.connector.FixedSplitSource;
 import io.trino.spi.function.FunctionProvider;
-import com.example.trino.s3file.S3FileLogger;
 import io.trino.spi.function.table.ConnectorTableFunction;
-import io.trino.spi.function.table.TableFunctionProcessorProvider;
 import io.trino.spi.function.table.ConnectorTableFunctionHandle;
+import io.trino.spi.function.table.TableFunctionProcessorProvider;
 import io.trino.spi.transaction.IsolationLevel;
 
 import java.util.Optional;
@@ -23,8 +22,12 @@ import java.util.Set;
 
 import static java.util.Objects.requireNonNull;
 
+/**
+ * Connector exposing the CSV table function backed by S3.
+ */
 public final class S3FileConnector implements Connector {
     private static final S3FileLogger LOG = S3FileLogger.get(S3FileConnector.class);
+
     private final S3CsvService csvService;
     private final S3FileTableFunction tableFunction;
     private final FunctionProvider functionProvider;
@@ -37,7 +40,7 @@ public final class S3FileConnector implements Connector {
     public S3FileConnector(S3CsvService csvService) {
         this.csvService = requireNonNull(csvService, "csvService is null");
         this.tableFunction = new S3FileTableFunction(csvService);
-        this.functionProvider = new InlineFunctionProvider(tableFunction);
+        this.functionProvider = new InlineFunctionProvider();
         this.splitManager = new InlineSplitManager();
     }
 
@@ -48,7 +51,7 @@ public final class S3FileConnector implements Connector {
 
     @Override
     public ConnectorMetadata getMetadata(ConnectorSession session, ConnectorTransactionHandle transactionHandle) {
-        return new InlineMetadata();
+        return InlineMetadata.INSTANCE;
     }
 
     @Override
@@ -75,23 +78,20 @@ public final class S3FileConnector implements Connector {
         INSTANCE
     }
 
+    private static final class InlineMetadata implements ConnectorMetadata {
+        private static final InlineMetadata INSTANCE = new InlineMetadata();
+    }
+
     private final class InlineFunctionProvider implements FunctionProvider {
-        private final S3FileTableFunction tableFunction;
-
-        private InlineFunctionProvider(S3FileTableFunction tableFunction) {
-            this.tableFunction = tableFunction;
-        }
-
         @Override
         public TableFunctionProcessorProvider getTableFunctionProcessorProvider(ConnectorTableFunctionHandle functionHandle) {
             if (!(functionHandle instanceof S3FileTableFunction.Handle handle)) {
                 throw new IllegalArgumentException("Unexpected handle type: " + functionHandle.getClass().getName());
             }
+            LOG.info("Supplying processor provider for s3file path {}", handle.getS3Path());
             return tableFunction.createProcessorProvider();
         }
     }
-
-    private static final class InlineMetadata implements ConnectorMetadata {}
 
     private final class InlineSplitManager implements ConnectorSplitManager {
         @Override
@@ -109,4 +109,3 @@ public final class S3FileConnector implements Connector {
         }
     }
 }
-

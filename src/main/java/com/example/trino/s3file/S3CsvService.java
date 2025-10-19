@@ -44,8 +44,7 @@ public final class S3CsvService implements Closeable {
         this.s3Client = requireNonNull(s3Client, "s3Client is null");
     }
 
-    public List<String> inferColumnNames(String s3Uri, char delimiter) {
-        LOG.info("Inferring schema for {}", s3Uri);
+    public List<String> inferColumnNames(String s3Uri, char delimiter, boolean headerPresent) {
         LOG.info("Inferring schema for {}", s3Uri);
         try (BufferedReader reader = openReader(s3Uri)) {
             String header = reader.readLine();
@@ -55,17 +54,28 @@ public final class S3CsvService implements Closeable {
             }
             String[] tokens = parseCsvLine(header, delimiter);
             List<String> columns = new ArrayList<>();
-            for (String token : tokens) {
-                if (token == null) {
-                    continue;
+            if (headerPresent) {
+                for (String token : tokens) {
+                    if (token == null) {
+                        continue;
+                    }
+                    String trimmed = token.trim();
+                    if (!trimmed.isEmpty()) {
+                        columns.add(trimmed);
+                    }
                 }
-                String trimmed = token.trim();
-                if (!trimmed.isEmpty()) {
-                    columns.add(trimmed);
+                if (columns.isEmpty()) {
+                    throw new IllegalArgumentException("No column detected in CSV header: " + s3Uri);
                 }
             }
-            if (columns.isEmpty()) {
-                throw new IllegalArgumentException("No column detected in CSV header: " + s3Uri);
+            else {
+                LOG.info("Header disabled; generating default column names");
+                for (int i = 0; i < tokens.length; i++) {
+                    columns.add("column_" + (i + 1));
+                }
+                if (columns.isEmpty()) {
+                    throw new IllegalArgumentException("Unable to infer column count from first row: " + s3Uri);
+                }
             }
             return List.copyOf(columns);
         }

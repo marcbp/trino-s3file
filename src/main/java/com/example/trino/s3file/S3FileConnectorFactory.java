@@ -12,7 +12,7 @@ import java.util.Map;
 public final class S3FileConnectorFactory implements ConnectorFactory {
     @Override
     public String getName() {
-        return "s3_file";
+        return "s3file";
     }
 
     @Override

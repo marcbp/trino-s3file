@@ -20,9 +20,9 @@ import io.trino.spi.function.table.ScalarArgument;
 import io.trino.spi.function.table.ScalarArgumentSpecification;
 import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.function.table.TableFunctionDataProcessor;
-import io.trino.spi.function.table.TableFunctionSplitProcessor;
 import io.trino.spi.function.table.TableFunctionProcessorProvider;
 import io.trino.spi.function.table.TableFunctionProcessorState;
+import io.trino.spi.function.table.TableFunctionSplitProcessor;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 import io.trino.spi.connector.ConnectorSession;
@@ -46,8 +46,8 @@ public final class S3FileTableFunction extends AbstractConnectorTableFunction {
 
     public S3FileTableFunction(S3CsvService csvService) {
         super(
-                "system",
-                "test",
+                "csv",
+                "load",
                 List.of(
                         ScalarArgumentSpecification.builder()
                                 .name(PATH_ARGUMENT)
@@ -57,6 +57,11 @@ public final class S3FileTableFunction extends AbstractConnectorTableFunction {
                                 .name(DELIMITER_ARGUMENT)
                                 .type(VarcharType.VARCHAR)
                                 .defaultValue(Slices.utf8Slice(";"))
+                                .build(),
+                        ScalarArgumentSpecification.builder()
+                                .name("HEADER")
+                                .type(VarcharType.VARCHAR)
+                                .defaultValue(Slices.utf8Slice("true"))
                                 .build()
                 ),
                 ReturnTypeSpecification.GenericTable.GENERIC_TABLE);
@@ -87,8 +92,17 @@ public final class S3FileTableFunction extends AbstractConnectorTableFunction {
             delimiter = (char) delimiterSlice.getByte(0);
         }
 
-        LOG.info("Analyzing CSV table function for path {} with delimiter {}", s3Path, delimiter);
-        List<String> columnNames = csvService.inferColumnNames(s3Path, delimiter);
+        LOG.info("Analyzing load table function for path {} with delimiter {}", s3Path, delimiter);
+        boolean headerPresent = true;
+        ScalarArgument headerArg = (ScalarArgument) arguments.get("HEADER");
+        if (headerArg != null && headerArg.getValue() instanceof Slice headerSlice) {
+            String headerText = headerSlice.toStringUtf8();
+            LOG.info("HEADER argument value: {}", headerText);
+            headerPresent = Boolean.parseBoolean(headerText.trim());
+        }
+        LOG.info("Header present: {}", headerPresent);
+
+        List<String> columnNames = csvService.inferColumnNames(s3Path, delimiter, headerPresent);
         LOG.info("Detected {} columns: {}", columnNames.size(), columnNames);
         List<Type> columnTypes = columnNames.stream()
                 .map(name -> (Type) VarcharType.createUnboundedVarcharType())
@@ -97,7 +111,7 @@ public final class S3FileTableFunction extends AbstractConnectorTableFunction {
 
         return TableFunctionAnalysis.builder()
                 .returnedType(descriptor)
-                .handle(new Handle(s3Path, columnNames, delimiter, null))
+                .handle(new Handle(s3Path, columnNames, delimiter, headerPresent, null))
                 .build();
     }
 
@@ -113,22 +127,26 @@ public final class S3FileTableFunction extends AbstractConnectorTableFunction {
         return new SplitProcessor(new Processor(csvService, handle));
     }
 
+
     public static final class Handle implements ConnectorTableFunctionHandle {
         private static final int DEFAULT_BATCH_SIZE = 1024;
 
         private final String s3Path;
         private final List<String> columns;
         private final char delimiter;
+        private final boolean headerPresent;
         private final Integer batchSize;
 
         @JsonCreator
         public Handle(@JsonProperty("s3Path") String s3Path,
                       @JsonProperty("columns") List<String> columns,
                       @JsonProperty("delimiter") char delimiter,
+                      @JsonProperty("header") boolean headerPresent,
                       @JsonProperty("batchSize") Integer batchSize) {
             this.s3Path = requireNonNull(s3Path, "s3Path is null");
             this.columns = List.copyOf(requireNonNull(columns, "columns is null"));
             this.delimiter = delimiter;
+            this.headerPresent = headerPresent;
             this.batchSize = batchSize;
         }
 
@@ -145,6 +163,11 @@ public final class S3FileTableFunction extends AbstractConnectorTableFunction {
         @JsonProperty
         public char getDelimiter() {
             return delimiter;
+        }
+
+        @JsonProperty("header")
+        public boolean isHeaderPresent() {
+            return headerPresent;
         }
 
         @JsonProperty
@@ -186,9 +209,9 @@ public final class S3FileTableFunction extends AbstractConnectorTableFunction {
             if (!(functionHandle instanceof Handle csvHandle)) {
                 throw new IllegalArgumentException("Unexpected handle type: " + functionHandle.getClass().getName());
             }
-            LOG.info("Creating split processor for path {}", csvHandle.getS3Path());
             return new SplitProcessor(new Processor(csvService, csvHandle));
         }
+
     }
 
     private static final class Processor implements TableFunctionDataProcessor {
@@ -258,7 +281,10 @@ public final class S3FileTableFunction extends AbstractConnectorTableFunction {
             LOG.info("Opening CSV stream for path {}", handle.getS3Path());
             reader = csvService.openReader(handle.getS3Path());
             try {
-                reader.readLine();
+                if (handle.isHeaderPresent()) {
+                    String header = reader.readLine();
+                    LOG.info("Skipped CSV header for path {}: {}", handle.getS3Path(), header);
+                }
             }
             catch (IOException e) {
                 LOG.error("Unable to read CSV header for path {}", handle.getS3Path(), e);
@@ -317,15 +343,17 @@ public final class S3FileTableFunction extends AbstractConnectorTableFunction {
     }
 
     private static final class SplitProcessor implements TableFunctionSplitProcessor {
-        private final Processor delegate;
+        private final Processor processor;
 
-        private SplitProcessor(Processor delegate) {
-            this.delegate = delegate;
+        private SplitProcessor(Processor processor) {
+            this.processor = requireNonNull(processor, "processor is null");
         }
 
         @Override
         public TableFunctionProcessorState process() {
-            return delegate.process(List.of());
+            TableFunctionProcessorState state = processor.process(null);
+            return state;
         }
     }
+
 }
