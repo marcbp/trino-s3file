@@ -1,5 +1,7 @@
 package marcbp.trino.s3file;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import io.trino.spi.connector.Connector;
 import io.trino.spi.connector.ConnectorMetadata;
 import io.trino.spi.connector.ConnectorSession;
@@ -30,7 +32,7 @@ import static java.util.Objects.requireNonNull;
  * Connector exposing table functions backed by S3.
  */
 public final class S3FileConnector implements Connector {
-    private static final S3FileLogger LOG = S3FileLogger.get(S3FileConnector.class);
+    private static final Logger LOG = LoggerFactory.getLogger(S3FileConnector.class);
 
     private final S3ObjectService s3ObjectService;
     private final CsvProcessingService csvProcessingService;

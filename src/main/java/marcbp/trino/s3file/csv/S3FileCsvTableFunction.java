@@ -2,7 +2,8 @@ package marcbp.trino.s3file.csv;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import marcbp.trino.s3file.S3FileLogger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import marcbp.trino.s3file.S3ObjectService;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
@@ -39,7 +40,7 @@ import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static java.util.Objects.requireNonNull;
 
 public final class S3FileCsvTableFunction extends AbstractConnectorTableFunction {
-    private static final S3FileLogger LOG = S3FileLogger.get(S3FileCsvTableFunction.class);
+    private static final Logger LOG = LoggerFactory.getLogger(S3FileCsvTableFunction.class);
     private static final String PATH_ARGUMENT = "PATH";
     private static final String DELIMITER_ARGUMENT = "DELIMITER";
 

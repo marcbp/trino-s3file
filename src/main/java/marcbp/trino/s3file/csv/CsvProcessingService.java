@@ -2,13 +2,14 @@ package marcbp.trino.s3file.csv;
 
 import com.opencsv.CSVParser;
 import com.opencsv.CSVParserBuilder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.List;
-
-import marcbp.trino.s3file.S3FileLogger;
 
 import static java.util.Objects.requireNonNull;
 
@@ -16,7 +17,7 @@ import static java.util.Objects.requireNonNull;
  * Encapsulates CSV parsing helpers used by the connector.
  */
 public final class CsvProcessingService {
-    private static final S3FileLogger LOG = S3FileLogger.get(CsvProcessingService.class);
+    private static final Logger LOG = LoggerFactory.getLogger(CsvProcessingService.class);
 
     public List<String> inferColumnNames(BufferedReader reader, String sourceDescription, char delimiter, boolean headerPresent) {
         requireNonNull(reader, "reader is null");

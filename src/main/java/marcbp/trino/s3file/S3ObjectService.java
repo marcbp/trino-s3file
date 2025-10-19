@@ -1,5 +1,7 @@
 package marcbp.trino.s3file;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
@@ -30,7 +32,7 @@ import static java.util.Objects.requireNonNull;
  * Provides low-level S3 access helpers shared by the table functions.
  */
 public final class S3ObjectService implements Closeable {
-    private static final S3FileLogger LOG = S3FileLogger.get(S3ObjectService.class);
+    private static final Logger LOG = LoggerFactory.getLogger(S3ObjectService.class);
     private static final Pattern S3_URI = Pattern.compile("s3://([^/]+)/(.+)");
 
     private final S3Client s3Client;

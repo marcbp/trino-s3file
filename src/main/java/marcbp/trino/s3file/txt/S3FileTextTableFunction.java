@@ -2,7 +2,8 @@ package marcbp.trino.s3file.txt;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import marcbp.trino.s3file.S3FileLogger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import marcbp.trino.s3file.S3ObjectService;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
@@ -43,7 +44,7 @@ import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static java.util.Objects.requireNonNull;
 
 public final class S3FileTextTableFunction extends AbstractConnectorTableFunction {
-    private static final S3FileLogger LOG = S3FileLogger.get(S3FileTextTableFunction.class);
+    private static final Logger LOG = LoggerFactory.getLogger(S3FileTextTableFunction.class);
     private static final String PATH_ARGUMENT = "PATH";
     private static final String LINE_BREAK_ARGUMENT = "LINE_BREAK";
     private static final int DEFAULT_BATCH_SIZE = 1024;
