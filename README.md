@@ -8,6 +8,31 @@ A lightweight Trino connector that treats S3-compatible storage as a "schema on 
 docker compose up --build
 ```
 
+## Connect with CLI
+
+Use the Trino CLI bundled in the container:
+
+```bash
+docker compose exec -it trino trino --server http://localhost:8080
+```
+
+Once connected you can run the examples below.
+
+## Seed Sample Files
+
+Populate MinIO with demo data after the containers are up:
+
+```bash
+# create a bucket for the demo data
+aws --endpoint-url http://localhost:9000 s3 mb s3://mybucket
+
+# upload sample CSV (used by csv.load example)
+aws --endpoint-url http://localhost:9000 s3 cp docker/examples/example.csv s3://mybucket/data.csv
+
+# upload sample text file (used by txt.load example)
+aws --endpoint-url http://localhost:9000 s3 cp docker/examples/messages.txt s3://mybucket/messages.txt
+```
+
 ## csv.load Table Function
 
 ```sql

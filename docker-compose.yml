@@ -7,9 +7,9 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./docker/data:/var/trino/data
-      - ./docker/etc/catalog:/etc/trino/catalog
-      - ./docker/csv:/data/csv
+      - ./docker/data/trino:/var/trino/data
+      # - ./docker/etc/catalog:/etc/trino/catalog
+      # - ./docker/examples:/data/examples
     environment:
       AWS_ACCESS_KEY_ID: minio
       AWS_SECRET_ACCESS_KEY: minio123
@@ -30,5 +30,5 @@ services:
       - "9000:9000"
       - "9001:9001"
     volumes:
-      - ./docker/minio/data:/data
+      - ./docker/data/minio:/data
     restart: unless-stopped
