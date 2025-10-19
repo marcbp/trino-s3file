@@ -1,0 +1,4 @@
+connector.name=s3_file
+# Ajoutez ici les propriétés de configuration de votre connecteur.
+# Copiez ce fichier en `s3_file.properties` une fois que `S3FileConnectorFactory#create`
+# renvoie réellement un connecteur fonctionnel.
