@@ -1,45 +1,12 @@
 # Trino s3file Plugin
 
-A lightweight Trino connector that treats S3-compatible storage as a "schema on read" lake. It lets you query raw CSV and text files without provisioning an external catalog: metadata (column names, types, splits) are inferred at runtime directly from each object. Two table functions are exposed for ad-hoc exploration, data validation, or lightweight ingestion pipelines.
+A Trino connector for ad-hoc exploration, validation, or lightweight ingestion of S3 object files :
 
-## Build and Run
+- **Schema inference on read**: metadata are inferred at runtime from each object.
+- **Parameterized table functions**: pass delimiters, headers, and other parsing tweaks per query without redeploying.
+- **Distributed processing of large inputs**: byte-range splits stream big CSV/TXT files in parallel across workers.
 
-```bash
-docker compose up --build
-```
-
-## Run Tests 
-
-```bash
-docker compose run --rm tests mvn test
-```
-
-## Connect with CLI
-
-Use the Trino CLI bundled in the container:
-
-```bash
-docker compose exec -it trino trino --server http://localhost:8080
-```
-
-Once connected you can run the examples below.
-
-## Seed Sample Files
-
-Populate MinIO with demo data after the containers are up:
-
-```bash
-# create a bucket for the demo data
-aws --endpoint-url http://localhost:9000 s3 mb s3://mybucket
-
-# upload sample CSV (used by csv.load example)
-aws --endpoint-url http://localhost:9000 s3 cp docker/examples/example.csv s3://mybucket/data.csv
-
-# upload sample text file (used by txt.load example)
-aws --endpoint-url http://localhost:9000 s3 cp docker/examples/messages.txt s3://mybucket/messages.txt
-```
-
-## csv.load Table Function
+## Load CSV files
 
 ```sql
 SELECT *
@@ -58,7 +25,7 @@ FROM TABLE(
 
 The function returns all values as `VARCHAR`; cast in SQL as needed.
 
-## txt.load Table Function
+## Load TXT files
 
 ```sql
 SELECT *
@@ -74,3 +41,43 @@ FROM TABLE(
 - `line_break` (optional, default `'\n'`): string separator used to split the file into rows.
 
 The function yields a single `VARCHAR` column named `line` containing each record in order.
+
+## Quickstart
+
+### Build and Run
+
+```bash
+docker compose up --build
+```
+
+### Run Tests 
+
+```bash
+docker compose run --rm tests mvn test
+```
+
+### Connect with CLI
+
+Use the Trino CLI bundled in the container:
+
+```bash
+docker compose exec -it trino trino --server http://localhost:8080
+```
+
+Once connected you can run the examples below.
+
+### Seed Sample Files
+
+Populate MinIO with demo data after the containers are up:
+
+```bash
+# create a bucket for the demo data
+aws --endpoint-url http://localhost:9000 s3 mb s3://mybucket
+
+# upload sample CSV (used by csv.load example)
+aws --endpoint-url http://localhost:9000 s3 cp docker/examples/example.csv s3://mybucket/data.csv
+
+# upload sample text file (used by txt.load example)
+aws --endpoint-url http://localhost:9000 s3 cp docker/examples/messages.txt s3://mybucket/messages.txt
+```
+

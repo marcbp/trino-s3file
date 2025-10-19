@@ -2,6 +2,7 @@ package marcbp.trino.s3file.csv;
 
 import io.airlift.slice.Slices;
 import io.trino.spi.connector.ConnectorSession;
+import io.trino.spi.connector.ConnectorSplit;
 import io.trino.spi.connector.ConnectorTransactionHandle;
 import io.trino.spi.function.table.Argument;
 import io.trino.spi.function.table.Descriptor;
@@ -18,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -44,6 +46,7 @@ class S3FileCsvTableFunctionTest {
     void analyzeInfersColumnsFromHeader() {
         when(s3ObjectService.openReader(eq(PATH))).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("first;second\n1;2\n")));
+        when(s3ObjectService.getObjectSize(PATH)).thenReturn(64L);
 
         Map<String, Argument> arguments = Map.of(
                 "PATH", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PATH))
@@ -60,6 +63,8 @@ class S3FileCsvTableFunctionTest {
         assertEquals(List.of("first", "second"), handle.getColumns());
         assertTrue(handle.isHeaderPresent());
         assertEquals(1024, handle.batchSizeOrDefault());
+        assertEquals(64L, handle.getFileSize());
+        assertEquals(8 * 1024 * 1024, handle.getSplitSizeBytes());
 
         Descriptor expectedDescriptor = Descriptor.descriptor(
                 List.of("first", "second"),
@@ -67,12 +72,14 @@ class S3FileCsvTableFunctionTest {
         assertEquals(expectedDescriptor, analysis.getReturnedType().orElseThrow());
 
         verify(s3ObjectService).openReader(PATH);
+        verify(s3ObjectService).getObjectSize(PATH);
     }
 
     @Test
     void analyzeWithoutHeaderGeneratesDefaultColumns() {
         when(s3ObjectService.openReader(eq(PATH))).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("value1;value2;value3\n1;2;3\n")));
+        when(s3ObjectService.getObjectSize(PATH)).thenReturn(64L);
 
         Map<String, Argument> arguments = Map.of(
                 "PATH", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PATH)),
@@ -88,6 +95,7 @@ class S3FileCsvTableFunctionTest {
         S3FileCsvTableFunction.Handle handle = (S3FileCsvTableFunction.Handle) analysis.getHandle();
         assertEquals(List.of("column_1", "column_2", "column_3"), handle.getColumns());
         assertTrue(handle.batchSizeOrDefault() > 0);
+        assertEquals(64L, handle.getFileSize());
 
         Descriptor expectedDescriptor = Descriptor.descriptor(
                 List.of("column_1", "column_2", "column_3"),
@@ -98,5 +106,29 @@ class S3FileCsvTableFunctionTest {
         assertEquals(expectedDescriptor, analysis.getReturnedType().orElseThrow());
 
         verify(s3ObjectService).openReader(PATH);
+        verify(s3ObjectService).getObjectSize(PATH);
+    }
+
+    @Test
+    void createSplitsGeneratesMultipleRanges() {
+        S3FileCsvTableFunction.Handle handle = new S3FileCsvTableFunction.Handle(
+                PATH,
+                List.of("c1", "c2"),
+                ';',
+                true,
+                null,
+                25 * 1024 * 1024L,
+                8 * 1024 * 1024);
+
+        List<ConnectorSplit> splits = function.createSplits(handle);
+
+        assertEquals(4, splits.size());
+        S3FileCsvTableFunction.Split first = (S3FileCsvTableFunction.Split) splits.get(0);
+        assertEquals(0, first.getStartOffset());
+        assertTrue(first.isFirst());
+        assertFalse(first.isLast());
+        S3FileCsvTableFunction.Split last = (S3FileCsvTableFunction.Split) splits.get(splits.size() - 1);
+        assertTrue(last.isLast());
+        assertTrue(last.getStartOffset() < handle.getFileSize());
     }
 }
