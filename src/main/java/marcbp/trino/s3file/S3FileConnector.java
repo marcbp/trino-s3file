@@ -1,10 +1,9 @@
-package com.example.trino.s3file;
+package marcbp.trino.s3file;
 
 import io.trino.spi.connector.Connector;
 import io.trino.spi.connector.ConnectorMetadata;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorSplitManager;
-import com.example.trino.s3file.S3FileLogger;
 import io.trino.spi.connector.ConnectorSplitSource;
 import io.trino.spi.connector.ConnectorTableHandle;
 import io.trino.spi.connector.ConnectorTransactionHandle;
@@ -16,6 +15,9 @@ import io.trino.spi.function.table.ConnectorTableFunction;
 import io.trino.spi.function.table.ConnectorTableFunctionHandle;
 import io.trino.spi.function.table.TableFunctionProcessorProvider;
 import io.trino.spi.transaction.IsolationLevel;
+import marcbp.trino.s3file.csv.CsvProcessingService;
+import marcbp.trino.s3file.csv.S3FileCsvTableFunction;
+import marcbp.trino.s3file.txt.S3FileTextTableFunction;
 
 import java.util.Optional;
 import java.util.Set;
@@ -23,23 +25,27 @@ import java.util.Set;
 import static java.util.Objects.requireNonNull;
 
 /**
- * Connector exposing the CSV table function backed by S3.
+ * Connector exposing table functions backed by S3.
  */
 public final class S3FileConnector implements Connector {
     private static final S3FileLogger LOG = S3FileLogger.get(S3FileConnector.class);
 
-    private final S3CsvService csvService;
-    private final S3FileTableFunction tableFunction;
+    private final S3ObjectService s3ObjectService;
+    private final CsvProcessingService csvProcessingService;
+    private final S3FileCsvTableFunction csvTableFunction;
+    private final S3FileTextTableFunction textTableFunction;
     private final FunctionProvider functionProvider;
     private final ConnectorSplitManager splitManager;
 
     public S3FileConnector() {
-        this(new S3CsvService());
+        this(new S3ObjectService(), new CsvProcessingService());
     }
 
-    public S3FileConnector(S3CsvService csvService) {
-        this.csvService = requireNonNull(csvService, "csvService is null");
-        this.tableFunction = new S3FileTableFunction(csvService);
+    public S3FileConnector(S3ObjectService s3ObjectService, CsvProcessingService csvProcessingService) {
+        this.s3ObjectService = requireNonNull(s3ObjectService, "s3ObjectService is null");
+        this.csvProcessingService = requireNonNull(csvProcessingService, "csvProcessingService is null");
+        this.csvTableFunction = new S3FileCsvTableFunction(s3ObjectService, csvProcessingService);
+        this.textTableFunction = new S3FileTextTableFunction(s3ObjectService);
         this.functionProvider = new InlineFunctionProvider();
         this.splitManager = new InlineSplitManager();
     }
@@ -56,7 +62,7 @@ public final class S3FileConnector implements Connector {
 
     @Override
     public Set<ConnectorTableFunction> getTableFunctions() {
-        return Set.of(tableFunction);
+        return Set.of(csvTableFunction, textTableFunction);
     }
 
     @Override
@@ -71,7 +77,7 @@ public final class S3FileConnector implements Connector {
 
     @Override
     public void shutdown() {
-        csvService.close();
+        s3ObjectService.close();
     }
 
     private enum TransactionHandle implements ConnectorTransactionHandle {
@@ -85,22 +91,30 @@ public final class S3FileConnector implements Connector {
     private final class InlineFunctionProvider implements FunctionProvider {
         @Override
         public TableFunctionProcessorProvider getTableFunctionProcessorProvider(ConnectorTableFunctionHandle functionHandle) {
-            if (!(functionHandle instanceof S3FileTableFunction.Handle handle)) {
-                throw new IllegalArgumentException("Unexpected handle type: " + functionHandle.getClass().getName());
+            if (functionHandle instanceof S3FileCsvTableFunction.Handle csvHandle) {
+                LOG.info("Supplying CSV processor provider for path {}", csvHandle.getS3Path());
+                return csvTableFunction.createProcessorProvider();
             }
-            LOG.info("Supplying processor provider for s3file path {}", handle.getS3Path());
-            return tableFunction.createProcessorProvider();
+            if (functionHandle instanceof S3FileTextTableFunction.Handle textHandle) {
+                LOG.info("Supplying text processor provider for path {}", textHandle.getS3Path());
+                return textTableFunction.createProcessorProvider();
+            }
+            throw new IllegalArgumentException("Unexpected handle type: " + functionHandle.getClass().getName());
         }
     }
 
     private final class InlineSplitManager implements ConnectorSplitManager {
         @Override
         public ConnectorSplitSource getSplits(ConnectorTransactionHandle transactionHandle, ConnectorSession session, ConnectorTableFunctionHandle functionHandle) {
-            if (!(functionHandle instanceof S3FileTableFunction.Handle handle)) {
-                throw new IllegalArgumentException("Unexpected handle type: " + functionHandle.getClass().getName());
+            if (functionHandle instanceof S3FileCsvTableFunction.Handle csvHandle) {
+                LOG.info("Providing single CSV split for path {}", csvHandle.getS3Path());
+                return new FixedSplitSource(csvTableFunction.createSplit());
             }
-            LOG.info("Providing single split for path {}", handle.getS3Path());
-            return new FixedSplitSource(tableFunction.createSplit());
+            if (functionHandle instanceof S3FileTextTableFunction.Handle textHandle) {
+                LOG.info("Providing single text split for path {}", textHandle.getS3Path());
+                return new FixedSplitSource(textTableFunction.createSplit());
+            }
+            throw new IllegalArgumentException("Unexpected handle type: " + functionHandle.getClass().getName());
         }
 
         @Override

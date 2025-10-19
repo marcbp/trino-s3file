@@ -1,4 +1,4 @@
-package com.example.trino.s3file;
+package marcbp.trino.s3file;
 
 import io.trino.spi.Plugin;
 import io.trino.spi.connector.ConnectorFactory;

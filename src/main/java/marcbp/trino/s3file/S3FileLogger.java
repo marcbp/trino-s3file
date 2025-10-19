@@ -1,4 +1,4 @@
-package com.example.trino.s3file;
+package marcbp.trino.s3file;
 
 import java.util.Arrays;
 import java.util.Locale;

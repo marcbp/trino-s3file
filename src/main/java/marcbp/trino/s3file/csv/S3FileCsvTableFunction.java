@@ -1,8 +1,9 @@
-package com.example.trino.s3file;
+package marcbp.trino.s3file.csv;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.example.trino.s3file.S3FileLogger;
+import marcbp.trino.s3file.S3FileLogger;
+import marcbp.trino.s3file.S3ObjectService;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
 import io.trino.spi.Page;
@@ -37,14 +38,15 @@ import java.util.Optional;
 import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static java.util.Objects.requireNonNull;
 
-public final class S3FileTableFunction extends AbstractConnectorTableFunction {
-    private static final S3FileLogger LOG = S3FileLogger.get(S3FileTableFunction.class);
+public final class S3FileCsvTableFunction extends AbstractConnectorTableFunction {
+    private static final S3FileLogger LOG = S3FileLogger.get(S3FileCsvTableFunction.class);
     private static final String PATH_ARGUMENT = "PATH";
     private static final String DELIMITER_ARGUMENT = "DELIMITER";
 
-    private final S3CsvService csvService;
+    private final S3ObjectService s3ObjectService;
+    private final CsvProcessingService csvProcessingService;
 
-    public S3FileTableFunction(S3CsvService csvService) {
+    public S3FileCsvTableFunction(S3ObjectService s3ObjectService, CsvProcessingService csvProcessingService) {
         super(
                 "csv",
                 "load",
@@ -65,7 +67,8 @@ public final class S3FileTableFunction extends AbstractConnectorTableFunction {
                                 .build()
                 ),
                 ReturnTypeSpecification.GenericTable.GENERIC_TABLE);
-        this.csvService = requireNonNull(csvService, "csvService is null");
+        this.s3ObjectService = requireNonNull(s3ObjectService, "s3ObjectService is null");
+        this.csvProcessingService = requireNonNull(csvProcessingService, "csvProcessingService is null");
     }
 
     @Override
@@ -102,7 +105,14 @@ public final class S3FileTableFunction extends AbstractConnectorTableFunction {
         }
         LOG.info("Header present: {}", headerPresent);
 
-        List<String> columnNames = csvService.inferColumnNames(s3Path, delimiter, headerPresent);
+        List<String> columnNames;
+        try (BufferedReader reader = s3ObjectService.openReader(s3Path)) {
+            columnNames = csvProcessingService.inferColumnNames(reader, s3Path, delimiter, headerPresent);
+        }
+        catch (IOException e) {
+            LOG.error("Failed to infer column names for {}", s3Path, e);
+            throw new UncheckedIOException("Failed to infer column names", e);
+        }
         LOG.info("Detected {} columns: {}", columnNames.size(), columnNames);
         List<Type> columnTypes = columnNames.stream()
                 .map(name -> (Type) VarcharType.createUnboundedVarcharType())
@@ -116,7 +126,7 @@ public final class S3FileTableFunction extends AbstractConnectorTableFunction {
     }
 
     public TableFunctionProcessorProvider createProcessorProvider() {
-        return new ProcessorProvider(csvService);
+        return new ProcessorProvider(s3ObjectService, csvProcessingService);
     }
 
     public ConnectorSplit createSplit() {
@@ -124,7 +134,7 @@ public final class S3FileTableFunction extends AbstractConnectorTableFunction {
     }
 
     public TableFunctionSplitProcessor createSplitProcessor(Handle handle) {
-        return new SplitProcessor(new Processor(csvService, handle));
+        return new SplitProcessor(new Processor(s3ObjectService, csvProcessingService, handle));
     }
 
 
@@ -189,10 +199,12 @@ public final class S3FileTableFunction extends AbstractConnectorTableFunction {
     }
 
     private static final class ProcessorProvider implements TableFunctionProcessorProvider {
-        private final S3CsvService csvService;
+        private final S3ObjectService s3ObjectService;
+        private final CsvProcessingService csvProcessingService;
 
-        private ProcessorProvider(S3CsvService csvService) {
-            this.csvService = csvService;
+        private ProcessorProvider(S3ObjectService s3ObjectService, CsvProcessingService csvProcessingService) {
+            this.s3ObjectService = s3ObjectService;
+            this.csvProcessingService = csvProcessingService;
         }
 
         @Override
@@ -201,7 +213,7 @@ public final class S3FileTableFunction extends AbstractConnectorTableFunction {
                 throw new IllegalArgumentException("Unexpected handle type: " + handle.getClass().getName());
             }
             LOG.info("Creating data processor for path {}", csvHandle.getS3Path());
-            return new Processor(csvService, csvHandle);
+            return new Processor(s3ObjectService, csvProcessingService, csvHandle);
         }
 
         @Override
@@ -209,21 +221,23 @@ public final class S3FileTableFunction extends AbstractConnectorTableFunction {
             if (!(functionHandle instanceof Handle csvHandle)) {
                 throw new IllegalArgumentException("Unexpected handle type: " + functionHandle.getClass().getName());
             }
-            return new SplitProcessor(new Processor(csvService, csvHandle));
+            return new SplitProcessor(new Processor(s3ObjectService, csvProcessingService, csvHandle));
         }
 
     }
 
     private static final class Processor implements TableFunctionDataProcessor {
-        private final S3CsvService csvService;
+        private final S3ObjectService s3ObjectService;
+        private final CsvProcessingService csvProcessingService;
         private final Handle handle;
         private final List<Type> columnTypes;
         private BufferedReader reader;
         private boolean finished;
 
-        private Processor(S3CsvService csvService, Handle handle) {
+        private Processor(S3ObjectService s3ObjectService, CsvProcessingService csvProcessingService, Handle handle) {
             LOG.debug("Creating processor for path {}", handle.getS3Path());
-            this.csvService = csvService;
+            this.s3ObjectService = s3ObjectService;
+            this.csvProcessingService = csvProcessingService;
             this.handle = handle;
             this.columnTypes = handle.resolveColumnTypes();
         }
@@ -250,7 +264,7 @@ public final class S3FileTableFunction extends AbstractConnectorTableFunction {
                         LOG.debug("Skipping blank line in CSV for path {}", handle.getS3Path());
                         continue;
                     }
-                    String[] values = csvService.parseCsvLine(line, handle.getDelimiter());
+                    String[] values = csvProcessingService.parseCsvLine(line, handle.getDelimiter());
                     LOG.debug("Appending row with {} values for path {}", values.length, handle.getS3Path());
                     appendRow(pageBuilder, values);
                 }
@@ -279,7 +293,7 @@ public final class S3FileTableFunction extends AbstractConnectorTableFunction {
                 return;
             }
             LOG.info("Opening CSV stream for path {}", handle.getS3Path());
-            reader = csvService.openReader(handle.getS3Path());
+            reader = s3ObjectService.openReader(handle.getS3Path());
             try {
                 if (handle.isHeaderPresent()) {
                     String header = reader.readLine();
