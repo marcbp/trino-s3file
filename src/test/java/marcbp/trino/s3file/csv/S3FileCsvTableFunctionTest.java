@@ -25,6 +25,9 @@ import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+/**
+ * Unit tests that exercise the CSV table function's analysis workflow.
+ */
 class S3FileCsvTableFunctionTest {
     private static final String PATH = "s3://bucket/data.csv";
 

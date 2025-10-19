@@ -9,6 +9,9 @@ import java.util.stream.StreamSupport;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
+/**
+ * Verifies the plugin exposes the expected connector factory.
+ */
 class S3FilePluginTest {
     @Test
     void exposesSingleConnectorFactory() {

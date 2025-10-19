@@ -39,6 +39,9 @@ import java.util.Optional;
 import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static java.util.Objects.requireNonNull;
 
+/**
+ * Table function that reads CSV data from S3-compatible storage, inferring columns on the fly.
+ */
 public final class S3FileCsvTableFunction extends AbstractConnectorTableFunction {
     private static final Logger LOG = LoggerFactory.getLogger(S3FileCsvTableFunction.class);
     private static final String PATH_ARGUMENT = "PATH";

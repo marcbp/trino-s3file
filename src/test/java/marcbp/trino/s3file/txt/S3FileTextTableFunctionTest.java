@@ -24,6 +24,9 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+/**
+ * Unit tests covering analysis and split creation for the text table function.
+ */
 class S3FileTextTableFunctionTest {
     private static final String PATH = "s3://bucket/messages.txt";
 

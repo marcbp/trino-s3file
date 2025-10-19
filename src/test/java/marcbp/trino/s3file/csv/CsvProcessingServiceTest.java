@@ -9,6 +9,9 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+/**
+ * Unit tests for the CSV helper service used by the connector.
+ */
 class CsvProcessingServiceTest {
     private final CsvProcessingService service = new CsvProcessingService();
 

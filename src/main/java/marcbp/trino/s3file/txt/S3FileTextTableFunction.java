@@ -43,6 +43,9 @@ import java.util.Optional;
 import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static java.util.Objects.requireNonNull;
 
+/**
+ * Table function that streams plain text files from S3-compatible storage as rows for Trino.
+ */
 public final class S3FileTextTableFunction extends AbstractConnectorTableFunction {
     private static final Logger LOG = LoggerFactory.getLogger(S3FileTextTableFunction.class);
     private static final String PATH_ARGUMENT = "PATH";
@@ -277,7 +280,6 @@ public final class S3FileTextTableFunction extends AbstractConnectorTableFunctio
         private final long primaryLength;
         private BufferedReader reader;
         private boolean finished;
-        private boolean endOfFile;
         private boolean skipFirstLine;
         private long bytesWithinPrimary;
 
@@ -356,7 +358,6 @@ public final class S3FileTextTableFunction extends AbstractConnectorTableFunctio
             while (true) {
                 String line = reader.readLine();
                 if (line == null) {
-                    endOfFile = true;
                     return null;
                 }
                 long lineBytes = calculateLineBytes(line);
