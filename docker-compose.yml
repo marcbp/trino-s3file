@@ -30,3 +30,14 @@ services:
     volumes:
       - ./docker/data/minio:/data
     restart: unless-stopped
+
+  tests:
+    image: maven:3.9.11-eclipse-temurin-25
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+      - maven-repo:/root/.m2
+    command: mvn test
+
+volumes:
+  maven-repo:

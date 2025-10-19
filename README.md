@@ -8,6 +8,12 @@ A lightweight Trino connector that treats S3-compatible storage as a "schema on 
 docker compose up --build
 ```
 
+## Run Tests 
+
+```bash
+docker compose run --rm tests mvn test
+```
+
 ## Connect with CLI
 
 Use the Trino CLI bundled in the container:
