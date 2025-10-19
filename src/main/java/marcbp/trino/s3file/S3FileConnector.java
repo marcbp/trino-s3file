@@ -5,6 +5,7 @@ import io.trino.spi.connector.ConnectorMetadata;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorSplitManager;
 import io.trino.spi.connector.ConnectorSplitSource;
+import io.trino.spi.connector.ConnectorSplit;
 import io.trino.spi.connector.ConnectorTableHandle;
 import io.trino.spi.connector.ConnectorTransactionHandle;
 import io.trino.spi.connector.Constraint;
@@ -21,6 +22,7 @@ import marcbp.trino.s3file.txt.S3FileTextTableFunction;
 
 import java.util.Optional;
 import java.util.Set;
+import java.util.List;
 
 import static java.util.Objects.requireNonNull;
 
@@ -107,12 +109,14 @@ public final class S3FileConnector implements Connector {
         @Override
         public ConnectorSplitSource getSplits(ConnectorTransactionHandle transactionHandle, ConnectorSession session, ConnectorTableFunctionHandle functionHandle) {
             if (functionHandle instanceof S3FileCsvTableFunction.Handle csvHandle) {
-                LOG.info("Providing single CSV split for path {}", csvHandle.getS3Path());
-                return new FixedSplitSource(csvTableFunction.createSplit());
+                List<ConnectorSplit> splits = csvTableFunction.createSplits(csvHandle);
+                LOG.info("Providing {} CSV split(s) for path {}", splits.size(), csvHandle.getS3Path());
+                return new FixedSplitSource(splits);
             }
             if (functionHandle instanceof S3FileTextTableFunction.Handle textHandle) {
-                LOG.info("Providing single text split for path {}", textHandle.getS3Path());
-                return new FixedSplitSource(textTableFunction.createSplit());
+                List<ConnectorSplit> splits = textTableFunction.createSplits(textHandle);
+                LOG.info("Providing {} text split(s) for path {}", splits.size(), textHandle.getS3Path());
+                return new FixedSplitSource(splits);
             }
             throw new IllegalArgumentException("Unexpected handle type: " + functionHandle.getClass().getName());
         }

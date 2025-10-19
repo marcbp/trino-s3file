@@ -11,6 +11,8 @@ import software.amazon.awssdk.services.s3.S3ClientBuilder;
 import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
+import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
+import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 
 import java.io.BufferedReader;
 import java.io.Closeable;
@@ -42,14 +44,37 @@ public final class S3ObjectService implements Closeable {
     }
 
     public BufferedReader openReader(String s3Uri) {
+        return openReader(s3Uri, 0, null);
+    }
+
+    public BufferedReader openReader(String s3Uri, long start, Long endExclusive) {
         S3Location location = parseLocation(s3Uri);
-        GetObjectRequest request = GetObjectRequest.builder()
+        GetObjectRequest.Builder builder = GetObjectRequest.builder()
                 .bucket(location.bucket())
-                .key(location.key())
-                .build();
-        ResponseInputStream<GetObjectResponse> stream = s3Client.getObject(request);
+                .key(location.key());
+        if (start > 0 || (endExclusive != null && endExclusive >= 0)) {
+            if (endExclusive != null && endExclusive < start) {
+                endExclusive = start;
+            }
+            StringBuilder range = new StringBuilder("bytes=").append(start).append("-");
+            if (endExclusive != null && endExclusive >= 0) {
+                long inclusiveEnd = Math.max(start, endExclusive - 1);
+                range.append(inclusiveEnd);
+            }
+            builder.range(range.toString());
+        }
+        ResponseInputStream<GetObjectResponse> stream = s3Client.getObject(builder.build());
         LOG.info("Opened S3 object {}/{}", location.bucket(), location.key());
         return new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8));
+    }
+
+    public long getObjectSize(String s3Uri) {
+        S3Location location = parseLocation(s3Uri);
+        HeadObjectResponse response = s3Client.headObject(HeadObjectRequest.builder()
+                .bucket(location.bucket())
+                .key(location.key())
+                .build());
+        return response.contentLength();
     }
 
     @Override

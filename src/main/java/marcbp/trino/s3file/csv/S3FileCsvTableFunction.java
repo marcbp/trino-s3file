@@ -126,14 +126,14 @@ public final class S3FileCsvTableFunction extends AbstractConnectorTableFunction
     }
 
     public TableFunctionProcessorProvider createProcessorProvider() {
-        return new ProcessorProvider(s3ObjectService, csvProcessingService);
+        return new ProcessorProvider();
     }
 
-    public ConnectorSplit createSplit() {
-        return new Split();
+    public List<ConnectorSplit> createSplits(Handle handle) {
+        return List.of(new Split());
     }
 
-    public TableFunctionSplitProcessor createSplitProcessor(Handle handle) {
+    public TableFunctionSplitProcessor createSplitProcessor(Handle handle, ConnectorSplit split) {
         return new SplitProcessor(new Processor(s3ObjectService, csvProcessingService, handle));
     }
 
@@ -198,14 +198,7 @@ public final class S3FileCsvTableFunction extends AbstractConnectorTableFunction
         }
     }
 
-    private static final class ProcessorProvider implements TableFunctionProcessorProvider {
-        private final S3ObjectService s3ObjectService;
-        private final CsvProcessingService csvProcessingService;
-
-        private ProcessorProvider(S3ObjectService s3ObjectService, CsvProcessingService csvProcessingService) {
-            this.s3ObjectService = s3ObjectService;
-            this.csvProcessingService = csvProcessingService;
-        }
+    private final class ProcessorProvider implements TableFunctionProcessorProvider {
 
         @Override
         public TableFunctionDataProcessor getDataProcessor(ConnectorSession session, ConnectorTableFunctionHandle handle) {
@@ -221,7 +214,10 @@ public final class S3FileCsvTableFunction extends AbstractConnectorTableFunction
             if (!(functionHandle instanceof Handle csvHandle)) {
                 throw new IllegalArgumentException("Unexpected handle type: " + functionHandle.getClass().getName());
             }
-            return new SplitProcessor(new Processor(s3ObjectService, csvProcessingService, csvHandle));
+            if (!(split instanceof Split csvSplit)) {
+                throw new IllegalArgumentException("Unexpected split type: " + split.getClass().getName());
+            }
+            return createSplitProcessor(csvHandle, csvSplit);
         }
 
     }
