@@ -3,11 +3,11 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>marcbp.trino</groupId>
-    <artifactId>s3-file-plugin</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <groupId>marcbp</groupId>
+    <artifactId>trino-s3file</artifactId>
+    <version>0.1</version>
     <name>S3 File Trino Plugin</name>
-    <description>Starter project for building a Trino table function plugin in Java.</description>
+    <description>Trino connector exposing raw files stored in S3 storage.</description>
     <packaging>trino-plugin</packaging>
 
     <properties>
