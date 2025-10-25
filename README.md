@@ -19,7 +19,7 @@ FROM TABLE(
 
 - `path` (required): location of a newline-delimited JSON (NDJSON) object stream.
 
-Fields are inferred from the first JSON object and emitted as `VARCHAR` columns. Values keep their textual form for easy casting in SQL.
+Fields and types are inferred from the first JSON object: booleans map to `boolean`, integral numbers to `bigint`, floating numbers to `double`, nested objects/arrays stay as JSON text (`varchar`), and other values remain `varchar`.
 
 ## Load CSV files
 
