@@ -6,9 +6,6 @@ import io.trino.spi.connector.ConnectorFactory;
 
 import java.util.Map;
 
-/**
- * Fabrique du connecteur S3File : elle instancie un connecteur minimal qui expose uniquement une table function.
- */
 public final class S3FileConnectorFactory implements ConnectorFactory {
     @Override
     public String getName() {

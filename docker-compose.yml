@@ -38,6 +38,8 @@ services:
       - .:/workspace
       - maven-repo:/root/.m2
     command: mvn test
+    profiles:
+      - tests
 
 volumes:
   maven-repo:

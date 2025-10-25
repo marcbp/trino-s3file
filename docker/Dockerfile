@@ -5,9 +5,8 @@ COPY pom.xml ./
 RUN mvn -B -DskipTests dependency:go-offline
 
 COPY src ./src
-RUN mvn -B -DskipTests package
+RUN mvn -B -DskipTests package && ls -l target/
 
 FROM trinodb/trino:476
-ARG PLUGIN_NAME=s3file
-COPY --from=builder /workspace/target/trino-s3file-0.1.0-SNAPSHOT /usr/lib/trino/plugin/${PLUGIN_NAME}
+COPY --from=builder /workspace/target/trino-s3file /usr/lib/trino/plugin/s3file
 COPY docker/etc /etc/trino

@@ -34,11 +34,6 @@ jobs:
           VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Create release archive
-        run: |
-          cd target
-          zip -r "trino-s3file-${{ steps.version.outputs.version }}.zip" "trino-s3file-${{ steps.version.outputs.version }}"
-
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v1
         with:
