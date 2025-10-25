@@ -59,6 +59,7 @@ public final class S3FileJsonTableFunction extends AbstractConnectorTableFunctio
     private static final Logger LOG = LoggerFactory.getLogger(S3FileJsonTableFunction.class);
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final String PATH_ARGUMENT = "PATH";
+    private static final String ADDITIONAL_COLUMNS_ARGUMENT = "ADDITIONAL_COLUMNS";
     private static final int DEFAULT_BATCH_SIZE = 512;
     private static final int DEFAULT_SPLIT_SIZE_BYTES = 8 * 1024 * 1024;
     private static final int LOOKAHEAD_BYTES = 256 * 1024;
@@ -74,6 +75,11 @@ public final class S3FileJsonTableFunction extends AbstractConnectorTableFunctio
                         ScalarArgumentSpecification.builder()
                                 .name(PATH_ARGUMENT)
                                 .type(VarcharType.VARCHAR)
+                                .build(),
+                        ScalarArgumentSpecification.builder()
+                                .name(ADDITIONAL_COLUMNS_ARGUMENT)
+                                .type(VarcharType.VARCHAR)
+                                .defaultValue(Slices.utf8Slice(""))
                                 .build()
                 ),
                 ReturnTypeSpecification.GenericTable.GENERIC_TABLE);
@@ -107,8 +113,11 @@ public final class S3FileJsonTableFunction extends AbstractConnectorTableFunctio
             throw new UncheckedIOException("Failed to inspect JSON data", e);
         }
 
-        List<String> columnNames = columnsMetadata.names();
-        List<ColumnType> detectedTypes = columnsMetadata.types();
+        List<ColumnDefinition> additionalColumns = parseAdditionalColumns(arguments);
+
+        List<String> columnNames = new ArrayList<>(columnsMetadata.names());
+        List<ColumnType> detectedTypes = new ArrayList<>(columnsMetadata.types());
+        mergeAdditionalColumns(columnNames, detectedTypes, additionalColumns);
         LOG.info("Detected {} JSON field(s) for path {}: {}", columnNames.size(), s3Path, describeColumns(columnNames, detectedTypes));
         List<Type> columnTypes = new ArrayList<>(detectedTypes.size());
         for (ColumnType columnType : detectedTypes) {
@@ -184,6 +193,54 @@ public final class S3FileJsonTableFunction extends AbstractConnectorTableFunctio
         throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "No JSON object found in " + path);
     }
 
+    private static List<ColumnDefinition> parseAdditionalColumns(Map<String, Argument> arguments) {
+        Argument argument = arguments.get(ADDITIONAL_COLUMNS_ARGUMENT);
+        if (!(argument instanceof ScalarArgument scalarArgument)) {
+            return List.of();
+        }
+        Object value = scalarArgument.getValue();
+        if (!(value instanceof Slice slice)) {
+            return List.of();
+        }
+        String specification = slice.toStringUtf8().trim();
+        if (specification.isEmpty()) {
+            return List.of();
+        }
+        List<ColumnDefinition> result = new ArrayList<>();
+        String[] tokens = specification.split(",");
+        for (String token : tokens) {
+            String entry = token.trim();
+            if (entry.isEmpty()) {
+                continue;
+            }
+            int separator = entry.indexOf(':');
+            if (separator <= 0 || separator == entry.length() - 1) {
+                throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "Invalid additional column specification: " + entry);
+            }
+            String name = entry.substring(0, separator).trim();
+            String typeToken = entry.substring(separator + 1).trim();
+            if (name.isEmpty() || typeToken.isEmpty()) {
+                throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "Invalid additional column specification: " + entry);
+            }
+            ColumnType columnType = ColumnType.fromSpecification(typeToken);
+            result.add(new ColumnDefinition(name, columnType));
+        }
+        return List.copyOf(result);
+    }
+
+    private static void mergeAdditionalColumns(List<String> names, List<ColumnType> types, List<ColumnDefinition> additionalColumns) {
+        for (ColumnDefinition definition : additionalColumns) {
+            int existingIndex = names.indexOf(definition.name());
+            if (existingIndex >= 0) {
+                types.set(existingIndex, definition.type());
+            }
+            else {
+                names.add(definition.name());
+                types.add(definition.type());
+            }
+        }
+    }
+
     private static ColumnType inferColumnType(JsonNode node) {
         if (node == null || node.isNull()) {
             return ColumnType.VARCHAR;
@@ -196,6 +253,11 @@ public final class S3FileJsonTableFunction extends AbstractConnectorTableFunctio
         }
         if (node.isNumber()) {
             return ColumnType.DOUBLE;
+        }
+        if (node.isContainerNode()) {
+            // Trino does not expose io.trino.spi.type.JsonType via the SPI,
+            // so the connector cannot produce native JSON blocks. Fall back to text.
+            return ColumnType.VARCHAR;
         }
         return ColumnType.VARCHAR;
     }
@@ -215,6 +277,13 @@ public final class S3FileJsonTableFunction extends AbstractConnectorTableFunctio
             if (names.size() != types.size()) {
                 throw new IllegalArgumentException("Column names and types must have the same size");
             }
+        }
+    }
+
+    private record ColumnDefinition(String name, ColumnType type) {
+        private ColumnDefinition {
+            name = requireNonNull(name, "name is null");
+            type = requireNonNull(type, "type is null");
         }
     }
 
@@ -268,6 +337,17 @@ public final class S3FileJsonTableFunction extends AbstractConnectorTableFunctio
         }
 
         abstract void write(BlockBuilder blockBuilder, JsonNode node);
+
+        static ColumnType fromSpecification(String value) {
+            String normalized = value.trim().toUpperCase(Locale.ROOT);
+            return switch (normalized) {
+                case "BOOLEAN", "BOOL" -> BOOLEAN;
+                case "BIGINT", "LONG", "INT64" -> BIGINT;
+                case "DOUBLE", "FLOAT", "DECIMAL" -> DOUBLE;
+                case "VARCHAR", "STRING", "JSON", "TEXT" -> VARCHAR;
+                default -> throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "Unsupported additional column type: " + value);
+            };
+        }
     }
 
     private static ObjectNode parseObject(String json, String path) {
