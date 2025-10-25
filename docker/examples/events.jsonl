@@ -1,0 +1,3 @@
+{"event_id":1,"user":"alice","amount":19.5}
+{"event_id":2,"user":"bob","amount":7.0,"metadata":{"source":"app"}}
+{"event_id":3,"user":"carol"}

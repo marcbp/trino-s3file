@@ -4,7 +4,22 @@ A Trino connector for ad-hoc exploration, validation, or lightweight ingestion o
 
 - **Schema inference on read**: metadata are inferred at runtime from each object.
 - **Parameterized table functions**: pass delimiters, headers, and other parsing tweaks per query without redeploying.
-- **Distributed processing of large inputs**: byte-range splits stream big CSV/TXT files in parallel across workers.
+- **Distributed processing of large inputs**: byte-range splits stream big CSV/TXT/JSON files in parallel across workers.
+
+## Load JSON files
+
+```sql
+SELECT *
+FROM TABLE(
+    s3file.json.load(
+        path => 's3://mybucket/events.jsonl'
+    )
+);
+```
+
+- `path` (required): location of a newline-delimited JSON (NDJSON) object stream.
+
+Fields are inferred from the first JSON object and emitted as `VARCHAR` columns. Values keep their textual form for easy casting in SQL.
 
 ## Load CSV files
 
@@ -77,7 +92,9 @@ aws --endpoint-url http://localhost:9000 s3 mb s3://mybucket
 # upload sample CSV (used by csv.load example)
 aws --endpoint-url http://localhost:9000 s3 cp docker/examples/example.csv s3://mybucket/data.csv
 
+# upload sample JSON stream (used by json.load example)
+aws --endpoint-url http://localhost:9000 s3 cp docker/examples/events.jsonl s3://mybucket/events.jsonl
+
 # upload sample text file (used by txt.load example)
 aws --endpoint-url http://localhost:9000 s3 cp docker/examples/messages.txt s3://mybucket/messages.txt
 ```
-
