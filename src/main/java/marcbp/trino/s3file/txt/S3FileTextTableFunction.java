@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import marcbp.trino.s3file.S3ObjectService;
+import marcbp.trino.s3file.util.S3ObjectService;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
 import io.trino.spi.Page;
@@ -40,6 +40,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import marcbp.trino.s3file.util.CharsetUtils;
+
 import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static java.util.Objects.requireNonNull;
 
@@ -50,6 +52,7 @@ public final class S3FileTextTableFunction extends AbstractConnectorTableFunctio
     private static final Logger LOG = LoggerFactory.getLogger(S3FileTextTableFunction.class);
     private static final String PATH_ARGUMENT = "PATH";
     private static final String LINE_BREAK_ARGUMENT = "LINE_BREAK";
+    private static final String ENCODING_ARGUMENT = "ENCODING";
     private static final int DEFAULT_BATCH_SIZE = 1024;
     private static final int DEFAULT_SPLIT_SIZE_BYTES = 8 * 1024 * 1024;
     private static final int LOOKAHEAD_BYTES = 256 * 1024;
@@ -69,6 +72,11 @@ public final class S3FileTextTableFunction extends AbstractConnectorTableFunctio
                                 .name(LINE_BREAK_ARGUMENT)
                                 .type(VarcharType.VARCHAR)
                                 .defaultValue(Slices.utf8Slice("\n"))
+                                .build(),
+                        ScalarArgumentSpecification.builder()
+                                .name(ENCODING_ARGUMENT)
+                                .type(VarcharType.VARCHAR)
+                                .defaultValue(Slices.utf8Slice(StandardCharsets.UTF_8.name()))
                                 .build()
                 ),
                 ReturnTypeSpecification.GenericTable.GENERIC_TABLE);
@@ -93,6 +101,7 @@ public final class S3FileTextTableFunction extends AbstractConnectorTableFunctio
             throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "PATH cannot be blank");
         }
 
+        Charset charset = CharsetUtils.resolve(arguments, ENCODING_ARGUMENT);
         String lineBreak = "\n";
         ScalarArgument lineBreakArg = (ScalarArgument) arguments.get(LINE_BREAK_ARGUMENT);
         if (lineBreakArg != null && lineBreakArg.getValue() instanceof Slice delimiterSlice) {
@@ -112,7 +121,7 @@ public final class S3FileTextTableFunction extends AbstractConnectorTableFunctio
 
         return TableFunctionAnalysis.builder()
                 .returnedType(descriptor)
-                .handle(new Handle(s3Path, lineBreak, null, fileSize, DEFAULT_SPLIT_SIZE_BYTES))
+                .handle(new Handle(s3Path, lineBreak, null, fileSize, DEFAULT_SPLIT_SIZE_BYTES, charset.name()))
                 .build();
     }
 
@@ -199,18 +208,21 @@ public final class S3FileTextTableFunction extends AbstractConnectorTableFunctio
         private final Integer batchSize;
         private final long fileSize;
         private final int splitSizeBytes;
+        private final String charsetName;
 
         @JsonCreator
         public Handle(@JsonProperty("s3Path") String s3Path,
                       @JsonProperty("lineBreak") String lineBreak,
                       @JsonProperty("batchSize") Integer batchSize,
                       @JsonProperty("fileSize") long fileSize,
-                      @JsonProperty("splitSizeBytes") int splitSizeBytes) {
+                      @JsonProperty("splitSizeBytes") int splitSizeBytes,
+                      @JsonProperty("charset") String charsetName) {
             this.s3Path = requireNonNull(s3Path, "s3Path is null");
             this.lineBreak = requireNonNull(lineBreak, "lineBreak is null");
             this.batchSize = batchSize;
             this.fileSize = fileSize;
             this.splitSizeBytes = splitSizeBytes;
+            this.charsetName = (charsetName == null || charsetName.isBlank()) ? StandardCharsets.UTF_8.name() : charsetName;
         }
 
         @JsonProperty
@@ -238,12 +250,21 @@ public final class S3FileTextTableFunction extends AbstractConnectorTableFunctio
             return splitSizeBytes;
         }
 
+        @JsonProperty("charset")
+        public String getCharsetName() {
+            return charsetName;
+        }
+
         public List<Type> resolveColumnTypes() {
             return List.of(VarcharType.createUnboundedVarcharType());
         }
 
         public int batchSizeOrDefault() {
             return batchSize == null ? DEFAULT_BATCH_SIZE : batchSize;
+        }
+
+        public Charset charset() {
+            return CharsetUtils.resolve(charsetName);
         }
     }
     private final class ProcessorProvider implements TableFunctionProcessorProvider {
@@ -275,7 +296,7 @@ public final class S3FileTextTableFunction extends AbstractConnectorTableFunctio
         private final Split split;
         private final List<Type> columnTypes;
         private final VarcharType outputType;
-        private final Charset charset = StandardCharsets.UTF_8;
+        private final Charset charset;
         private final byte[] lineBreakBytes;
         private final long primaryLength;
         private BufferedReader reader;
@@ -289,7 +310,8 @@ public final class S3FileTextTableFunction extends AbstractConnectorTableFunctio
             this.split = split != null ? split : Split.forWholeFile(handle.getFileSize());
             this.columnTypes = handle.resolveColumnTypes();
             this.outputType = (VarcharType) columnTypes.get(0);
-            this.lineBreakBytes = handle.getLineBreak().getBytes(StandardCharsets.UTF_8);
+            this.charset = handle.charset();
+            this.lineBreakBytes = handle.getLineBreak().getBytes(charset);
             // If the split does not start at byte 0 we skip the first line, because it was already
             //                  terminated by the previous split (or the header read during analysis).
             this.skipFirstLine = this.split.getStartOffset() > 0;
@@ -351,7 +373,7 @@ public final class S3FileTextTableFunction extends AbstractConnectorTableFunctio
                 return;
             }
             LOG.info("Opening text stream for path {} (split {}-{})", handle.getS3Path(), split.getStartOffset(), split.getRangeEndExclusive());
-            reader = s3ObjectService.openReader(handle.getS3Path(), split.getStartOffset(), split.getRangeEndExclusive());
+            reader = s3ObjectService.openReader(handle.getS3Path(), split.getStartOffset(), split.getRangeEndExclusive(), charset);
         }
 
         private LineRead nextRecord() throws IOException {

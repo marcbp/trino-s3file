@@ -11,16 +11,19 @@ import io.trino.spi.type.BigintType;
 import io.trino.spi.type.BooleanType;
 import io.trino.spi.type.DoubleType;
 import io.trino.spi.type.VarcharType;
-import marcbp.trino.s3file.S3ObjectService;
+import marcbp.trino.s3file.util.S3ObjectService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.io.BufferedReader;
 import java.io.StringReader;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.reset;
@@ -40,7 +43,7 @@ class S3FileJsonTableFunctionTest {
 
     @Test
     void analyzeInfersTypesFromFirstDocument() {
-        when(s3ObjectService.openReader(eq(PATH))).thenAnswer(invocation ->
+        when(s3ObjectService.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("""
                         {"event_id":1,"active":true,"amount":12.5,"meta":{"source":"app"},"note":"hello"}
                         {"event_id":2,"active":false,"amount":7.0,"note":"bye"}
@@ -72,14 +75,15 @@ class S3FileJsonTableFunctionTest {
         assertEquals(PATH, handle.getS3Path());
         assertEquals(expectedDescriptor, Descriptor.descriptor(handle.getColumns(), handle.resolveColumnTypes()));
         assertEquals(512L, handle.getFileSize());
+        assertEquals(StandardCharsets.UTF_8.name(), handle.getCharsetName());
 
-        verify(s3ObjectService).openReader(PATH);
+        verify(s3ObjectService).openReader(eq(PATH), any(Charset.class));
         verify(s3ObjectService).getObjectSize(PATH);
     }
 
     @Test
     void analyzeAppliesAdditionalColumns() {
-        when(s3ObjectService.openReader(eq(PATH))).thenAnswer(invocation ->
+        when(s3ObjectService.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("""
                         {"event_id":1}
                         {"event_id":2,"campaign":"spring","score":42.5}
@@ -88,7 +92,8 @@ class S3FileJsonTableFunctionTest {
 
         Map<String, Argument> arguments = Map.of(
                 "PATH", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PATH)),
-                "ADDITIONAL_COLUMNS", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice("campaign:varchar,score:double"))
+                "ADDITIONAL_COLUMNS", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice("campaign:varchar,score:double")),
+                "ENCODING", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice("ISO-8859-1"))
         );
 
         TableFunctionAnalysis analysis = function.analyze(
@@ -111,8 +116,9 @@ class S3FileJsonTableFunctionTest {
         assertEquals(
                 List.of(BigintType.BIGINT, VarcharType.createUnboundedVarcharType(), DoubleType.DOUBLE),
                 handle.resolveColumnTypes());
+        assertEquals("ISO-8859-1", handle.getCharsetName());
 
-        verify(s3ObjectService).openReader(PATH);
+        verify(s3ObjectService).openReader(eq(PATH), any(Charset.class));
         verify(s3ObjectService).getObjectSize(PATH);
     }
 }

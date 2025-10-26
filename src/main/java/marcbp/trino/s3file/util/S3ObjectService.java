@@ -1,4 +1,4 @@
-package marcbp.trino.s3file;
+package marcbp.trino.s3file.util;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +22,7 @@ import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
+import java.nio.charset.Charset;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -46,10 +47,18 @@ public final class S3ObjectService implements Closeable {
     }
 
     public BufferedReader openReader(String s3Uri) {
-        return openReader(s3Uri, 0, null);
+        return openReader(s3Uri, StandardCharsets.UTF_8);
+    }
+
+    public BufferedReader openReader(String s3Uri, Charset charset) {
+        return openReader(s3Uri, 0, null, charset);
     }
 
     public BufferedReader openReader(String s3Uri, long start, Long endExclusive) {
+        return openReader(s3Uri, start, endExclusive, StandardCharsets.UTF_8);
+    }
+
+    public BufferedReader openReader(String s3Uri, long start, Long endExclusive, Charset charset) {
         S3Location location = parseLocation(s3Uri);
         GetObjectRequest.Builder builder = GetObjectRequest.builder()
                 .bucket(location.bucket())
@@ -67,7 +76,7 @@ public final class S3ObjectService implements Closeable {
         }
         ResponseInputStream<GetObjectResponse> stream = s3Client.getObject(builder.build());
         LOG.info("Opened S3 object {}/{}", location.bucket(), location.key());
-        return new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8));
+        return new BufferedReader(new InputStreamReader(stream, charset));
     }
 
     public long getObjectSize(String s3Uri) {

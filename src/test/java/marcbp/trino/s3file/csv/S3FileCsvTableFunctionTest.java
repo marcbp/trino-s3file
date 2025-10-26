@@ -9,18 +9,21 @@ import io.trino.spi.function.table.Descriptor;
 import io.trino.spi.function.table.ScalarArgument;
 import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.type.VarcharType;
-import marcbp.trino.s3file.S3ObjectService;
+import marcbp.trino.s3file.util.S3ObjectService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.io.BufferedReader;
 import java.io.StringReader;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.reset;
@@ -44,7 +47,7 @@ class S3FileCsvTableFunctionTest {
 
     @Test
     void analyzeInfersColumnsFromHeader() {
-        when(s3ObjectService.openReader(eq(PATH))).thenAnswer(invocation ->
+        when(s3ObjectService.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("first;second\n1;2\n")));
         when(s3ObjectService.getObjectSize(PATH)).thenReturn(64L);
 
@@ -65,19 +68,20 @@ class S3FileCsvTableFunctionTest {
         assertEquals(1024, handle.batchSizeOrDefault());
         assertEquals(64L, handle.getFileSize());
         assertEquals(8 * 1024 * 1024, handle.getSplitSizeBytes());
+        assertEquals(StandardCharsets.UTF_8.name(), handle.getCharsetName());
 
         Descriptor expectedDescriptor = Descriptor.descriptor(
                 List.of("first", "second"),
                 List.of(VarcharType.createUnboundedVarcharType(), VarcharType.createUnboundedVarcharType()));
         assertEquals(expectedDescriptor, analysis.getReturnedType().orElseThrow());
 
-        verify(s3ObjectService).openReader(PATH);
+        verify(s3ObjectService).openReader(eq(PATH), any(Charset.class));
         verify(s3ObjectService).getObjectSize(PATH);
     }
 
     @Test
     void analyzeWithoutHeaderGeneratesDefaultColumns() {
-        when(s3ObjectService.openReader(eq(PATH))).thenAnswer(invocation ->
+        when(s3ObjectService.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("value1;value2;value3\n1;2;3\n")));
         when(s3ObjectService.getObjectSize(PATH)).thenReturn(64L);
 
@@ -96,6 +100,7 @@ class S3FileCsvTableFunctionTest {
         assertEquals(List.of("column_1", "column_2", "column_3"), handle.getColumns());
         assertTrue(handle.batchSizeOrDefault() > 0);
         assertEquals(64L, handle.getFileSize());
+        assertEquals(StandardCharsets.UTF_8.name(), handle.getCharsetName());
 
         Descriptor expectedDescriptor = Descriptor.descriptor(
                 List.of("column_1", "column_2", "column_3"),
@@ -105,7 +110,7 @@ class S3FileCsvTableFunctionTest {
                         VarcharType.createUnboundedVarcharType()));
         assertEquals(expectedDescriptor, analysis.getReturnedType().orElseThrow());
 
-        verify(s3ObjectService).openReader(PATH);
+        verify(s3ObjectService).openReader(eq(PATH), any(Charset.class));
         verify(s3ObjectService).getObjectSize(PATH);
     }
 
@@ -118,7 +123,8 @@ class S3FileCsvTableFunctionTest {
                 true,
                 null,
                 25 * 1024 * 1024L,
-                8 * 1024 * 1024);
+                8 * 1024 * 1024,
+                StandardCharsets.UTF_8.name());
 
         List<ConnectorSplit> splits = function.createSplits(handle);
 

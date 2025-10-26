@@ -10,9 +10,10 @@ import io.trino.spi.function.table.ScalarArgument;
 import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
-import marcbp.trino.s3file.S3ObjectService;
+import marcbp.trino.s3file.util.S3ObjectService;
 import org.junit.jupiter.api.Test;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
@@ -60,7 +61,8 @@ class S3FileTextTableFunctionTest {
                 "\n",
                 null,
                 10,
-                4);
+                4,
+                StandardCharsets.UTF_8.name());
 
         List<ConnectorSplit> splits = function.createSplits(handle);
 
@@ -96,6 +98,7 @@ class S3FileTextTableFunctionTest {
         assertEquals(expectedSize, handle.getFileSize());
         assertEquals(8 * 1024 * 1024, handle.getSplitSizeBytes());
         assertEquals(1024, handle.batchSizeOrDefault());
+        assertEquals(StandardCharsets.UTF_8.name(), handle.getCharsetName());
         List<Type> columnTypes = handle.resolveColumnTypes();
         assertEquals(1, columnTypes.size());
         assertEquals(VarcharType.createUnboundedVarcharType(), columnTypes.get(0));

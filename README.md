@@ -1,10 +1,10 @@
 # Trino s3file Plugin
 
-A Trino connector for ad-hoc exploration, validation, or lightweight ingestion of S3 object files :
+A Trino connector for ad-hoc exploration, validation, or lightweight ingestion of JSON/CSV/TXT S3 object files :
 
 - **Schema inference on read**: metadata are inferred at runtime from each object.
-- **Parameterized table functions**: pass delimiters, headers, and other parsing tweaks per query without redeploying.
-- **Distributed processing of large inputs**: byte-range splits stream big CSV/TXT/JSON files in parallel across workers.
+- **Parameterized table functions**: pass parsing tweaks per query without redeploying.
+- **Distributed processing**: workers stream byte ranges concurrently so oversized files stay readable.
 
 ## Load JSON files
 
@@ -12,12 +12,14 @@ A Trino connector for ad-hoc exploration, validation, or lightweight ingestion o
 SELECT *
 FROM TABLE(
     s3file.json.load(
-        path => 's3://mybucket/events.jsonl'
+        path => 's3://mybucket/events.jsonl',
+        encoding => 'UTF-8'      -- override when the file is not UTF-8
     )
 );
 ```
 
 - `path` (required): location of a newline-delimited JSON (NDJSON) object stream.
+- `encoding` (optional, default `'UTF-8'`): override the charset used when decoding the object.
 - `additional_columns` (optional): comma-separated list of `name:type` pairs for fields that might not appear in the first JSON object. Types currently supported: `boolean`, `bigint`, `double`, `varchar`. Duplicate names override the inferred type.
 
 Fields and types are inferred from the first JSON object: booleans map to `boolean`, integral numbers to `bigint`, floating numbers to `double`, nested objects/arrays stay as JSON text (`varchar`), and other values remain `varchar`.
@@ -30,7 +32,8 @@ FROM TABLE(
     s3file.csv.load(
         path => 's3://mybucket/data.csv',
         delimiter => ';',
-        header => 'true'  -- set to 'false' when the CSV has no header row
+        header => 'true',        -- set to 'false' when the CSV has no header row
+        encoding => 'UTF-8'      -- override when the file is not UTF-8
     )
 );
 ```
@@ -38,6 +41,7 @@ FROM TABLE(
 - `path` (required): CSV location in S3/MinIO.
 - `delimiter` (optional, default `';'`): single character separator.
 - `header` (optional, default `'true'`): when `'false'`, the first row is treated as data and column names default to `column_1`, `column_2`, …
+- `encoding` (optional, default `'UTF-8'`): character set for decoding the file.
 
 The function returns all values as `VARCHAR`; cast in SQL as needed.
 
@@ -48,13 +52,15 @@ SELECT *
 FROM TABLE(
     s3file.txt.load(
         path => 's3://mybucket/messages.txt',
-        line_break => '\n'  -- override with '\r\n' or any custom separator
+        line_break => '\n',  -- override with '\r\n' or any custom separator
+        encoding => 'UTF-8'  -- override when the file is not UTF-8
     )
 );
 ```
 
 - `path` (required): text file location in S3/MinIO.
 - `line_break` (optional, default `'\n'`): string separator used to split the file into rows.
+- `encoding` (optional, default `'UTF-8'`): character set for decoding the file.
 
 The function yields a single `VARCHAR` column named `line` containing each record in order.
 

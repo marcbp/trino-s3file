@@ -34,7 +34,8 @@ import io.trino.spi.type.BooleanType;
 import io.trino.spi.type.DoubleType;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
-import marcbp.trino.s3file.S3ObjectService;
+import marcbp.trino.s3file.util.S3ObjectService;
+import marcbp.trino.s3file.util.CharsetUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -59,6 +60,7 @@ public final class S3FileJsonTableFunction extends AbstractConnectorTableFunctio
     private static final Logger LOG = LoggerFactory.getLogger(S3FileJsonTableFunction.class);
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final String PATH_ARGUMENT = "PATH";
+    private static final String ENCODING_ARGUMENT = "ENCODING";
     private static final String ADDITIONAL_COLUMNS_ARGUMENT = "ADDITIONAL_COLUMNS";
     private static final int DEFAULT_BATCH_SIZE = 512;
     private static final int DEFAULT_SPLIT_SIZE_BYTES = 8 * 1024 * 1024;
@@ -75,6 +77,11 @@ public final class S3FileJsonTableFunction extends AbstractConnectorTableFunctio
                         ScalarArgumentSpecification.builder()
                                 .name(PATH_ARGUMENT)
                                 .type(VarcharType.VARCHAR)
+                                .build(),
+                        ScalarArgumentSpecification.builder()
+                                .name(ENCODING_ARGUMENT)
+                                .type(VarcharType.VARCHAR)
+                                .defaultValue(Slices.utf8Slice(StandardCharsets.UTF_8.name()))
                                 .build(),
                         ScalarArgumentSpecification.builder()
                                 .name(ADDITIONAL_COLUMNS_ARGUMENT)
@@ -104,8 +111,10 @@ public final class S3FileJsonTableFunction extends AbstractConnectorTableFunctio
             throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "PATH cannot be blank");
         }
 
+        Charset charset = CharsetUtils.resolve(arguments, ENCODING_ARGUMENT);
+
         ColumnsMetadata columnsMetadata;
-        try (BufferedReader reader = s3ObjectService.openReader(s3Path)) {
+        try (BufferedReader reader = s3ObjectService.openReader(s3Path, charset)) {
             columnsMetadata = inferColumns(reader, s3Path);
         }
         catch (IOException e) {
@@ -129,7 +138,7 @@ public final class S3FileJsonTableFunction extends AbstractConnectorTableFunctio
 
         return TableFunctionAnalysis.builder()
                 .returnedType(descriptor)
-                .handle(new Handle(s3Path, columnNames, detectedTypes, null, fileSize, DEFAULT_SPLIT_SIZE_BYTES))
+                .handle(new Handle(s3Path, columnNames, detectedTypes, null, fileSize, DEFAULT_SPLIT_SIZE_BYTES, charset.name()))
                 .build();
     }
 
@@ -240,6 +249,8 @@ public final class S3FileJsonTableFunction extends AbstractConnectorTableFunctio
             }
         }
     }
+
+    
 
     private static ColumnType inferColumnType(JsonNode node) {
         if (node == null || node.isNull()) {
@@ -370,6 +381,7 @@ public final class S3FileJsonTableFunction extends AbstractConnectorTableFunctio
         private final Integer batchSize;
         private final long fileSize;
         private final int splitSizeBytes;
+        private final String charsetName;
 
         @JsonCreator
         public Handle(@JsonProperty("s3Path") String s3Path,
@@ -377,13 +389,15 @@ public final class S3FileJsonTableFunction extends AbstractConnectorTableFunctio
                       @JsonProperty("columnTypes") List<ColumnType> columnTypes,
                       @JsonProperty("batchSize") Integer batchSize,
                       @JsonProperty("fileSize") long fileSize,
-                      @JsonProperty("splitSizeBytes") int splitSizeBytes) {
+                      @JsonProperty("splitSizeBytes") int splitSizeBytes,
+                      @JsonProperty("charset") String charsetName) {
             this.s3Path = requireNonNull(s3Path, "s3Path is null");
             this.columns = List.copyOf(requireNonNull(columns, "columns is null"));
             this.columnTypes = List.copyOf(requireNonNull(columnTypes, "columnTypes is null"));
             this.batchSize = batchSize;
             this.fileSize = fileSize;
             this.splitSizeBytes = splitSizeBytes;
+            this.charsetName = (charsetName == null || charsetName.isBlank()) ? StandardCharsets.UTF_8.name() : charsetName;
             if (this.columns.size() != this.columnTypes.size()) {
                 throw new IllegalArgumentException("columns and columnTypes must have the same size");
             }
@@ -419,6 +433,11 @@ public final class S3FileJsonTableFunction extends AbstractConnectorTableFunctio
             return splitSizeBytes;
         }
 
+        @JsonProperty("charset")
+        public String getCharsetName() {
+            return charsetName;
+        }
+
         public List<Type> resolveColumnTypes() {
             List<Type> types = new ArrayList<>(columnTypes.size());
             for (ColumnType columnType : columnTypes) {
@@ -429,6 +448,10 @@ public final class S3FileJsonTableFunction extends AbstractConnectorTableFunctio
 
         public int batchSizeOrDefault() {
             return batchSize == null ? DEFAULT_BATCH_SIZE : batchSize;
+        }
+
+        public Charset charset() {
+            return CharsetUtils.resolve(charsetName);
         }
     }
 
@@ -461,8 +484,8 @@ public final class S3FileJsonTableFunction extends AbstractConnectorTableFunctio
         private final List<Type> columnTypes;
         private final List<String> columnNames;
         private final List<ColumnType> columnKinds;
-        private final Charset charset = StandardCharsets.UTF_8;
-        private final byte[] lineBreakBytes = "\n".getBytes(StandardCharsets.UTF_8);
+        private final Charset charset;
+        private final byte[] lineBreakBytes;
         private final long primaryLength;
         private BufferedReader reader;
         private boolean finished;
@@ -478,6 +501,8 @@ public final class S3FileJsonTableFunction extends AbstractConnectorTableFunctio
             this.columnKinds = handle.getColumnTypes();
             this.primaryLength = this.split.getPrimaryLength();
             this.skipFirstLine = this.split.getStartOffset() > 0;
+            this.charset = handle.charset();
+            this.lineBreakBytes = "\n".getBytes(this.charset);
         }
 
         @Override
@@ -538,7 +563,7 @@ public final class S3FileJsonTableFunction extends AbstractConnectorTableFunctio
                 return;
             }
             LOG.info("Opening JSON stream for path {} (split {}-{})", handle.getS3Path(), split.getStartOffset(), split.getRangeEndExclusive());
-            reader = s3ObjectService.openReader(handle.getS3Path(), split.getStartOffset(), split.getRangeEndExclusive());
+            reader = s3ObjectService.openReader(handle.getS3Path(), split.getStartOffset(), split.getRangeEndExclusive(), charset);
         }
 
         private LineRead nextRecord() throws IOException {

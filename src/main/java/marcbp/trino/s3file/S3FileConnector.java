@@ -22,12 +22,12 @@ import marcbp.trino.s3file.csv.CsvProcessingService;
 import marcbp.trino.s3file.csv.S3FileCsvTableFunction;
 import marcbp.trino.s3file.json.S3FileJsonTableFunction;
 import marcbp.trino.s3file.txt.S3FileTextTableFunction;
+import marcbp.trino.s3file.util.S3ObjectService;
 
 import java.util.Optional;
 import java.util.Set;
 import java.util.List;
 
-import static java.util.Objects.requireNonNull;
 
 /**
  * Connector exposing table functions backed by S3.
@@ -36,7 +36,6 @@ public final class S3FileConnector implements Connector {
     private static final Logger LOG = LoggerFactory.getLogger(S3FileConnector.class);
 
     private final S3ObjectService s3ObjectService;
-    private final CsvProcessingService csvProcessingService;
     private final S3FileCsvTableFunction csvTableFunction;
     private final S3FileTextTableFunction textTableFunction;
     private final S3FileJsonTableFunction jsonTableFunction;
@@ -44,13 +43,8 @@ public final class S3FileConnector implements Connector {
     private final ConnectorSplitManager splitManager;
 
     public S3FileConnector() {
-        this(new S3ObjectService(), new CsvProcessingService());
-    }
-
-    public S3FileConnector(S3ObjectService s3ObjectService, CsvProcessingService csvProcessingService) {
-        this.s3ObjectService = requireNonNull(s3ObjectService, "s3ObjectService is null");
-        this.csvProcessingService = requireNonNull(csvProcessingService, "csvProcessingService is null");
-        this.csvTableFunction = new S3FileCsvTableFunction(s3ObjectService, csvProcessingService);
+        this.s3ObjectService = new S3ObjectService();
+        this.csvTableFunction = new S3FileCsvTableFunction(s3ObjectService, new CsvProcessingService());
         this.textTableFunction = new S3FileTextTableFunction(s3ObjectService);
         this.jsonTableFunction = new S3FileJsonTableFunction(s3ObjectService);
         this.functionProvider = new InlineFunctionProvider();
