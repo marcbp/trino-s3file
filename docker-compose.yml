@@ -10,11 +10,6 @@ services:
     volumes:
       - ./docker/etc/config.properties:/etc/trino/config.properties:ro
       - ./docker/etc/node.properties:/etc/trino/node.properties:ro
-    environment:
-      AWS_ACCESS_KEY_ID: minio
-      AWS_SECRET_ACCESS_KEY: minio123
-      AWS_REGION: us-east-1
-      AWS_S3_ENDPOINT: http://minio:9000
     depends_on:
       - minio
     restart: unless-stopped
@@ -27,10 +22,6 @@ services:
     entrypoint: ["/etc/trino-worker/entrypoint.sh"]
     environment:
       TRINO_NODE_ID: trino-worker-1
-      AWS_ACCESS_KEY_ID: minio
-      AWS_SECRET_ACCESS_KEY: minio123
-      AWS_REGION: us-east-1
-      AWS_S3_ENDPOINT: http://minio:9000
     depends_on:
       - minio
       - trino-coordinator
@@ -44,10 +35,6 @@ services:
     entrypoint: ["/etc/trino-worker/entrypoint.sh"]
     environment:
       TRINO_NODE_ID: trino-worker-2
-      AWS_ACCESS_KEY_ID: minio
-      AWS_SECRET_ACCESS_KEY: minio123
-      AWS_REGION: us-east-1
-      AWS_S3_ENDPOINT: http://minio:9000
     depends_on:
       - minio
       - trino-coordinator

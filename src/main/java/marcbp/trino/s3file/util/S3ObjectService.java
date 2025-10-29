@@ -21,9 +21,8 @@ import java.io.Closeable;
 import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.nio.charset.StandardCharsets;
 import java.nio.charset.Charset;
-import java.util.Map;
+import java.nio.charset.StandardCharsets;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -39,7 +38,11 @@ public final class S3ObjectService implements Closeable {
     private final S3Client s3Client;
 
     public S3ObjectService() {
-        this(buildClientFromEnvironment());
+        this(S3ClientConfig.defaults());
+    }
+
+    public S3ObjectService(S3ClientConfig clientConfig) {
+        this(buildClient(clientConfig));
     }
 
     public S3ObjectService(S3Client s3Client) {
@@ -101,15 +104,12 @@ public final class S3ObjectService implements Closeable {
         return new S3Location(matcher.group(1), matcher.group(2));
     }
 
-    private static S3Client buildClientFromEnvironment() {
-        Map<String, String> env = System.getenv();
+    private static S3Client buildClient(S3ClientConfig config) {
         S3ClientBuilder builder = S3Client.builder();
 
-        String regionValue = env.getOrDefault("AWS_REGION", "us-east-1");
-        builder.region(Region.of(regionValue));
+        builder.region(Region.of(config.region()));
 
-        String endpoint = env.get("AWS_S3_ENDPOINT");
-        if (endpoint != null && !endpoint.isBlank()) {
+        config.endpoint().ifPresent(endpoint -> {
             LOG.info("Using custom S3 endpoint: {}", endpoint);
             try {
                 builder.endpointOverride(new URI(endpoint));
@@ -117,23 +117,25 @@ public final class S3ObjectService implements Closeable {
             catch (URISyntaxException e) {
                 throw new IllegalArgumentException("Invalid S3 endpoint: " + endpoint, e);
             }
+        });
+
+        if (config.accessKey().isPresent() ^ config.secretKey().isPresent()) {
+            throw new IllegalArgumentException("Both aws.access-key and aws.secret-key must be provided together");
         }
 
-        String accessKey = env.get("AWS_ACCESS_KEY_ID");
-        String secretKey = env.get("AWS_SECRET_ACCESS_KEY");
         AwsCredentialsProvider credentialsProvider;
-        if (accessKey != null && secretKey != null) {
-            LOG.info("Using explicit AWS credentials");
-            credentialsProvider = StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKey, secretKey));
+        if (config.accessKey().isPresent()) {
+            LOG.info("Using static AWS credentials from connector configuration");
+            credentialsProvider = StaticCredentialsProvider.create(AwsBasicCredentials.create(config.accessKey().get(), config.secretKey().get()));
         }
         else {
-            LOG.info("Using default AWS credentials provider chain");
+            LOG.info("Using AWS default credentials provider chain");
             credentialsProvider = DefaultCredentialsProvider.create();
         }
         builder.credentialsProvider(credentialsProvider);
 
         builder.serviceConfiguration(S3Configuration.builder()
-                .pathStyleAccessEnabled(true)
+                .pathStyleAccessEnabled(config.pathStyleAccess())
                 .build());
 
         S3Client client = builder.build();
