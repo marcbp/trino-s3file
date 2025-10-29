@@ -33,12 +33,12 @@ import static org.mockito.Mockito.when;
 /**
  * Unit tests that exercise the CSV table function's analysis workflow.
  */
-class S3FileCsvTableFunctionTest {
+class CsvTableFunctionTest {
     private static final String PATH = "s3://bucket/data.csv";
 
     private final S3ObjectService s3ObjectService = mock(S3ObjectService.class);
     private final CsvProcessingService csvProcessingService = new CsvProcessingService();
-    private final S3FileCsvTableFunction function = new S3FileCsvTableFunction(s3ObjectService, csvProcessingService);
+    private final CsvTableFunction function = new CsvTableFunction(s3ObjectService, csvProcessingService);
 
     @BeforeEach
     void setUp() {
@@ -61,7 +61,7 @@ class S3FileCsvTableFunctionTest {
                 arguments,
                 null);
 
-        S3FileCsvTableFunction.Handle handle = (S3FileCsvTableFunction.Handle) analysis.getHandle();
+        CsvTableFunction.Handle handle = (CsvTableFunction.Handle) analysis.getHandle();
         assertEquals(PATH, handle.getS3Path());
         assertEquals(List.of("first", "second"), handle.getColumns());
         assertTrue(handle.isHeaderPresent());
@@ -96,7 +96,7 @@ class S3FileCsvTableFunctionTest {
                 arguments,
                 null);
 
-        S3FileCsvTableFunction.Handle handle = (S3FileCsvTableFunction.Handle) analysis.getHandle();
+        CsvTableFunction.Handle handle = (CsvTableFunction.Handle) analysis.getHandle();
         assertEquals(List.of("column_1", "column_2", "column_3"), handle.getColumns());
         assertTrue(handle.batchSizeOrDefault() > 0);
         assertEquals(64L, handle.getFileSize());
@@ -116,7 +116,7 @@ class S3FileCsvTableFunctionTest {
 
     @Test
     void createSplitsGeneratesMultipleRanges() {
-        S3FileCsvTableFunction.Handle handle = new S3FileCsvTableFunction.Handle(
+        CsvTableFunction.Handle handle = new CsvTableFunction.Handle(
                 PATH,
                 List.of("c1", "c2"),
                 ';',
@@ -129,11 +129,11 @@ class S3FileCsvTableFunctionTest {
         List<ConnectorSplit> splits = function.createSplits(handle);
 
         assertEquals(4, splits.size());
-        S3FileCsvTableFunction.Split first = (S3FileCsvTableFunction.Split) splits.get(0);
+        CsvTableFunction.Split first = (CsvTableFunction.Split) splits.get(0);
         assertEquals(0, first.getStartOffset());
         assertTrue(first.isFirst());
         assertFalse(first.isLast());
-        S3FileCsvTableFunction.Split last = (S3FileCsvTableFunction.Split) splits.get(splits.size() - 1);
+        CsvTableFunction.Split last = (CsvTableFunction.Split) splits.get(splits.size() - 1);
         assertTrue(last.isLast());
         assertTrue(last.getStartOffset() < handle.getFileSize());
     }

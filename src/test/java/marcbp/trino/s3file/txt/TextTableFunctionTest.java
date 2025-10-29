@@ -28,11 +28,11 @@ import static org.mockito.Mockito.when;
 /**
  * Unit tests covering analysis and split creation for the text table function.
  */
-class S3FileTextTableFunctionTest {
+class TextTableFunctionTest {
     private static final String PATH = "s3://bucket/messages.txt";
 
     private final S3ObjectService s3ObjectService = mock(S3ObjectService.class);
-    private final S3FileTextTableFunction function = new S3FileTextTableFunction(s3ObjectService);
+    private final TextTableFunction function = new TextTableFunction(s3ObjectService);
 
     @Test
     void analyzeBuildsHandleWithDecodedLineBreak() {
@@ -48,7 +48,7 @@ class S3FileTextTableFunctionTest {
                 arguments,
                 null);
 
-        S3FileTextTableFunction.Handle handle = assertHandle(analysis, "\r\n", 2048L);
+        TextTableFunction.Handle handle = assertHandle(analysis, "\r\n", 2048L);
         assertEquals(Descriptor.descriptor(List.of("line"), List.of(VarcharType.createUnboundedVarcharType())),
                 analysis.getReturnedType().orElseThrow());
         verify(s3ObjectService).getObjectSize(PATH);
@@ -56,7 +56,7 @@ class S3FileTextTableFunctionTest {
 
     @Test
     void createSplitsRespectsLookaheadAndBoundaries() {
-        S3FileTextTableFunction.Handle handle = new S3FileTextTableFunction.Handle(
+        TextTableFunction.Handle handle = new TextTableFunction.Handle(
                 PATH,
                 "\n",
                 null,
@@ -68,21 +68,21 @@ class S3FileTextTableFunctionTest {
 
         assertEquals(3, splits.size());
 
-        S3FileTextTableFunction.Split first = (S3FileTextTableFunction.Split) splits.get(0);
+        TextTableFunction.Split first = (TextTableFunction.Split) splits.get(0);
         assertEquals(0, first.getStartOffset());
         assertEquals(4, first.getPrimaryEndOffset());
         assertEquals(10, first.getRangeEndExclusive());
         assertTrue(first.isFirst());
         assertTrue(first.isLast());
 
-        S3FileTextTableFunction.Split second = (S3FileTextTableFunction.Split) splits.get(1);
+        TextTableFunction.Split second = (TextTableFunction.Split) splits.get(1);
         assertEquals(4, second.getStartOffset());
         assertEquals(8, second.getPrimaryEndOffset());
         assertEquals(10, second.getRangeEndExclusive());
         assertFalse(second.isFirst());
         assertTrue(second.isLast());
 
-        S3FileTextTableFunction.Split third = (S3FileTextTableFunction.Split) splits.get(2);
+        TextTableFunction.Split third = (TextTableFunction.Split) splits.get(2);
         assertEquals(8, third.getStartOffset());
         assertEquals(10, third.getPrimaryEndOffset());
         assertEquals(10, third.getRangeEndExclusive());
@@ -90,9 +90,9 @@ class S3FileTextTableFunctionTest {
         assertTrue(third.isLast());
     }
 
-    private static S3FileTextTableFunction.Handle assertHandle(TableFunctionAnalysis analysis, String expectedDelimiter, long expectedSize) {
-        assertInstanceOf(S3FileTextTableFunction.Handle.class, analysis.getHandle());
-        S3FileTextTableFunction.Handle handle = (S3FileTextTableFunction.Handle) analysis.getHandle();
+    private static TextTableFunction.Handle assertHandle(TableFunctionAnalysis analysis, String expectedDelimiter, long expectedSize) {
+        assertInstanceOf(TextTableFunction.Handle.class, analysis.getHandle());
+        TextTableFunction.Handle handle = (TextTableFunction.Handle) analysis.getHandle();
         assertEquals(PATH, handle.getS3Path());
         assertEquals(expectedDelimiter, handle.getLineBreak());
         assertEquals(expectedSize, handle.getFileSize());

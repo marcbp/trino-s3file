@@ -56,8 +56,8 @@ import static java.util.Objects.requireNonNull;
 /**
  * Table function that streams newline-delimited JSON objects from S3-compatible storage.
  */
-public final class S3FileJsonTableFunction extends AbstractConnectorTableFunction {
-    private static final Logger LOG = LoggerFactory.getLogger(S3FileJsonTableFunction.class);
+public final class JsonTableFunction extends AbstractConnectorTableFunction {
+    private static final Logger LOG = LoggerFactory.getLogger(JsonTableFunction.class);
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final String PATH_ARGUMENT = "PATH";
     private static final String ENCODING_ARGUMENT = "ENCODING";
@@ -69,7 +69,7 @@ public final class S3FileJsonTableFunction extends AbstractConnectorTableFunctio
 
     private final S3ObjectService s3ObjectService;
 
-    public S3FileJsonTableFunction(S3ObjectService s3ObjectService) {
+    public JsonTableFunction(S3ObjectService s3ObjectService) {
         super(
                 "json",
                 "load",

@@ -1,13 +1,17 @@
-package marcbp.trino.s3file.csv;
+package marcbp.trino.s3file.txt;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import marcbp.trino.s3file.util.S3ObjectService;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
 import io.trino.spi.Page;
 import io.trino.spi.PageBuilder;
 import io.trino.spi.TrinoException;
 import io.trino.spi.block.BlockBuilder;
+import io.trino.spi.connector.ConnectorAccessControl;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorSplit;
 import io.trino.spi.connector.ConnectorTransactionHandle;
@@ -25,10 +29,6 @@ import io.trino.spi.function.table.TableFunctionProcessorState;
 import io.trino.spi.function.table.TableFunctionSplitProcessor;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
-import marcbp.trino.s3file.util.S3ObjectService;
-import marcbp.trino.s3file.util.CharsetUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -40,27 +40,28 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import marcbp.trino.s3file.util.CharsetUtils;
+
 import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static java.util.Objects.requireNonNull;
-import static marcbp.trino.s3file.util.CharsetUtils.resolve;
 
 /**
- * Table function that reads CSV data from S3-compatible storage, inferring columns on the fly.
+ * Table function that streams plain text files from S3-compatible storage as rows for Trino.
  */
-public final class S3FileCsvTableFunction extends AbstractConnectorTableFunction {
-    private static final Logger LOG = LoggerFactory.getLogger(S3FileCsvTableFunction.class);
+public final class TextTableFunction extends AbstractConnectorTableFunction {
+    private static final Logger LOG = LoggerFactory.getLogger(TextTableFunction.class);
     private static final String PATH_ARGUMENT = "PATH";
-    private static final String DELIMITER_ARGUMENT = "DELIMITER";
+    private static final String LINE_BREAK_ARGUMENT = "LINE_BREAK";
     private static final String ENCODING_ARGUMENT = "ENCODING";
+    private static final int DEFAULT_BATCH_SIZE = 1024;
     private static final int DEFAULT_SPLIT_SIZE_BYTES = 8 * 1024 * 1024;
     private static final int LOOKAHEAD_BYTES = 256 * 1024;
 
     private final S3ObjectService s3ObjectService;
-    private final CsvProcessingService csvProcessingService;
 
-    public S3FileCsvTableFunction(S3ObjectService s3ObjectService, CsvProcessingService csvProcessingService) {
+    public TextTableFunction(S3ObjectService s3ObjectService) {
         super(
-                "csv",
+                "txt",
                 "load",
                 List.of(
                         ScalarArgumentSpecification.builder()
@@ -68,14 +69,9 @@ public final class S3FileCsvTableFunction extends AbstractConnectorTableFunction
                                 .type(VarcharType.VARCHAR)
                                 .build(),
                         ScalarArgumentSpecification.builder()
-                                .name(DELIMITER_ARGUMENT)
+                                .name(LINE_BREAK_ARGUMENT)
                                 .type(VarcharType.VARCHAR)
-                                .defaultValue(Slices.utf8Slice(";"))
-                                .build(),
-                        ScalarArgumentSpecification.builder()
-                                .name("HEADER")
-                                .type(VarcharType.VARCHAR)
-                                .defaultValue(Slices.utf8Slice("true"))
+                                .defaultValue(Slices.utf8Slice("\n"))
                                 .build(),
                         ScalarArgumentSpecification.builder()
                                 .name(ENCODING_ARGUMENT)
@@ -85,14 +81,13 @@ public final class S3FileCsvTableFunction extends AbstractConnectorTableFunction
                 ),
                 ReturnTypeSpecification.GenericTable.GENERIC_TABLE);
         this.s3ObjectService = requireNonNull(s3ObjectService, "s3ObjectService is null");
-        this.csvProcessingService = requireNonNull(csvProcessingService, "csvProcessingService is null");
     }
 
     @Override
     public TableFunctionAnalysis analyze(ConnectorSession session,
                                          ConnectorTransactionHandle transactionHandle,
                                          Map<String, Argument> arguments,
-                                         io.trino.spi.connector.ConnectorAccessControl accessControl) {
+                                         ConnectorAccessControl accessControl) {
         ScalarArgument pathArgument = (ScalarArgument) arguments.get(PATH_ARGUMENT);
         if (pathArgument == null) {
             throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "Argument PATH is required");
@@ -106,43 +101,27 @@ public final class S3FileCsvTableFunction extends AbstractConnectorTableFunction
             throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "PATH cannot be blank");
         }
 
-        Charset charset = resolve(arguments, ENCODING_ARGUMENT);
-
-        char delimiter = ';';
-        ScalarArgument delimiterArg = (ScalarArgument) arguments.get(DELIMITER_ARGUMENT);
-        if (delimiterArg != null && delimiterArg.getValue() instanceof Slice delimiterSlice && delimiterSlice.length() > 0) {
-            delimiter = (char) delimiterSlice.getByte(0);
+        Charset charset = CharsetUtils.resolve(arguments, ENCODING_ARGUMENT);
+        String lineBreak = "\n";
+        ScalarArgument lineBreakArg = (ScalarArgument) arguments.get(LINE_BREAK_ARGUMENT);
+        if (lineBreakArg != null && lineBreakArg.getValue() instanceof Slice delimiterSlice) {
+            lineBreak = decodeEscapes(delimiterSlice.toStringUtf8());
+        }
+        if (lineBreak.isEmpty()) {
+            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "LINE_BREAK cannot be empty");
         }
 
-        LOG.info("Analyzing load table function for path {} with delimiter {}", s3Path, delimiter);
-        boolean headerPresent = true;
-        ScalarArgument headerArg = (ScalarArgument) arguments.get("HEADER");
-        if (headerArg != null && headerArg.getValue() instanceof Slice headerSlice) {
-            String headerText = headerSlice.toStringUtf8();
-            LOG.info("HEADER argument value: {}", headerText);
-            headerPresent = Boolean.parseBoolean(headerText.trim());
-        }
-        LOG.info("Header present: {}", headerPresent);
-
-        List<String> columnNames;
-        try (BufferedReader reader = s3ObjectService.openReader(s3Path, charset)) {
-            columnNames = csvProcessingService.inferColumnNames(reader, s3Path, delimiter, headerPresent);
-        }
-        catch (IOException e) {
-            LOG.error("Failed to infer column names for {}", s3Path, e);
-            throw new UncheckedIOException("Failed to infer column names", e);
-        }
-        LOG.info("Detected {} columns: {}", columnNames.size(), columnNames);
-        List<Type> columnTypes = columnNames.stream()
-                .map(name -> (Type) VarcharType.createUnboundedVarcharType())
-                .toList();
-        Descriptor descriptor = Descriptor.descriptor(columnNames, columnTypes);
+        LOG.info("Analyzing txt.load table function for path {} with line break {}", s3Path, formatForLog(lineBreak));
 
         long fileSize = s3ObjectService.getObjectSize(s3Path);
 
+        List<String> columnNames = List.of("line");
+        List<Type> columnTypes = List.of(VarcharType.createUnboundedVarcharType());
+        Descriptor descriptor = Descriptor.descriptor(columnNames, columnTypes);
+
         return TableFunctionAnalysis.builder()
                 .returnedType(descriptor)
-                .handle(new Handle(s3Path, columnNames, delimiter, headerPresent, null, fileSize, DEFAULT_SPLIT_SIZE_BYTES, charset.name()))
+                .handle(new Handle(s3Path, lineBreak, null, fileSize, DEFAULT_SPLIT_SIZE_BYTES, charset.name()))
                 .build();
     }
 
@@ -152,20 +131,27 @@ public final class S3FileCsvTableFunction extends AbstractConnectorTableFunction
 
     public List<ConnectorSplit> createSplits(Handle handle) {
         if (handle.getFileSize() == 0) {
-            return List.of(Split.forWholeFile(0));
+            return List.of(new Split("split-0", 0, 0, 0, true, true));
         }
         List<ConnectorSplit> splits = new ArrayList<>();
         long offset = 0;
         int index = 0;
         while (offset < handle.getFileSize()) {
+            // The primary region is the portion each worker is responsible for producing.
             long primaryEnd = Math.min(handle.getFileSize(), offset + handle.getSplitSizeBytes());
+            long rangeEnd = primaryEnd;
             boolean last = primaryEnd >= handle.getFileSize();
-            long rangeEnd = last ? handle.getFileSize() : Math.min(handle.getFileSize(), primaryEnd + LOOKAHEAD_BYTES);
+            if (!last) {
+                // Extend the HTTP range request a bit beyond the primary region so we can
+                // finish reading the trailing line that crosses the split boundary.
+                rangeEnd = Math.min(handle.getFileSize(), primaryEnd + LOOKAHEAD_BYTES);
+                last = rangeEnd >= handle.getFileSize();
+            }
             splits.add(new Split(
                     "split-" + index,
                     offset,
                     primaryEnd,
-                    rangeEnd,
+                    last ? handle.getFileSize() : rangeEnd,
                     offset == 0,
                     last));
             offset = primaryEnd;
@@ -175,19 +161,50 @@ public final class S3FileCsvTableFunction extends AbstractConnectorTableFunction
     }
 
     public TableFunctionSplitProcessor createSplitProcessor(Handle handle, ConnectorSplit split) {
-        if (!(split instanceof Split csvSplit)) {
+        if (!(split instanceof Split textSplit)) {
             throw new IllegalArgumentException("Unexpected split type: " + split.getClass().getName());
         }
-        return new SplitProcessor(new Processor(s3ObjectService, csvProcessingService, handle, csvSplit));
+        return new SplitProcessor(new Processor(s3ObjectService, handle, textSplit));
+    }
+
+    private static String decodeEscapes(String value) {
+        StringBuilder result = new StringBuilder();
+        boolean escaping = false;
+        for (int i = 0; i < value.length(); i++) {
+            char ch = value.charAt(i);
+            if (escaping) {
+                switch (ch) {
+                    case 'n' -> result.append('\n');
+                    case 'r' -> result.append('\r');
+                    case 't' -> result.append('\t');
+                    case '\\' -> result.append('\\');
+                    default -> result.append(ch);
+                }
+                escaping = false;
+            }
+            else if (ch == '\\') {
+                escaping = true;
+            }
+            else {
+                result.append(ch);
+            }
+        }
+        if (escaping) {
+            result.append('\\');
+        }
+        return result.toString();
+    }
+
+    private static String formatForLog(String delimiter) {
+        return delimiter
+                .replace("\r", "\\r")
+                .replace("\n", "\\n")
+                .replace("\t", "\\t");
     }
 
     public static final class Handle implements ConnectorTableFunctionHandle {
-        private static final int DEFAULT_BATCH_SIZE = 1024;
-
         private final String s3Path;
-        private final List<String> columns;
-        private final char delimiter;
-        private final boolean headerPresent;
+        private final String lineBreak;
         private final Integer batchSize;
         private final long fileSize;
         private final int splitSizeBytes;
@@ -195,17 +212,13 @@ public final class S3FileCsvTableFunction extends AbstractConnectorTableFunction
 
         @JsonCreator
         public Handle(@JsonProperty("s3Path") String s3Path,
-                      @JsonProperty("columns") List<String> columns,
-                      @JsonProperty("delimiter") char delimiter,
-                      @JsonProperty("header") boolean headerPresent,
+                      @JsonProperty("lineBreak") String lineBreak,
                       @JsonProperty("batchSize") Integer batchSize,
                       @JsonProperty("fileSize") long fileSize,
                       @JsonProperty("splitSizeBytes") int splitSizeBytes,
                       @JsonProperty("charset") String charsetName) {
             this.s3Path = requireNonNull(s3Path, "s3Path is null");
-            this.columns = List.copyOf(requireNonNull(columns, "columns is null"));
-            this.delimiter = delimiter;
-            this.headerPresent = headerPresent;
+            this.lineBreak = requireNonNull(lineBreak, "lineBreak is null");
             this.batchSize = batchSize;
             this.fileSize = fileSize;
             this.splitSizeBytes = splitSizeBytes;
@@ -218,18 +231,8 @@ public final class S3FileCsvTableFunction extends AbstractConnectorTableFunction
         }
 
         @JsonProperty
-        public List<String> getColumns() {
-            return columns;
-        }
-
-        @JsonProperty
-        public char getDelimiter() {
-            return delimiter;
-        }
-
-        @JsonProperty("header")
-        public boolean isHeaderPresent() {
-            return headerPresent;
+        public String getLineBreak() {
+            return lineBreak;
         }
 
         @JsonProperty
@@ -253,11 +256,7 @@ public final class S3FileCsvTableFunction extends AbstractConnectorTableFunction
         }
 
         public List<Type> resolveColumnTypes() {
-            List<Type> types = new ArrayList<>(columns.size());
-            for (int i = 0; i < columns.size(); i++) {
-                types.add(VarcharType.createUnboundedVarcharType());
-            }
-            return List.copyOf(types);
+            return List.of(VarcharType.createUnboundedVarcharType());
         }
 
         public int batchSizeOrDefault() {
@@ -268,63 +267,66 @@ public final class S3FileCsvTableFunction extends AbstractConnectorTableFunction
             return CharsetUtils.resolve(charsetName);
         }
     }
-
     private final class ProcessorProvider implements TableFunctionProcessorProvider {
 
         @Override
         public TableFunctionDataProcessor getDataProcessor(ConnectorSession session, ConnectorTableFunctionHandle handle) {
-            if (!(handle instanceof Handle csvHandle)) {
+            if (!(handle instanceof Handle textHandle)) {
                 throw new IllegalArgumentException("Unexpected handle type: " + handle.getClass().getName());
             }
-            LOG.info("Creating data processor for path {}", csvHandle.getS3Path());
-            return new Processor(s3ObjectService, csvProcessingService, csvHandle, null);
+            LOG.info("Creating text data processor for path {}", textHandle.getS3Path());
+            return new Processor(s3ObjectService, textHandle, null);
         }
 
         @Override
-        public TableFunctionSplitProcessor getSplitProcessor(ConnectorSession session, ConnectorTableFunctionHandle functionHandle, ConnectorSplit split) {
-            if (!(functionHandle instanceof Handle csvHandle)) {
-                throw new IllegalArgumentException("Unexpected handle type: " + functionHandle.getClass().getName());
+        public TableFunctionSplitProcessor getSplitProcessor(ConnectorSession session, ConnectorTableFunctionHandle handle, ConnectorSplit split) {
+            if (!(handle instanceof Handle textHandle)) {
+                throw new IllegalArgumentException("Unexpected handle type: " + handle.getClass().getName());
             }
-            if (!(split instanceof Split csvSplit)) {
+            if (!(split instanceof Split textSplit)) {
                 throw new IllegalArgumentException("Unexpected split type: " + split.getClass().getName());
             }
-            return createSplitProcessor(csvHandle, csvSplit);
+            return new SplitProcessor(new Processor(s3ObjectService, textHandle, textSplit));
         }
     }
 
     private static final class Processor implements TableFunctionDataProcessor {
         private final S3ObjectService s3ObjectService;
-        private final CsvProcessingService csvProcessingService;
         private final Handle handle;
-        private final List<Type> columnTypes;
         private final Split split;
-        private final long primaryLength;
+        private final List<Type> columnTypes;
+        private final VarcharType outputType;
         private final Charset charset;
         private final byte[] lineBreakBytes;
-
+        private final long primaryLength;
         private BufferedReader reader;
         private boolean finished;
         private boolean skipFirstLine;
         private long bytesWithinPrimary;
 
-        private Processor(S3ObjectService s3ObjectService, CsvProcessingService csvProcessingService, Handle handle, Split split) {
-            LOG.debug("Creating processor for path {}", handle.getS3Path());
+        private Processor(S3ObjectService s3ObjectService, Handle handle, Split split) {
             this.s3ObjectService = s3ObjectService;
-            this.csvProcessingService = csvProcessingService;
             this.handle = handle;
-            this.columnTypes = handle.resolveColumnTypes();
             this.split = split != null ? split : Split.forWholeFile(handle.getFileSize());
-            this.primaryLength = this.split.getPrimaryLength();
-            this.skipFirstLine = this.split.getStartOffset() > 0;
+            this.columnTypes = handle.resolveColumnTypes();
+            this.outputType = (VarcharType) columnTypes.get(0);
             this.charset = handle.charset();
-            this.lineBreakBytes = "\n".getBytes(this.charset);
+            this.lineBreakBytes = handle.getLineBreak().getBytes(charset);
+            // If the split does not start at byte 0 we skip the first line, because it was already
+            //                  terminated by the previous split (or the header read during analysis).
+            this.skipFirstLine = this.split.getStartOffset() > 0;
+            this.primaryLength = this.split.getPrimaryLength();
         }
 
         @Override
         public TableFunctionProcessorState process(List<Optional<Page>> unused) {
             try {
                 if (finished) {
-                    LOG.info("Processor already finished for path {}", handle.getS3Path());
+                    LOG.info("Text processor already finished for path {}", handle.getS3Path());
+                    return TableFunctionProcessorState.Finished.FINISHED;
+                }
+                if (primaryLength == 0) {
+                    finished = true;
                     return TableFunctionProcessorState.Finished.FINISHED;
                 }
                 ensureReader();
@@ -332,51 +334,29 @@ public final class S3FileCsvTableFunction extends AbstractConnectorTableFunction
                     return TableFunctionProcessorState.Finished.FINISHED;
                 }
                 PageBuilder pageBuilder = new PageBuilder(handle.batchSizeOrDefault(), columnTypes);
-                LOG.info("Starting CSV batch read for path {}", handle.getS3Path());
                 while (!pageBuilder.isFull()) {
-                    String line = reader.readLine();
-                    if (line == null) {
-                        LOG.info("Reached end of CSV for path {}", handle.getS3Path());
+                    LineRead record = nextRecord();
+                    if (record == null) {
                         completeProcessing();
                         break;
                     }
-                    long lineBytes = calculateLineBytes(line);
-                    LOG.debug("Read line: {}", line);
-                    if (skipFirstLine) {
-                        skipFirstLine = false;
-                        bytesWithinPrimary += lineBytes;
-                        continue;
-                    }
-                    if (line.isBlank()) {
-                        bytesWithinPrimary += lineBytes;
-                        continue;
-                    }
-                    String[] values = csvProcessingService.parseCsvLine(line, handle.getDelimiter());
-                    LOG.debug("Appending row with {} values for path {}", values.length, handle.getS3Path());
-                    boolean finishesSplit = false;
-                    if (!split.isLast() && bytesWithinPrimary + lineBytes > primaryLength) {
-                        finishesSplit = true;
-                    }
-                    bytesWithinPrimary += lineBytes;
-                    appendRow(pageBuilder, values);
-                    if (finishesSplit) {
+                    appendRow(pageBuilder, record.value());
+                    if (record.finishesSplit()) {
                         completeProcessing();
                         break;
                     }
                 }
 
                 if (pageBuilder.isEmpty()) {
-                    LOG.info("No rows produced in this batch for path {}", handle.getS3Path());
                     finished = true;
                     return TableFunctionProcessorState.Finished.FINISHED;
                 }
                 Page page = pageBuilder.build();
-                LOG.info("Produced {} rows for path {}", page.getPositionCount(), handle.getS3Path());
                 return TableFunctionProcessorState.Processed.produced(page);
             }
             catch (IOException e) {
-                LOG.error("Error while reading CSV content for path {}", handle.getS3Path(), e);
-                throw new UncheckedIOException("Failed to read CSV content", e);
+                LOG.error("Error while reading text content for path {}", handle.getS3Path(), e);
+                throw new UncheckedIOException("Failed to read text content", e);
             }
             catch (RuntimeException e) {
                 LOG.error("Unexpected runtime error for path {}", handle.getS3Path(), e);
@@ -388,43 +368,38 @@ public final class S3FileCsvTableFunction extends AbstractConnectorTableFunction
             if (reader != null || finished) {
                 return;
             }
-            if (primaryLength == 0 && split.getStartOffset() > 0) {
+            if (primaryLength == 0) {
                 finished = true;
                 return;
             }
-            LOG.info("Opening CSV stream for path {}", handle.getS3Path());
-            if (split.isWholeFile()) {
-                reader = s3ObjectService.openReader(handle.getS3Path(), charset);
-            }
-            else {
-                reader = s3ObjectService.openReader(handle.getS3Path(), split.getStartOffset(), split.getRangeEndExclusive(), charset);
-            }
-            try {
-                if (handle.isHeaderPresent() && split.isFirst()) {
-                    String header = reader.readLine();
-                    LOG.info("Skipped CSV header for path {}: {}", handle.getS3Path(), header);
-                    if (header != null) {
-                        bytesWithinPrimary += calculateLineBytes(header);
-                    }
+            LOG.info("Opening text stream for path {} (split {}-{})", handle.getS3Path(), split.getStartOffset(), split.getRangeEndExclusive());
+            reader = s3ObjectService.openReader(handle.getS3Path(), split.getStartOffset(), split.getRangeEndExclusive(), charset);
+        }
+
+        private LineRead nextRecord() throws IOException {
+            while (true) {
+                String line = reader.readLine();
+                if (line == null) {
+                    return null;
                 }
-            }
-            catch (IOException e) {
-                LOG.error("Unable to read CSV header for path {}", handle.getS3Path(), e);
-                throw new UncheckedIOException("Failed to read CSV header", e);
+                long lineBytes = calculateLineBytes(line);
+                if (skipFirstLine) {
+                    skipFirstLine = false;
+                    bytesWithinPrimary += lineBytes;
+                    continue;
+                }
+                boolean finishesSplit = false;
+                if (!split.isLast() && bytesWithinPrimary + lineBytes > primaryLength) {
+                    finishesSplit = true;
+                }
+                bytesWithinPrimary += lineBytes;
+                return new LineRead(line, finishesSplit);
             }
         }
 
-        private void appendRow(PageBuilder pageBuilder, String[] rawValues) {
-            for (int columnIndex = 0; columnIndex < columnTypes.size(); columnIndex++) {
-                BlockBuilder blockBuilder = pageBuilder.getBlockBuilder(columnIndex);
-                String value = columnIndex < rawValues.length ? rawValues[columnIndex] : null;
-                if (value == null) {
-                    blockBuilder.appendNull();
-                }
-                else {
-                    ((VarcharType) columnTypes.get(columnIndex)).writeSlice(blockBuilder, Slices.utf8Slice(value));
-                }
-            }
+        private void appendRow(PageBuilder pageBuilder, String value) {
+            BlockBuilder blockBuilder = pageBuilder.getBlockBuilder(0);
+            outputType.writeSlice(blockBuilder, Slices.utf8Slice(value));
             pageBuilder.declarePosition();
         }
 
@@ -441,12 +416,11 @@ public final class S3FileCsvTableFunction extends AbstractConnectorTableFunction
                 reader.close();
             }
             catch (IOException e) {
-                LOG.error("Error closing CSV stream for path {}", handle.getS3Path(), e);
-                throw new UncheckedIOException("Failed to close CSV stream", e);
+                LOG.error("Error closing text stream for path {}", handle.getS3Path(), e);
+                throw new UncheckedIOException("Failed to close text stream", e);
             }
             finally {
                 reader = null;
-                finished = true;
             }
         }
 
@@ -454,6 +428,8 @@ public final class S3FileCsvTableFunction extends AbstractConnectorTableFunction
             return value.getBytes(charset).length + lineBreakBytes.length;
         }
     }
+
+    private record LineRead(String value, boolean finishesSplit) {}
 
     public static final class Split implements ConnectorSplit {
         private final String id;
@@ -514,10 +490,6 @@ public final class S3FileCsvTableFunction extends AbstractConnectorTableFunction
 
         public long getPrimaryLength() {
             return Math.max(0, primaryEndOffset - startOffset);
-        }
-
-        private boolean isWholeFile() {
-            return first && last && startOffset == 0 && rangeEndExclusive == primaryEndOffset;
         }
     }
 

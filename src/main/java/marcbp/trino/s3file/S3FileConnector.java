@@ -19,9 +19,9 @@ import io.trino.spi.function.table.ConnectorTableFunctionHandle;
 import io.trino.spi.function.table.TableFunctionProcessorProvider;
 import io.trino.spi.transaction.IsolationLevel;
 import marcbp.trino.s3file.csv.CsvProcessingService;
-import marcbp.trino.s3file.csv.S3FileCsvTableFunction;
-import marcbp.trino.s3file.json.S3FileJsonTableFunction;
-import marcbp.trino.s3file.txt.S3FileTextTableFunction;
+import marcbp.trino.s3file.csv.CsvTableFunction;
+import marcbp.trino.s3file.json.JsonTableFunction;
+import marcbp.trino.s3file.txt.TextTableFunction;
 import marcbp.trino.s3file.util.S3ClientConfig;
 import marcbp.trino.s3file.util.S3ObjectService;
 
@@ -38,9 +38,9 @@ public final class S3FileConnector implements Connector {
     private static final Logger LOG = LoggerFactory.getLogger(S3FileConnector.class);
 
     private final S3ObjectService s3ObjectService;
-    private final S3FileCsvTableFunction csvTableFunction;
-    private final S3FileTextTableFunction textTableFunction;
-    private final S3FileJsonTableFunction jsonTableFunction;
+    private final CsvTableFunction csvTableFunction;
+    private final TextTableFunction textTableFunction;
+    private final JsonTableFunction jsonTableFunction;
     private final FunctionProvider functionProvider;
     private final ConnectorSplitManager splitManager;
 
@@ -51,9 +51,9 @@ public final class S3FileConnector implements Connector {
     public S3FileConnector(S3ClientConfig clientConfig) {
         this.s3ObjectService = new S3ObjectService(requireNonNull(clientConfig, "clientConfig is null"));
         CsvProcessingService csvProcessingService = new CsvProcessingService();
-        this.csvTableFunction = new S3FileCsvTableFunction(s3ObjectService, csvProcessingService);
-        this.textTableFunction = new S3FileTextTableFunction(s3ObjectService);
-        this.jsonTableFunction = new S3FileJsonTableFunction(s3ObjectService);
+        this.csvTableFunction = new CsvTableFunction(s3ObjectService, csvProcessingService);
+        this.textTableFunction = new TextTableFunction(s3ObjectService);
+        this.jsonTableFunction = new JsonTableFunction(s3ObjectService);
         this.functionProvider = new InlineFunctionProvider();
         this.splitManager = new InlineSplitManager();
     }
@@ -99,15 +99,15 @@ public final class S3FileConnector implements Connector {
     private final class InlineFunctionProvider implements FunctionProvider {
         @Override
         public TableFunctionProcessorProvider getTableFunctionProcessorProvider(ConnectorTableFunctionHandle functionHandle) {
-            if (functionHandle instanceof S3FileCsvTableFunction.Handle csvHandle) {
+            if (functionHandle instanceof CsvTableFunction.Handle csvHandle) {
                 LOG.info("Supplying CSV processor provider for path {}", csvHandle.getS3Path());
                 return csvTableFunction.createProcessorProvider();
             }
-            if (functionHandle instanceof S3FileTextTableFunction.Handle textHandle) {
+            if (functionHandle instanceof TextTableFunction.Handle textHandle) {
                 LOG.info("Supplying text processor provider for path {}", textHandle.getS3Path());
                 return textTableFunction.createProcessorProvider();
             }
-            if (functionHandle instanceof S3FileJsonTableFunction.Handle jsonHandle) {
+            if (functionHandle instanceof JsonTableFunction.Handle jsonHandle) {
                 LOG.info("Supplying JSON processor provider for path {}", jsonHandle.getS3Path());
                 return jsonTableFunction.createProcessorProvider();
             }
@@ -118,17 +118,17 @@ public final class S3FileConnector implements Connector {
     private final class InlineSplitManager implements ConnectorSplitManager {
         @Override
         public ConnectorSplitSource getSplits(ConnectorTransactionHandle transactionHandle, ConnectorSession session, ConnectorTableFunctionHandle functionHandle) {
-            if (functionHandle instanceof S3FileCsvTableFunction.Handle csvHandle) {
+            if (functionHandle instanceof CsvTableFunction.Handle csvHandle) {
                 List<ConnectorSplit> splits = csvTableFunction.createSplits(csvHandle);
                 LOG.info("Providing {} CSV split(s) for path {}", splits.size(), csvHandle.getS3Path());
                 return new FixedSplitSource(splits);
             }
-            if (functionHandle instanceof S3FileTextTableFunction.Handle textHandle) {
+            if (functionHandle instanceof TextTableFunction.Handle textHandle) {
                 List<ConnectorSplit> splits = textTableFunction.createSplits(textHandle);
                 LOG.info("Providing {} text split(s) for path {}", splits.size(), textHandle.getS3Path());
                 return new FixedSplitSource(splits);
             }
-            if (functionHandle instanceof S3FileJsonTableFunction.Handle jsonHandle) {
+            if (functionHandle instanceof JsonTableFunction.Handle jsonHandle) {
                 List<ConnectorSplit> splits = jsonTableFunction.createSplits(jsonHandle);
                 LOG.info("Providing {} JSON split(s) for path {}", splits.size(), jsonHandle.getS3Path());
                 return new FixedSplitSource(splits);

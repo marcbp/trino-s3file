@@ -30,11 +30,11 @@ import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-class S3FileJsonTableFunctionTest {
+class JsonTableFunctionTest {
     private static final String PATH = "s3://bucket/events.jsonl";
 
     private final S3ObjectService s3ObjectService = mock(S3ObjectService.class);
-    private final S3FileJsonTableFunction function = new S3FileJsonTableFunction(s3ObjectService);
+    private final JsonTableFunction function = new JsonTableFunction(s3ObjectService);
 
     @BeforeEach
     void setUp() {
@@ -71,7 +71,7 @@ class S3FileJsonTableFunctionTest {
                         VarcharType.createUnboundedVarcharType()));
         assertEquals(expectedDescriptor, descriptor);
 
-        S3FileJsonTableFunction.Handle handle = (S3FileJsonTableFunction.Handle) analysis.getHandle();
+        JsonTableFunction.Handle handle = (JsonTableFunction.Handle) analysis.getHandle();
         assertEquals(PATH, handle.getS3Path());
         assertEquals(expectedDescriptor, Descriptor.descriptor(handle.getColumns(), handle.resolveColumnTypes()));
         assertEquals(512L, handle.getFileSize());
@@ -111,7 +111,7 @@ class S3FileJsonTableFunctionTest {
                         DoubleType.DOUBLE));
         assertEquals(expectedDescriptor, descriptor);
 
-        S3FileJsonTableFunction.Handle handle = (S3FileJsonTableFunction.Handle) analysis.getHandle();
+        JsonTableFunction.Handle handle = (JsonTableFunction.Handle) analysis.getHandle();
         assertEquals(List.of("event_id", "campaign", "score"), handle.getColumns());
         assertEquals(
                 List.of(BigintType.BIGINT, VarcharType.createUnboundedVarcharType(), DoubleType.DOUBLE),
