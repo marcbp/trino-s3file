@@ -11,7 +11,7 @@ import io.trino.spi.type.BigintType;
 import io.trino.spi.type.BooleanType;
 import io.trino.spi.type.DoubleType;
 import io.trino.spi.type.VarcharType;
-import marcbp.trino.s3file.util.S3ObjectService;
+import marcbp.trino.s3file.util.S3ClientBuilder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -25,30 +25,30 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.reset;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 class JsonTableFunctionTest {
     private static final String PATH = "s3://bucket/events.jsonl";
 
-    private final S3ObjectService s3ObjectService = mock(S3ObjectService.class);
-    private final JsonTableFunction function = new JsonTableFunction(s3ObjectService);
+    private final S3ClientBuilder s3ClientBuilder = mock(S3ClientBuilder.class);
+    private final S3ClientBuilder.SessionClient sessionClient = mock(S3ClientBuilder.SessionClient.class);
+    private final JsonTableFunction function = new JsonTableFunction(s3ClientBuilder);
 
     @BeforeEach
     void setUp() {
-        reset(s3ObjectService);
+        reset(s3ClientBuilder, sessionClient);
+        when(s3ClientBuilder.forSession(any(ConnectorSession.class))).thenReturn(sessionClient);
+        doNothing().when(sessionClient).close();
     }
 
     @Test
     void analyzeInfersTypesFromFirstDocument() {
-        when(s3ObjectService.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
+        when(sessionClient.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("""
                         {"event_id":1,"active":true,"amount":12.5,"meta":{"source":"app"},"note":"hello"}
                         {"event_id":2,"active":false,"amount":7.0,"note":"bye"}
                         """)));
-        when(s3ObjectService.getObjectSize(PATH)).thenReturn(512L);
+        when(sessionClient.getObjectSize(eq(PATH))).thenReturn(512L);
 
         Map<String, Argument> arguments = Map.of(
                 "PATH", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PATH))
@@ -77,18 +77,19 @@ class JsonTableFunctionTest {
         assertEquals(512L, handle.getFileSize());
         assertEquals(StandardCharsets.UTF_8.name(), handle.getCharsetName());
 
-        verify(s3ObjectService).openReader(eq(PATH), any(Charset.class));
-        verify(s3ObjectService).getObjectSize(PATH);
+        verify(sessionClient).openReader(eq(PATH), any(Charset.class));
+        verify(sessionClient).getObjectSize(eq(PATH));
+        verify(sessionClient).close();
     }
 
     @Test
     void analyzeAppliesAdditionalColumns() {
-        when(s3ObjectService.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
+        when(sessionClient.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("""
                         {"event_id":1}
                         {"event_id":2,"campaign":"spring","score":42.5}
                         """)));
-        when(s3ObjectService.getObjectSize(PATH)).thenReturn(256L);
+        when(sessionClient.getObjectSize(eq(PATH))).thenReturn(256L);
 
         Map<String, Argument> arguments = Map.of(
                 "PATH", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PATH)),
@@ -118,7 +119,8 @@ class JsonTableFunctionTest {
                 handle.resolveColumnTypes());
         assertEquals("ISO-8859-1", handle.getCharsetName());
 
-        verify(s3ObjectService).openReader(eq(PATH), any(Charset.class));
-        verify(s3ObjectService).getObjectSize(PATH);
+        verify(sessionClient).openReader(eq(PATH), any(Charset.class));
+        verify(sessionClient).getObjectSize(eq(PATH));
+        verify(sessionClient).close();
     }
 }

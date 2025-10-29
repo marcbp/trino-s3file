@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import marcbp.trino.s3file.util.S3ObjectService;
+import marcbp.trino.s3file.util.S3ClientBuilder;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
 import io.trino.spi.Page;
@@ -57,9 +57,9 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
     private static final int DEFAULT_SPLIT_SIZE_BYTES = 8 * 1024 * 1024;
     private static final int LOOKAHEAD_BYTES = 256 * 1024;
 
-    private final S3ObjectService s3ObjectService;
+    private final S3ClientBuilder s3ClientBuilder;
 
-    public TextTableFunction(S3ObjectService s3ObjectService) {
+    public TextTableFunction(S3ClientBuilder s3ClientBuilder) {
         super(
                 "txt",
                 "load",
@@ -80,7 +80,7 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
                                 .build()
                 ),
                 ReturnTypeSpecification.GenericTable.GENERIC_TABLE);
-        this.s3ObjectService = requireNonNull(s3ObjectService, "s3ObjectService is null");
+        this.s3ClientBuilder = requireNonNull(s3ClientBuilder, "s3ClientBuilder is null");
     }
 
     @Override
@@ -113,7 +113,10 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
 
         LOG.info("Analyzing txt.load table function for path {} with line break {}", s3Path, formatForLog(lineBreak));
 
-        long fileSize = s3ObjectService.getObjectSize(s3Path);
+        long fileSize;
+        try (S3ClientBuilder.SessionClient s3 = s3ClientBuilder.forSession(session)) {
+            fileSize = s3.getObjectSize(s3Path);
+        }
 
         List<String> columnNames = List.of("line");
         List<Type> columnTypes = List.of(VarcharType.createUnboundedVarcharType());
@@ -160,11 +163,11 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
         return splits;
     }
 
-    public TableFunctionSplitProcessor createSplitProcessor(Handle handle, ConnectorSplit split) {
+    public TableFunctionSplitProcessor createSplitProcessor(ConnectorSession session, Handle handle, ConnectorSplit split) {
         if (!(split instanceof Split textSplit)) {
             throw new IllegalArgumentException("Unexpected split type: " + split.getClass().getName());
         }
-        return new SplitProcessor(new Processor(s3ObjectService, handle, textSplit));
+        return new SplitProcessor(new Processor(session, s3ClientBuilder, handle, textSplit));
     }
 
     private static String decodeEscapes(String value) {
@@ -275,7 +278,7 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
                 throw new IllegalArgumentException("Unexpected handle type: " + handle.getClass().getName());
             }
             LOG.info("Creating text data processor for path {}", textHandle.getS3Path());
-            return new Processor(s3ObjectService, textHandle, null);
+            return new Processor(session, s3ClientBuilder, textHandle, null);
         }
 
         @Override
@@ -286,12 +289,13 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
             if (!(split instanceof Split textSplit)) {
                 throw new IllegalArgumentException("Unexpected split type: " + split.getClass().getName());
             }
-            return new SplitProcessor(new Processor(s3ObjectService, textHandle, textSplit));
+            return new SplitProcessor(new Processor(session, s3ClientBuilder, textHandle, textSplit));
         }
     }
 
     private static final class Processor implements TableFunctionDataProcessor {
-        private final S3ObjectService s3ObjectService;
+        private final ConnectorSession session;
+        private final S3ClientBuilder.SessionClient sessionClient;
         private final Handle handle;
         private final Split split;
         private final List<Type> columnTypes;
@@ -303,9 +307,11 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
         private boolean finished;
         private boolean skipFirstLine;
         private long bytesWithinPrimary;
+        private boolean sessionClosed;
 
-        private Processor(S3ObjectService s3ObjectService, Handle handle, Split split) {
-            this.s3ObjectService = s3ObjectService;
+        private Processor(ConnectorSession session, S3ClientBuilder s3ClientBuilder, Handle handle, Split split) {
+            this.session = requireNonNull(session, "session is null");
+            this.sessionClient = s3ClientBuilder.forSession(session);
             this.handle = handle;
             this.split = split != null ? split : Split.forWholeFile(handle.getFileSize());
             this.columnTypes = handle.resolveColumnTypes();
@@ -323,10 +329,12 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
             try {
                 if (finished) {
                     LOG.info("Text processor already finished for path {}", handle.getS3Path());
+                    closeSession();
                     return TableFunctionProcessorState.Finished.FINISHED;
                 }
                 if (primaryLength == 0) {
                     finished = true;
+                    closeSession();
                     return TableFunctionProcessorState.Finished.FINISHED;
                 }
                 ensureReader();
@@ -349,6 +357,7 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
 
                 if (pageBuilder.isEmpty()) {
                     finished = true;
+                    closeSession();
                     return TableFunctionProcessorState.Finished.FINISHED;
                 }
                 Page page = pageBuilder.build();
@@ -356,10 +365,12 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
             }
             catch (IOException e) {
                 LOG.error("Error while reading text content for path {}", handle.getS3Path(), e);
+                closeSession();
                 throw new UncheckedIOException("Failed to read text content", e);
             }
             catch (RuntimeException e) {
                 LOG.error("Unexpected runtime error for path {}", handle.getS3Path(), e);
+                closeSession();
                 throw e;
             }
         }
@@ -370,10 +381,11 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
             }
             if (primaryLength == 0) {
                 finished = true;
+                closeSession();
                 return;
             }
             LOG.info("Opening text stream for path {} (split {}-{})", handle.getS3Path(), split.getStartOffset(), split.getRangeEndExclusive());
-            reader = s3ObjectService.openReader(handle.getS3Path(), split.getStartOffset(), split.getRangeEndExclusive(), charset);
+            reader = sessionClient.openReader(handle.getS3Path(), split.getStartOffset(), split.getRangeEndExclusive(), charset);
         }
 
         private LineRead nextRecord() throws IOException {
@@ -406,6 +418,7 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
         private void completeProcessing() {
             closeReader();
             finished = true;
+            closeSession();
         }
 
         private void closeReader() {
@@ -422,6 +435,14 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
             finally {
                 reader = null;
             }
+        }
+
+        private void closeSession() {
+            if (sessionClosed) {
+                return;
+            }
+            sessionClosed = true;
+            sessionClient.close();
         }
 
         private long calculateLineBytes(String value) {

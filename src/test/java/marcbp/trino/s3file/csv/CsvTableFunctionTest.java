@@ -9,7 +9,7 @@ import io.trino.spi.function.table.Descriptor;
 import io.trino.spi.function.table.ScalarArgument;
 import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.type.VarcharType;
-import marcbp.trino.s3file.util.S3ObjectService;
+import marcbp.trino.s3file.util.S3ClientBuilder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -26,9 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.reset;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 /**
  * Unit tests that exercise the CSV table function's analysis workflow.
@@ -36,20 +34,23 @@ import static org.mockito.Mockito.when;
 class CsvTableFunctionTest {
     private static final String PATH = "s3://bucket/data.csv";
 
-    private final S3ObjectService s3ObjectService = mock(S3ObjectService.class);
+    private final S3ClientBuilder s3ClientBuilder = mock(S3ClientBuilder.class);
+    private final S3ClientBuilder.SessionClient sessionClient = mock(S3ClientBuilder.SessionClient.class);
     private final CsvProcessingService csvProcessingService = new CsvProcessingService();
-    private final CsvTableFunction function = new CsvTableFunction(s3ObjectService, csvProcessingService);
+    private final CsvTableFunction function = new CsvTableFunction(s3ClientBuilder, csvProcessingService);
 
     @BeforeEach
     void setUp() {
-        reset(s3ObjectService);
+        reset(s3ClientBuilder, sessionClient);
+        when(s3ClientBuilder.forSession(any(ConnectorSession.class))).thenReturn(sessionClient);
+        doNothing().when(sessionClient).close();
     }
 
     @Test
     void analyzeInfersColumnsFromHeader() {
-        when(s3ObjectService.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
+        when(sessionClient.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("first;second\n1;2\n")));
-        when(s3ObjectService.getObjectSize(PATH)).thenReturn(64L);
+        when(sessionClient.getObjectSize(eq(PATH))).thenReturn(64L);
 
         Map<String, Argument> arguments = Map.of(
                 "PATH", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PATH))
@@ -75,15 +76,16 @@ class CsvTableFunctionTest {
                 List.of(VarcharType.createUnboundedVarcharType(), VarcharType.createUnboundedVarcharType()));
         assertEquals(expectedDescriptor, analysis.getReturnedType().orElseThrow());
 
-        verify(s3ObjectService).openReader(eq(PATH), any(Charset.class));
-        verify(s3ObjectService).getObjectSize(PATH);
+        verify(sessionClient).openReader(eq(PATH), any(Charset.class));
+        verify(sessionClient).getObjectSize(eq(PATH));
+        verify(sessionClient).close();
     }
 
     @Test
     void analyzeWithoutHeaderGeneratesDefaultColumns() {
-        when(s3ObjectService.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
+        when(sessionClient.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("value1;value2;value3\n1;2;3\n")));
-        when(s3ObjectService.getObjectSize(PATH)).thenReturn(64L);
+        when(sessionClient.getObjectSize(eq(PATH))).thenReturn(64L);
 
         Map<String, Argument> arguments = Map.of(
                 "PATH", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PATH)),
@@ -110,8 +112,9 @@ class CsvTableFunctionTest {
                         VarcharType.createUnboundedVarcharType()));
         assertEquals(expectedDescriptor, analysis.getReturnedType().orElseThrow());
 
-        verify(s3ObjectService).openReader(eq(PATH), any(Charset.class));
-        verify(s3ObjectService).getObjectSize(PATH);
+        verify(sessionClient).openReader(eq(PATH), any(Charset.class));
+        verify(sessionClient).getObjectSize(eq(PATH));
+        verify(sessionClient).close();
     }
 
     @Test

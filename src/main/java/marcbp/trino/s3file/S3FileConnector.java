@@ -22,8 +22,8 @@ import marcbp.trino.s3file.csv.CsvProcessingService;
 import marcbp.trino.s3file.csv.CsvTableFunction;
 import marcbp.trino.s3file.json.JsonTableFunction;
 import marcbp.trino.s3file.txt.TextTableFunction;
+import marcbp.trino.s3file.util.S3ClientBuilder;
 import marcbp.trino.s3file.util.S3ClientConfig;
-import marcbp.trino.s3file.util.S3ObjectService;
 
 import java.util.Optional;
 import java.util.Set;
@@ -37,7 +37,7 @@ import static java.util.Objects.requireNonNull;
 public final class S3FileConnector implements Connector {
     private static final Logger LOG = LoggerFactory.getLogger(S3FileConnector.class);
 
-    private final S3ObjectService s3ObjectService;
+    private final S3ClientBuilder s3ClientBuilder;
     private final CsvTableFunction csvTableFunction;
     private final TextTableFunction textTableFunction;
     private final JsonTableFunction jsonTableFunction;
@@ -49,11 +49,11 @@ public final class S3FileConnector implements Connector {
     }
 
     public S3FileConnector(S3ClientConfig clientConfig) {
-        this.s3ObjectService = new S3ObjectService(requireNonNull(clientConfig, "clientConfig is null"));
+        this.s3ClientBuilder = new S3ClientBuilder(requireNonNull(clientConfig, "clientConfig is null"));
         CsvProcessingService csvProcessingService = new CsvProcessingService();
-        this.csvTableFunction = new CsvTableFunction(s3ObjectService, csvProcessingService);
-        this.textTableFunction = new TextTableFunction(s3ObjectService);
-        this.jsonTableFunction = new JsonTableFunction(s3ObjectService);
+        this.csvTableFunction = new CsvTableFunction(s3ClientBuilder, csvProcessingService);
+        this.textTableFunction = new TextTableFunction(s3ClientBuilder);
+        this.jsonTableFunction = new JsonTableFunction(s3ClientBuilder);
         this.functionProvider = new InlineFunctionProvider();
         this.splitManager = new InlineSplitManager();
     }
@@ -85,7 +85,6 @@ public final class S3FileConnector implements Connector {
 
     @Override
     public void shutdown() {
-        s3ObjectService.close();
     }
 
     private enum TransactionHandle implements ConnectorTransactionHandle {

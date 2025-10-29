@@ -34,7 +34,7 @@ import io.trino.spi.type.BooleanType;
 import io.trino.spi.type.DoubleType;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
-import marcbp.trino.s3file.util.S3ObjectService;
+import marcbp.trino.s3file.util.S3ClientBuilder;
 import marcbp.trino.s3file.util.CharsetUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -67,9 +67,9 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
     private static final int LOOKAHEAD_BYTES = 256 * 1024;
     private static final VarcharType UNBOUNDED_VARCHAR = VarcharType.createUnboundedVarcharType();
 
-    private final S3ObjectService s3ObjectService;
+    private final S3ClientBuilder s3ClientBuilder;
 
-    public JsonTableFunction(S3ObjectService s3ObjectService) {
+    public JsonTableFunction(S3ClientBuilder s3ClientBuilder) {
         super(
                 "json",
                 "load",
@@ -90,7 +90,7 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
                                 .build()
                 ),
                 ReturnTypeSpecification.GenericTable.GENERIC_TABLE);
-        this.s3ObjectService = requireNonNull(s3ObjectService, "s3ObjectService is null");
+        this.s3ClientBuilder = requireNonNull(s3ClientBuilder, "s3ClientBuilder is null");
     }
 
     @Override
@@ -113,28 +113,30 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
 
         Charset charset = CharsetUtils.resolve(arguments, ENCODING_ARGUMENT);
 
-        ColumnsMetadata columnsMetadata;
-        try (BufferedReader reader = s3ObjectService.openReader(s3Path, charset)) {
-            columnsMetadata = inferColumns(reader, s3Path);
+        List<String> columnNames;
+        List<ColumnType> detectedTypes;
+        long fileSize;
+        try (S3ClientBuilder.SessionClient s3 = s3ClientBuilder.forSession(session);
+             BufferedReader reader = s3.openReader(s3Path, charset)) {
+            ColumnsMetadata columnsMetadata = inferColumns(reader, s3Path);
+            columnNames = new ArrayList<>(columnsMetadata.names());
+            detectedTypes = new ArrayList<>(columnsMetadata.types());
+
+            List<ColumnDefinition> additionalColumns = parseAdditionalColumns(arguments);
+            mergeAdditionalColumns(columnNames, detectedTypes, additionalColumns);
+            fileSize = s3.getObjectSize(s3Path);
         }
         catch (IOException e) {
             LOG.error("Failed to analyze json.load for {}", s3Path, e);
             throw new UncheckedIOException("Failed to inspect JSON data", e);
         }
 
-        List<ColumnDefinition> additionalColumns = parseAdditionalColumns(arguments);
-
-        List<String> columnNames = new ArrayList<>(columnsMetadata.names());
-        List<ColumnType> detectedTypes = new ArrayList<>(columnsMetadata.types());
-        mergeAdditionalColumns(columnNames, detectedTypes, additionalColumns);
         LOG.info("Detected {} JSON field(s) for path {}: {}", columnNames.size(), s3Path, describeColumns(columnNames, detectedTypes));
         List<Type> columnTypes = new ArrayList<>(detectedTypes.size());
         for (ColumnType columnType : detectedTypes) {
             columnTypes.add(columnType.trinoType());
         }
         Descriptor descriptor = Descriptor.descriptor(columnNames, columnTypes);
-
-        long fileSize = s3ObjectService.getObjectSize(s3Path);
 
         return TableFunctionAnalysis.builder()
                 .returnedType(descriptor)
@@ -174,11 +176,11 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
         return splits;
     }
 
-    public TableFunctionSplitProcessor createSplitProcessor(Handle handle, ConnectorSplit split) {
+    public TableFunctionSplitProcessor createSplitProcessor(ConnectorSession session, Handle handle, ConnectorSplit split) {
         if (!(split instanceof Split jsonSplit)) {
             throw new IllegalArgumentException("Unexpected split type: " + split.getClass().getName());
         }
-        return new SplitProcessor(new Processor(s3ObjectService, handle, jsonSplit));
+        return new SplitProcessor(new Processor(session, s3ClientBuilder, handle, jsonSplit));
     }
 
     private static ColumnsMetadata inferColumns(BufferedReader reader, String path) throws IOException {
@@ -462,7 +464,7 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
                 throw new IllegalArgumentException("Unexpected handle type: " + handle.getClass().getName());
             }
             LOG.info("Creating JSON data processor for path {}", jsonHandle.getS3Path());
-            return new Processor(s3ObjectService, jsonHandle, null);
+            return new Processor(session, s3ClientBuilder, jsonHandle, null);
         }
 
         @Override
@@ -473,12 +475,13 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
             if (!(split instanceof Split jsonSplit)) {
                 throw new IllegalArgumentException("Unexpected split type: " + split.getClass().getName());
             }
-            return createSplitProcessor(jsonHandle, jsonSplit);
+            return createSplitProcessor(session, jsonHandle, jsonSplit);
         }
     }
 
     private static final class Processor implements TableFunctionDataProcessor {
-        private final S3ObjectService s3ObjectService;
+        private final ConnectorSession session;
+        private final S3ClientBuilder.SessionClient sessionClient;
         private final Handle handle;
         private final Split split;
         private final List<Type> columnTypes;
@@ -491,9 +494,11 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
         private boolean finished;
         private boolean skipFirstLine;
         private long bytesWithinPrimary;
+        private boolean sessionClosed;
 
-        private Processor(S3ObjectService s3ObjectService, Handle handle, Split split) {
-            this.s3ObjectService = requireNonNull(s3ObjectService, "s3ObjectService is null");
+        private Processor(ConnectorSession session, S3ClientBuilder s3ClientBuilder, Handle handle, Split split) {
+            this.session = requireNonNull(session, "session is null");
+            this.sessionClient = s3ClientBuilder.forSession(session);
             this.handle = requireNonNull(handle, "handle is null");
             this.split = split != null ? split : Split.forWholeFile(handle.getFileSize());
             this.columnTypes = handle.resolveColumnTypes();
@@ -509,10 +514,12 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
         public TableFunctionProcessorState process(List<Optional<Page>> unused) {
             try {
                 if (finished) {
+                    closeSession();
                     return TableFunctionProcessorState.Finished.FINISHED;
                 }
                 if (primaryLength == 0) {
                     finished = true;
+                    closeSession();
                     return TableFunctionProcessorState.Finished.FINISHED;
                 }
                 ensureReader();
@@ -539,6 +546,7 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
 
                 if (pageBuilder.isEmpty()) {
                     finished = true;
+                    closeSession();
                     return TableFunctionProcessorState.Finished.FINISHED;
                 }
                 Page page = pageBuilder.build();
@@ -546,10 +554,12 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
             }
             catch (IOException e) {
                 LOG.error("Error while reading JSON content for path {}", handle.getS3Path(), e);
+                closeSession();
                 throw new UncheckedIOException("Failed to read JSON content", e);
             }
             catch (RuntimeException e) {
                 LOG.error("Unexpected runtime error for path {}", handle.getS3Path(), e);
+                closeSession();
                 throw e;
             }
         }
@@ -560,10 +570,11 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
             }
             if (primaryLength == 0) {
                 finished = true;
+                closeSession();
                 return;
             }
             LOG.info("Opening JSON stream for path {} (split {}-{})", handle.getS3Path(), split.getStartOffset(), split.getRangeEndExclusive());
-            reader = s3ObjectService.openReader(handle.getS3Path(), split.getStartOffset(), split.getRangeEndExclusive(), charset);
+            reader = sessionClient.openReader(handle.getS3Path(), split.getStartOffset(), split.getRangeEndExclusive(), charset);
         }
 
         private LineRead nextRecord() throws IOException {
@@ -604,6 +615,7 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
         private void completeProcessing() {
             closeReader();
             finished = true;
+            closeSession();
         }
 
         private void closeReader() {
@@ -620,6 +632,14 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
             finally {
                 reader = null;
             }
+        }
+
+        private void closeSession() {
+            if (sessionClosed) {
+                return;
+            }
+            sessionClosed = true;
+            sessionClient.close();
         }
 
         private long calculateLineBytes(String value) {
