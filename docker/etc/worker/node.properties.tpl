@@ -1,3 +1,3 @@
 node.environment=development
-node.id=trino-coordinator
+node.id={{NODE_ID}}
 node.data-dir=/tmp/trino-data

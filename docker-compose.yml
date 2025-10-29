@@ -1,13 +1,15 @@
 services:
-  trino:
+  trino-coordinator:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    container_name: trino-plugin
+    image: trino-s3file:latest
+    container_name: trino-coordinator
     ports:
       - "8080:8080"
     volumes:
-      - ./docker/data/trino:/var/trino/data
+      - ./docker/etc/config.properties:/etc/trino/config.properties:ro
+      - ./docker/etc/node.properties:/etc/trino/node.properties:ro
     environment:
       AWS_ACCESS_KEY_ID: minio
       AWS_SECRET_ACCESS_KEY: minio123
@@ -15,6 +17,40 @@ services:
       AWS_S3_ENDPOINT: http://minio:9000
     depends_on:
       - minio
+    restart: unless-stopped
+
+  trino-worker-1:
+    image: trino-s3file:latest
+    container_name: trino-worker-1
+    volumes:
+      - ./docker/etc/worker:/etc/trino-worker:ro
+    entrypoint: ["/etc/trino-worker/entrypoint.sh"]
+    environment:
+      TRINO_NODE_ID: trino-worker-1
+      AWS_ACCESS_KEY_ID: minio
+      AWS_SECRET_ACCESS_KEY: minio123
+      AWS_REGION: us-east-1
+      AWS_S3_ENDPOINT: http://minio:9000
+    depends_on:
+      - minio
+      - trino-coordinator
+    restart: unless-stopped
+
+  trino-worker-2:
+    image: trino-s3file:latest
+    container_name: trino-worker-2
+    volumes:
+      - ./docker/etc/worker:/etc/trino-worker:ro
+    entrypoint: ["/etc/trino-worker/entrypoint.sh"]
+    environment:
+      TRINO_NODE_ID: trino-worker-2
+      AWS_ACCESS_KEY_ID: minio
+      AWS_SECRET_ACCESS_KEY: minio123
+      AWS_REGION: us-east-1
+      AWS_S3_ENDPOINT: http://minio:9000
+    depends_on:
+      - minio
+      - trino-coordinator
     restart: unless-stopped
 
   minio:
@@ -28,7 +64,7 @@ services:
       - "9000:9000"
       - "9001:9001"
     volumes:
-      - ./docker/data/minio:/data
+      - minio-data:/data
     restart: unless-stopped
 
   tests:
@@ -43,3 +79,4 @@ services:
 
 volumes:
   maven-repo:
+  minio-data:
