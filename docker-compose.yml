@@ -14,30 +14,16 @@ services:
       - minio
     restart: unless-stopped
 
-  trino-worker-1:
+  trino-worker:
     image: trino-s3file:latest
-    container_name: trino-worker-1
     volumes:
       - ./docker/etc/worker:/etc/trino-worker:ro
     entrypoint: ["/etc/trino-worker/entrypoint.sh"]
-    environment:
-      TRINO_NODE_ID: trino-worker-1
     depends_on:
       - minio
       - trino-coordinator
-    restart: unless-stopped
-
-  trino-worker-2:
-    image: trino-s3file:latest
-    container_name: trino-worker-2
-    volumes:
-      - ./docker/etc/worker:/etc/trino-worker:ro
-    entrypoint: ["/etc/trino-worker/entrypoint.sh"]
-    environment:
-      TRINO_NODE_ID: trino-worker-2
-    depends_on:
-      - minio
-      - trino-coordinator
+    deploy:
+      replicas: 2
     restart: unless-stopped
 
   minio:
