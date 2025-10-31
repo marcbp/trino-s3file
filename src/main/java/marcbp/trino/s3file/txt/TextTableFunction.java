@@ -3,6 +3,9 @@ package marcbp.trino.s3file.txt;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import io.airlift.log.Logger;
+import marcbp.trino.s3file.file.AbstractFileProcessor;
+import marcbp.trino.s3file.file.FileSplit;
+import marcbp.trino.s3file.file.SplitPlanner;
 import marcbp.trino.s3file.util.S3ClientBuilder;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
@@ -12,7 +15,6 @@ import io.trino.spi.TrinoException;
 import io.trino.spi.block.BlockBuilder;
 import io.trino.spi.connector.ConnectorAccessControl;
 import io.trino.spi.connector.ConnectorSession;
-import io.trino.spi.connector.ConnectorSplit;
 import io.trino.spi.connector.ConnectorTransactionHandle;
 import io.trino.spi.function.table.AbstractConnectorTableFunction;
 import io.trino.spi.function.table.Argument;
@@ -34,11 +36,13 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import marcbp.trino.s3file.file.BaseFileHandle;
+import marcbp.trino.s3file.file.BaseFileProcessorProvider;
+import marcbp.trino.s3file.file.FileSplitProcessor;
 import marcbp.trino.s3file.util.CharsetUtils;
 
 import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
@@ -131,42 +135,12 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
         return new ProcessorProvider();
     }
 
-    public List<ConnectorSplit> createSplits(Handle handle) {
-        if (handle.getFileSize() == 0) {
-            return List.of(new Split("split-0", 0, 0, 0, true, true));
-        }
-        List<ConnectorSplit> splits = new ArrayList<>();
-        long offset = 0;
-        int index = 0;
-        while (offset < handle.getFileSize()) {
-            // The primary region is the portion each worker is responsible for producing.
-            long primaryEnd = Math.min(handle.getFileSize(), offset + handle.getSplitSizeBytes());
-            long rangeEnd = primaryEnd;
-            boolean last = primaryEnd >= handle.getFileSize();
-            if (!last) {
-                // Extend the HTTP range request a bit beyond the primary region so we can
-                // finish reading the trailing line that crosses the split boundary.
-                rangeEnd = Math.min(handle.getFileSize(), primaryEnd + LOOKAHEAD_BYTES);
-                last = rangeEnd >= handle.getFileSize();
-            }
-            splits.add(new Split(
-                    "split-" + index,
-                    offset,
-                    primaryEnd,
-                    last ? handle.getFileSize() : rangeEnd,
-                    offset == 0,
-                    last));
-            offset = primaryEnd;
-            index++;
-        }
-        return splits;
+    public List<FileSplit> createSplits(Handle handle) {
+        return SplitPlanner.planSplits(handle.getFileSize(), handle.getSplitSizeBytes(), LOOKAHEAD_BYTES);
     }
 
-    public TableFunctionSplitProcessor createSplitProcessor(ConnectorSession session, Handle handle, ConnectorSplit split) {
-        if (!(split instanceof Split textSplit)) {
-            throw new IllegalArgumentException("Unexpected split type: " + split.getClass().getName());
-        }
-        return new SplitProcessor(new Processor(session, s3ClientBuilder, handle, textSplit));
+    public TableFunctionSplitProcessor createSplitProcessor(ConnectorSession session, Handle handle, FileSplit split) {
+        return new FileSplitProcessor(new Processor(session, s3ClientBuilder, handle, split));
     }
 
     private static String decodeEscapes(String value) {
@@ -204,13 +178,9 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
                 .replace("\t", "\\t");
     }
 
-    public static final class Handle implements ConnectorTableFunctionHandle {
-        private final String s3Path;
+    public static final class Handle extends BaseFileHandle {
         private final String lineBreak;
         private final Integer batchSize;
-        private final long fileSize;
-        private final int splitSizeBytes;
-        private final String charsetName;
 
         @JsonCreator
         public Handle(@JsonProperty("s3Path") String s3Path,
@@ -219,17 +189,9 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
                       @JsonProperty("fileSize") long fileSize,
                       @JsonProperty("splitSizeBytes") int splitSizeBytes,
                       @JsonProperty("charset") String charsetName) {
-            this.s3Path = requireNonNull(s3Path, "s3Path is null");
+            super(s3Path, fileSize, splitSizeBytes, charsetName);
             this.lineBreak = requireNonNull(lineBreak, "lineBreak is null");
-            this.batchSize = batchSize;
-            this.fileSize = fileSize;
-            this.splitSizeBytes = splitSizeBytes;
-            this.charsetName = (charsetName == null || charsetName.isBlank()) ? StandardCharsets.UTF_8.name() : charsetName;
-        }
-
-        @JsonProperty
-        public String getS3Path() {
-            return s3Path;
+            this.batchSize = batchSize == null ? DEFAULT_BATCH_SIZE : batchSize;
         }
 
         @JsonProperty
@@ -242,105 +204,67 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
             return batchSize;
         }
 
-        @JsonProperty
-        public long getFileSize() {
-            return fileSize;
-        }
-
-        @JsonProperty
-        public int getSplitSizeBytes() {
-            return splitSizeBytes;
-        }
-
-        @JsonProperty("charset")
-        public String getCharsetName() {
-            return charsetName;
-        }
-
         public List<Type> resolveColumnTypes() {
             return List.of(VarcharType.createUnboundedVarcharType());
         }
-
-        public int batchSizeOrDefault() {
-            return batchSize == null ? DEFAULT_BATCH_SIZE : batchSize;
-        }
-
-        public Charset charset() {
-            return CharsetUtils.resolve(charsetName);
-        }
     }
-    private final class ProcessorProvider implements TableFunctionProcessorProvider {
 
-        @Override
-        public TableFunctionDataProcessor getDataProcessor(ConnectorSession session, ConnectorTableFunctionHandle handle) {
-            if (!(handle instanceof Handle textHandle)) {
-                throw new IllegalArgumentException("Unexpected handle type: " + handle.getClass().getName());
-            }
-            LOG.info("Creating text data processor for path %s", textHandle.getS3Path());
-            return new Processor(session, s3ClientBuilder, textHandle, null);
+    private final class ProcessorProvider extends BaseFileProcessorProvider<Handle> {
+        private ProcessorProvider() {
+            super(Handle.class);
         }
 
         @Override
-        public TableFunctionSplitProcessor getSplitProcessor(ConnectorSession session, ConnectorTableFunctionHandle handle, ConnectorSplit split) {
-            if (!(handle instanceof Handle textHandle)) {
-                throw new IllegalArgumentException("Unexpected handle type: " + handle.getClass().getName());
-            }
-            if (!(split instanceof Split textSplit)) {
-                throw new IllegalArgumentException("Unexpected split type: " + split.getClass().getName());
-            }
-            return new SplitProcessor(new Processor(session, s3ClientBuilder, textHandle, textSplit));
+        protected TableFunctionDataProcessor createDataProcessor(ConnectorSession session, Handle handle) {
+            return new Processor(session, s3ClientBuilder, handle, null);
+        }
+
+        @Override
+        protected TableFunctionSplitProcessor createSplitProcessor(ConnectorSession session, Handle handle, FileSplit split) {
+            return new FileSplitProcessor(new Processor(session, s3ClientBuilder, handle, split));
         }
     }
 
-    private static final class Processor implements TableFunctionDataProcessor {
-        private final ConnectorSession session;
-        private final S3ClientBuilder.SessionClient sessionClient;
-        private final Handle handle;
-        private final Split split;
+    private static final class Processor extends AbstractFileProcessor<Handle> {
         private final List<Type> columnTypes;
         private final VarcharType outputType;
-        private final Charset charset;
         private final byte[] lineBreakBytes;
-        private final long primaryLength;
-        private BufferedReader reader;
-        private boolean finished;
-        private boolean skipFirstLine;
-        private long bytesWithinPrimary;
-        private boolean sessionClosed;
 
-        private Processor(ConnectorSession session, S3ClientBuilder s3ClientBuilder, Handle handle, Split split) {
-            this.session = requireNonNull(session, "session is null");
-            this.sessionClient = s3ClientBuilder.forSession(session);
-            this.handle = handle;
-            this.split = split != null ? split : Split.forWholeFile(handle.getFileSize());
+        private Processor(ConnectorSession session, S3ClientBuilder s3ClientBuilder, Handle handle, FileSplit split) {
+            super(session, s3ClientBuilder, handle, split);
             this.columnTypes = handle.resolveColumnTypes();
             this.outputType = (VarcharType) columnTypes.get(0);
-            this.charset = handle.charset();
-            this.lineBreakBytes = handle.getLineBreak().getBytes(charset);
-            // If the split does not start at byte 0 we skip the first line, because it was already
-            //                  terminated by the previous split (or the header read during analysis).
-            this.skipFirstLine = this.split.getStartOffset() > 0;
-            this.primaryLength = this.split.getPrimaryLength();
+            this.lineBreakBytes = handle.getLineBreak().getBytes(charset());
+        }
+
+        @Override
+        protected BufferedReader openReader() {
+            return sessionClient().openReader(handle().getS3Path(), split().getStartOffset(), split().getRangeEndExclusive(), charset());
+        }
+
+        @Override
+        protected void handleReaderCloseException(IOException e) {
+            LOG.error(e, "Error closing text stream for path %s", handle().getS3Path());
+            throw new UncheckedIOException("Failed to close text stream", e);
         }
 
         @Override
         public TableFunctionProcessorState process(List<Optional<Page>> unused) {
             try {
-                if (finished) {
-                    LOG.info("Text processor already finished for path %s", handle.getS3Path());
+                if (isFinished()) {
+                    LOG.info("Text processor already finished for path %s", handle().getS3Path());
                     closeSession();
                     return TableFunctionProcessorState.Finished.FINISHED;
                 }
-                if (primaryLength == 0) {
-                    finished = true;
-                    closeSession();
+                if (primaryLength() == 0) {
+                    markFinished();
                     return TableFunctionProcessorState.Finished.FINISHED;
                 }
                 ensureReader();
-                if (finished) {
+                if (isFinished()) {
                     return TableFunctionProcessorState.Finished.FINISHED;
                 }
-                PageBuilder pageBuilder = new PageBuilder(handle.batchSizeOrDefault(), columnTypes);
+                PageBuilder pageBuilder = new PageBuilder(handle().getBatchSize(), columnTypes);
                 while (!pageBuilder.isFull()) {
                     LineRead record = nextRecord();
                     if (record == null) {
@@ -355,55 +279,36 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
                 }
 
                 if (pageBuilder.isEmpty()) {
-                    finished = true;
-                    closeSession();
+                    markFinished();
                     return TableFunctionProcessorState.Finished.FINISHED;
                 }
                 Page page = pageBuilder.build();
                 return TableFunctionProcessorState.Processed.produced(page);
             }
             catch (IOException e) {
-                LOG.error(e, "Error while reading text content for path %s", handle.getS3Path());
+                LOG.error(e, "Error while reading text content for path %s", handle().getS3Path());
                 closeSession();
                 throw new UncheckedIOException("Failed to read text content", e);
             }
             catch (RuntimeException e) {
-                LOG.error(e, "Unexpected runtime error for path %s", handle.getS3Path());
+                LOG.error(e, "Unexpected runtime error for path %s", handle().getS3Path());
                 closeSession();
                 throw e;
             }
         }
 
-        private void ensureReader() {
-            if (reader != null || finished) {
-                return;
-            }
-            if (primaryLength == 0) {
-                finished = true;
-                closeSession();
-                return;
-            }
-            LOG.info("Opening text stream for path %s (split %s-%s)", handle.getS3Path(), split.getStartOffset(), split.getRangeEndExclusive());
-            reader = sessionClient.openReader(handle.getS3Path(), split.getStartOffset(), split.getRangeEndExclusive(), charset);
-        }
-
         private LineRead nextRecord() throws IOException {
             while (true) {
-                String line = reader.readLine();
+                String line = reader().readLine();
                 if (line == null) {
                     return null;
                 }
                 long lineBytes = calculateLineBytes(line);
-                if (skipFirstLine) {
-                    skipFirstLine = false;
-                    bytesWithinPrimary += lineBytes;
-                    continue;
-                }
                 boolean finishesSplit = false;
-                if (!split.isLast() && bytesWithinPrimary + lineBytes > primaryLength) {
+                if (!split().isLast() && bytesWithinPrimary() + lineBytes > primaryLength()) {
                     finishesSplit = true;
                 }
-                bytesWithinPrimary += lineBytes;
+                addBytesWithinPrimary(lineBytes);
                 return new LineRead(line, finishesSplit);
             }
         }
@@ -414,115 +319,10 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
             pageBuilder.declarePosition();
         }
 
-        private void completeProcessing() {
-            closeReader();
-            finished = true;
-            closeSession();
-        }
-
-        private void closeReader() {
-            if (reader == null) {
-                return;
-            }
-            try {
-                reader.close();
-            }
-            catch (IOException e) {
-                LOG.error(e, "Error closing text stream for path %s", handle.getS3Path());
-                throw new UncheckedIOException("Failed to close text stream", e);
-            }
-            finally {
-                reader = null;
-            }
-        }
-
-        private void closeSession() {
-            if (sessionClosed) {
-                return;
-            }
-            sessionClosed = true;
-            sessionClient.close();
-        }
-
         private long calculateLineBytes(String value) {
-            return value.getBytes(charset).length + lineBreakBytes.length;
+            return value.getBytes(charset()).length + lineBreakBytes.length;
         }
     }
 
     private record LineRead(String value, boolean finishesSplit) {}
-
-    public static final class Split implements ConnectorSplit {
-        private final String id;
-        private final long startOffset;
-        private final long primaryEndOffset;
-        private final long rangeEndExclusive;
-        private final boolean first;
-        private final boolean last;
-
-        @JsonCreator
-        public Split(@JsonProperty("id") String id,
-                     @JsonProperty("startOffset") long startOffset,
-                     @JsonProperty("primaryEndOffset") long primaryEndOffset,
-                     @JsonProperty("rangeEndExclusive") long rangeEndExclusive,
-                     @JsonProperty("first") boolean first,
-                     @JsonProperty("last") boolean last) {
-            this.id = requireNonNull(id, "id is null");
-            this.startOffset = startOffset;
-            this.primaryEndOffset = primaryEndOffset;
-            this.rangeEndExclusive = rangeEndExclusive;
-            this.first = first;
-            this.last = last;
-        }
-
-        public static Split forWholeFile(long size) {
-            return new Split("split-0", 0, size, size, true, true);
-        }
-
-        @JsonProperty
-        public String getId() {
-            return id;
-        }
-
-        @JsonProperty("startOffset")
-        public long getStartOffset() {
-            return startOffset;
-        }
-
-        @JsonProperty("primaryEndOffset")
-        public long getPrimaryEndOffset() {
-            return primaryEndOffset;
-        }
-
-        @JsonProperty("rangeEndExclusive")
-        public long getRangeEndExclusive() {
-            return rangeEndExclusive;
-        }
-
-        @JsonProperty("first")
-        public boolean isFirst() {
-            return first;
-        }
-
-        @JsonProperty("last")
-        public boolean isLast() {
-            return last;
-        }
-
-        public long getPrimaryLength() {
-            return Math.max(0, primaryEndOffset - startOffset);
-        }
-    }
-
-    private static final class SplitProcessor implements TableFunctionSplitProcessor {
-        private final Processor processor;
-
-        private SplitProcessor(Processor processor) {
-            this.processor = requireNonNull(processor, "processor is null");
-        }
-
-        @Override
-        public TableFunctionProcessorState process() {
-            return processor.process(null);
-        }
-    }
 }

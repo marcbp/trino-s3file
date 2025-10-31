@@ -2,7 +2,6 @@ package marcbp.trino.s3file.csv;
 
 import io.airlift.slice.Slices;
 import io.trino.spi.connector.ConnectorSession;
-import io.trino.spi.connector.ConnectorSplit;
 import io.trino.spi.connector.ConnectorTransactionHandle;
 import io.trino.spi.function.table.Argument;
 import io.trino.spi.function.table.Descriptor;
@@ -26,6 +25,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import marcbp.trino.s3file.file.FileSplit;
+
 import static org.mockito.Mockito.*;
 
 /**
@@ -129,14 +130,14 @@ class CsvTableFunctionTest {
                 8 * 1024 * 1024,
                 StandardCharsets.UTF_8.name());
 
-        List<ConnectorSplit> splits = function.createSplits(handle);
+        List<FileSplit> splits = function.createSplits(handle);
 
         assertEquals(4, splits.size());
-        CsvTableFunction.Split first = (CsvTableFunction.Split) splits.get(0);
+        FileSplit first = splits.get(0);
         assertEquals(0, first.getStartOffset());
         assertTrue(first.isFirst());
         assertFalse(first.isLast());
-        CsvTableFunction.Split last = (CsvTableFunction.Split) splits.get(splits.size() - 1);
+        FileSplit last = splits.get(splits.size() - 1);
         assertTrue(last.isLast());
         assertTrue(last.getStartOffset() < handle.getFileSize());
     }

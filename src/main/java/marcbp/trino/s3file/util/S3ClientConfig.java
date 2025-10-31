@@ -22,7 +22,7 @@ public record S3ClientConfig(
     public static final String INTERCEPTOR_CLASS_KEY = "aws.interceptor-class";
 
     public static S3ClientConfig from(Map<String, String> config) {
-        String region = config.getOrDefault(REGION_KEY, "us-east-1").trim();
+        String region = optionalValue(config.get(REGION_KEY)).orElse("us-east-1");
         Optional<String> endpoint = optionalValue(config.get(ENDPOINT_KEY));
         Optional<String> accessKey = optionalValue(config.get(ACCESS_KEY_KEY));
         Optional<String> secretKey = optionalValue(config.get(SECRET_KEY_KEY));

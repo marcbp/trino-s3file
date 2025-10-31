@@ -2,7 +2,6 @@ package marcbp.trino.s3file.txt;
 
 import io.airlift.slice.Slices;
 import io.trino.spi.connector.ConnectorSession;
-import io.trino.spi.connector.ConnectorSplit;
 import io.trino.spi.connector.ConnectorTransactionHandle;
 import io.trino.spi.function.table.Argument;
 import io.trino.spi.function.table.Descriptor;
@@ -10,6 +9,7 @@ import io.trino.spi.function.table.ScalarArgument;
 import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
+import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.util.S3ClientBuilder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -79,25 +79,25 @@ class TextTableFunctionTest {
                 4,
                 StandardCharsets.UTF_8.name());
 
-        List<ConnectorSplit> splits = function.createSplits(handle);
+        List<FileSplit> splits = function.createSplits(handle);
 
         assertEquals(3, splits.size());
 
-        TextTableFunction.Split first = (TextTableFunction.Split) splits.get(0);
+        FileSplit first = splits.get(0);
         assertEquals(0, first.getStartOffset());
         assertEquals(4, first.getPrimaryEndOffset());
         assertEquals(10, first.getRangeEndExclusive());
         assertTrue(first.isFirst());
-        assertTrue(first.isLast());
+        assertFalse(first.isLast());
 
-        TextTableFunction.Split second = (TextTableFunction.Split) splits.get(1);
+        FileSplit second = splits.get(1);
         assertEquals(4, second.getStartOffset());
         assertEquals(8, second.getPrimaryEndOffset());
         assertEquals(10, second.getRangeEndExclusive());
         assertFalse(second.isFirst());
-        assertTrue(second.isLast());
+        assertFalse(second.isLast());
 
-        TextTableFunction.Split third = (TextTableFunction.Split) splits.get(2);
+        FileSplit third = splits.get(2);
         assertEquals(8, third.getStartOffset());
         assertEquals(10, third.getPrimaryEndOffset());
         assertEquals(10, third.getRangeEndExclusive());
@@ -112,7 +112,7 @@ class TextTableFunctionTest {
         assertEquals(expectedDelimiter, handle.getLineBreak());
         assertEquals(expectedSize, handle.getFileSize());
         assertEquals(8 * 1024 * 1024, handle.getSplitSizeBytes());
-        assertEquals(1024, handle.batchSizeOrDefault());
+        assertEquals(1024, handle.getBatchSize());
         assertEquals(StandardCharsets.UTF_8.name(), handle.getCharsetName());
         List<Type> columnTypes = handle.resolveColumnTypes();
         assertEquals(1, columnTypes.size());

@@ -23,6 +23,7 @@ import marcbp.trino.s3file.json.JsonTableFunction;
 import marcbp.trino.s3file.txt.TextTableFunction;
 import marcbp.trino.s3file.util.S3ClientBuilder;
 import marcbp.trino.s3file.util.S3ClientConfig;
+import marcbp.trino.s3file.file.FileSplit;
 
 import java.util.Optional;
 import java.util.Set;
@@ -117,17 +118,17 @@ public final class S3FileConnector implements Connector {
         @Override
         public ConnectorSplitSource getSplits(ConnectorTransactionHandle transactionHandle, ConnectorSession session, ConnectorTableFunctionHandle functionHandle) {
             if (functionHandle instanceof CsvTableFunction.Handle csvHandle) {
-                List<ConnectorSplit> splits = csvTableFunction.createSplits(csvHandle);
+                List<FileSplit> splits = csvTableFunction.createSplits(csvHandle);
                 LOG.info("Providing %s CSV split(s) for path %s", splits.size(), csvHandle.getS3Path());
                 return new FixedSplitSource(splits);
             }
             if (functionHandle instanceof TextTableFunction.Handle textHandle) {
-                List<ConnectorSplit> splits = textTableFunction.createSplits(textHandle);
+                List<FileSplit> splits = textTableFunction.createSplits(textHandle);
                 LOG.info("Providing %s text split(s) for path %s", splits.size(), textHandle.getS3Path());
                 return new FixedSplitSource(splits);
             }
             if (functionHandle instanceof JsonTableFunction.Handle jsonHandle) {
-                List<ConnectorSplit> splits = jsonTableFunction.createSplits(jsonHandle);
+                List<FileSplit> splits = jsonTableFunction.createSplits(jsonHandle);
                 LOG.info("Providing %s JSON split(s) for path %s", splits.size(), jsonHandle.getS3Path());
                 return new FixedSplitSource(splits);
             }
