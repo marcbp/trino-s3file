@@ -1,7 +1,6 @@
 package marcbp.trino.s3file;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import io.airlift.log.Logger;
 import io.trino.spi.connector.Connector;
 import io.trino.spi.connector.ConnectorMetadata;
 import io.trino.spi.connector.ConnectorSession;
@@ -35,7 +34,7 @@ import static java.util.Objects.requireNonNull;
  * Connector exposing table functions backed by S3.
  */
 public final class S3FileConnector implements Connector {
-    private static final Logger LOG = LoggerFactory.getLogger(S3FileConnector.class);
+    private static final Logger LOG = Logger.get(S3FileConnector.class);
 
     private final S3ClientBuilder s3ClientBuilder;
     private final CsvTableFunction csvTableFunction;
@@ -99,15 +98,15 @@ public final class S3FileConnector implements Connector {
         @Override
         public TableFunctionProcessorProvider getTableFunctionProcessorProvider(ConnectorTableFunctionHandle functionHandle) {
             if (functionHandle instanceof CsvTableFunction.Handle csvHandle) {
-                LOG.info("Supplying CSV processor provider for path {}", csvHandle.getS3Path());
+                LOG.info("Supplying CSV processor provider for path %s", csvHandle.getS3Path());
                 return csvTableFunction.createProcessorProvider();
             }
             if (functionHandle instanceof TextTableFunction.Handle textHandle) {
-                LOG.info("Supplying text processor provider for path {}", textHandle.getS3Path());
+                LOG.info("Supplying text processor provider for path %s", textHandle.getS3Path());
                 return textTableFunction.createProcessorProvider();
             }
             if (functionHandle instanceof JsonTableFunction.Handle jsonHandle) {
-                LOG.info("Supplying JSON processor provider for path {}", jsonHandle.getS3Path());
+                LOG.info("Supplying JSON processor provider for path %s", jsonHandle.getS3Path());
                 return jsonTableFunction.createProcessorProvider();
             }
             throw new IllegalArgumentException("Unexpected handle type: " + functionHandle.getClass().getName());
@@ -119,17 +118,17 @@ public final class S3FileConnector implements Connector {
         public ConnectorSplitSource getSplits(ConnectorTransactionHandle transactionHandle, ConnectorSession session, ConnectorTableFunctionHandle functionHandle) {
             if (functionHandle instanceof CsvTableFunction.Handle csvHandle) {
                 List<ConnectorSplit> splits = csvTableFunction.createSplits(csvHandle);
-                LOG.info("Providing {} CSV split(s) for path {}", splits.size(), csvHandle.getS3Path());
+                LOG.info("Providing %s CSV split(s) for path %s", splits.size(), csvHandle.getS3Path());
                 return new FixedSplitSource(splits);
             }
             if (functionHandle instanceof TextTableFunction.Handle textHandle) {
                 List<ConnectorSplit> splits = textTableFunction.createSplits(textHandle);
-                LOG.info("Providing {} text split(s) for path {}", splits.size(), textHandle.getS3Path());
+                LOG.info("Providing %s text split(s) for path %s", splits.size(), textHandle.getS3Path());
                 return new FixedSplitSource(splits);
             }
             if (functionHandle instanceof JsonTableFunction.Handle jsonHandle) {
                 List<ConnectorSplit> splits = jsonTableFunction.createSplits(jsonHandle);
-                LOG.info("Providing {} JSON split(s) for path {}", splits.size(), jsonHandle.getS3Path());
+                LOG.info("Providing %s JSON split(s) for path %s", splits.size(), jsonHandle.getS3Path());
                 return new FixedSplitSource(splits);
             }
             throw new IllegalArgumentException("Unexpected handle type: " + functionHandle.getClass().getName());

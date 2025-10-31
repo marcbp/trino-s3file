@@ -2,8 +2,7 @@ package marcbp.trino.s3file.csv;
 
 import com.opencsv.CSVParser;
 import com.opencsv.CSVParserBuilder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import io.airlift.log.Logger;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -17,13 +16,13 @@ import static java.util.Objects.requireNonNull;
  * Encapsulates CSV parsing helpers used by the connector.
  */
 public final class CsvProcessingService {
-    private static final Logger LOG = LoggerFactory.getLogger(CsvProcessingService.class);
+    private static final Logger LOG = Logger.get(CsvProcessingService.class);
 
     public List<String> inferColumnNames(BufferedReader reader, String sourceDescription, char delimiter, boolean headerPresent) {
         requireNonNull(reader, "reader is null");
         try {
             String header = reader.readLine();
-            LOG.info("Read header from {}: {}", sourceDescription, header);
+            LOG.info("Read header from %s: %s", sourceDescription, header);
             if (header == null) {
                 throw new IllegalArgumentException("CSV file is empty: " + sourceDescription);
             }
@@ -44,7 +43,7 @@ public final class CsvProcessingService {
                 }
             }
             else {
-                LOG.info("Header disabled for {} ; generating default column names", sourceDescription);
+                LOG.info("Header disabled for %s ; generating default column names", sourceDescription);
                 for (int i = 0; i < tokens.length; i++) {
                     columns.add("column_" + (i + 1));
                 }
@@ -55,7 +54,7 @@ public final class CsvProcessingService {
             return List.copyOf(columns);
         }
         catch (IOException e) {
-            LOG.error("Failed to read CSV header for {}", sourceDescription, e);
+            LOG.error(e, "Failed to read CSV header for %s", sourceDescription);
             throw new UncheckedIOException("Failed to read CSV header: " + sourceDescription, e);
         }
     }
@@ -66,7 +65,7 @@ public final class CsvProcessingService {
                 .build();
         try {
             String[] parsed = parser.parseLine(line);
-            LOG.debug("Parsed line with {} tokens", parsed.length);
+            LOG.debug("Parsed line with %s tokens", parsed.length);
             return parsed;
         }
         catch (IOException e) {

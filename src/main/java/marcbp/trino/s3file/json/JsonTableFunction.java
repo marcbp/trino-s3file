@@ -36,8 +36,7 @@ import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.util.S3ClientBuilder;
 import marcbp.trino.s3file.util.CharsetUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import io.airlift.log.Logger;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -57,7 +56,7 @@ import static java.util.Objects.requireNonNull;
  * Table function that streams newline-delimited JSON objects from S3-compatible storage.
  */
 public final class JsonTableFunction extends AbstractConnectorTableFunction {
-    private static final Logger LOG = LoggerFactory.getLogger(JsonTableFunction.class);
+    private static final Logger LOG = Logger.get(JsonTableFunction.class);
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final String PATH_ARGUMENT = "PATH";
     private static final String ENCODING_ARGUMENT = "ENCODING";
@@ -127,11 +126,11 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
             fileSize = s3.getObjectSize(s3Path);
         }
         catch (IOException e) {
-            LOG.error("Failed to analyze json.load for {}", s3Path, e);
+            LOG.error(e, "Failed to analyze json.load for %s", s3Path);
             throw new UncheckedIOException("Failed to inspect JSON data", e);
         }
 
-        LOG.info("Detected {} JSON field(s) for path {}: {}", columnNames.size(), s3Path, describeColumns(columnNames, detectedTypes));
+        LOG.info("Detected %s JSON field(s) for path %s: %s", columnNames.size(), s3Path, describeColumns(columnNames, detectedTypes));
         List<Type> columnTypes = new ArrayList<>(detectedTypes.size());
         for (ColumnType columnType : detectedTypes) {
             columnTypes.add(columnType.trinoType());
@@ -463,7 +462,7 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
             if (!(handle instanceof Handle jsonHandle)) {
                 throw new IllegalArgumentException("Unexpected handle type: " + handle.getClass().getName());
             }
-            LOG.info("Creating JSON data processor for path {}", jsonHandle.getS3Path());
+            LOG.info("Creating JSON data processor for path %s", jsonHandle.getS3Path());
             return new Processor(session, s3ClientBuilder, jsonHandle, null);
         }
 
@@ -553,12 +552,12 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
                 return TableFunctionProcessorState.Processed.produced(page);
             }
             catch (IOException e) {
-                LOG.error("Error while reading JSON content for path {}", handle.getS3Path(), e);
+                LOG.error(e, "Error while reading JSON content for path %s", handle.getS3Path());
                 closeSession();
                 throw new UncheckedIOException("Failed to read JSON content", e);
             }
             catch (RuntimeException e) {
-                LOG.error("Unexpected runtime error for path {}", handle.getS3Path(), e);
+                LOG.error(e, "Unexpected runtime error for path %s", handle.getS3Path());
                 closeSession();
                 throw e;
             }
@@ -573,7 +572,7 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
                 closeSession();
                 return;
             }
-            LOG.info("Opening JSON stream for path {} (split {}-{})", handle.getS3Path(), split.getStartOffset(), split.getRangeEndExclusive());
+            LOG.info("Opening JSON stream for path %s (split %s-%s)", handle.getS3Path(), split.getStartOffset(), split.getRangeEndExclusive());
             reader = sessionClient.openReader(handle.getS3Path(), split.getStartOffset(), split.getRangeEndExclusive(), charset);
         }
 
@@ -626,7 +625,7 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
                 reader.close();
             }
             catch (IOException e) {
-                LOG.error("Error closing JSON stream for path {}", handle.getS3Path(), e);
+                LOG.error(e, "Error closing JSON stream for path %s", handle.getS3Path());
                 throw new UncheckedIOException("Failed to close JSON stream", e);
             }
             finally {

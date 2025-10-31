@@ -27,8 +27,7 @@ import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.util.S3ClientBuilder;
 import marcbp.trino.s3file.util.CharsetUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import io.airlift.log.Logger;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -48,7 +47,7 @@ import static marcbp.trino.s3file.util.CharsetUtils.resolve;
  * Table function that reads CSV data from S3-compatible storage, inferring columns on the fly.
  */
 public final class CsvTableFunction extends AbstractConnectorTableFunction {
-    private static final Logger LOG = LoggerFactory.getLogger(CsvTableFunction.class);
+    private static final Logger LOG = Logger.get(CsvTableFunction.class);
     private static final String PATH_ARGUMENT = "PATH";
     private static final String DELIMITER_ARGUMENT = "DELIMITER";
     private static final String ENCODING_ARGUMENT = "ENCODING";
@@ -114,15 +113,15 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
             delimiter = (char) delimiterSlice.getByte(0);
         }
 
-        LOG.info("Analyzing load table function for path {} with delimiter {}", s3Path, delimiter);
+        LOG.info("Analyzing load table function for path %s with delimiter %s", s3Path, delimiter);
         boolean headerPresent = true;
         ScalarArgument headerArg = (ScalarArgument) arguments.get("HEADER");
         if (headerArg != null && headerArg.getValue() instanceof Slice headerSlice) {
             String headerText = headerSlice.toStringUtf8();
-            LOG.info("HEADER argument value: {}", headerText);
+            LOG.info("HEADER argument value: %s", headerText);
             headerPresent = Boolean.parseBoolean(headerText.trim());
         }
-        LOG.info("Header present: {}", headerPresent);
+        LOG.info("Header present: %s", headerPresent);
 
         List<String> columnNames;
         long fileSize;
@@ -132,10 +131,10 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
             fileSize = s3.getObjectSize(s3Path);
         }
         catch (IOException e) {
-            LOG.error("Failed to infer column names for {}", s3Path, e);
+            LOG.error(e, "Failed to infer column names for %s", s3Path);
             throw new UncheckedIOException("Failed to infer column names", e);
         }
-        LOG.info("Detected {} columns: {}", columnNames.size(), columnNames);
+        LOG.info("Detected %s columns: %s", columnNames.size(), columnNames);
         List<Type> columnTypes = columnNames.stream()
                 .map(name -> (Type) VarcharType.createUnboundedVarcharType())
                 .toList();
@@ -277,7 +276,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
             if (!(handle instanceof Handle csvHandle)) {
                 throw new IllegalArgumentException("Unexpected handle type: " + handle.getClass().getName());
             }
-            LOG.info("Creating data processor for path {}", csvHandle.getS3Path());
+            LOG.info("Creating data processor for path %s", csvHandle.getS3Path());
             return new Processor(session, s3ClientBuilder, csvProcessingService, csvHandle, null);
         }
 
@@ -311,7 +310,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
         private boolean sessionClosed;
 
         private Processor(ConnectorSession session, S3ClientBuilder s3ClientBuilder, CsvProcessingService csvProcessingService, Handle handle, Split split) {
-            LOG.debug("Creating processor for path {}", handle.getS3Path());
+            LOG.debug("Creating processor for path %s", handle.getS3Path());
             this.session = session;
             this.sessionClient = s3ClientBuilder.forSession(session);
             this.csvProcessingService = csvProcessingService;
@@ -328,7 +327,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
         public TableFunctionProcessorState process(List<Optional<Page>> unused) {
             try {
                 if (finished) {
-                    LOG.info("Processor already finished for path {}", handle.getS3Path());
+                    LOG.info("Processor already finished for path %s", handle.getS3Path());
                     closeSession();
                     return TableFunctionProcessorState.Finished.FINISHED;
                 }
@@ -337,16 +336,16 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                     return TableFunctionProcessorState.Finished.FINISHED;
                 }
                 PageBuilder pageBuilder = new PageBuilder(handle.batchSizeOrDefault(), columnTypes);
-                LOG.info("Starting CSV batch read for path {}", handle.getS3Path());
+                LOG.info("Starting CSV batch read for path %s", handle.getS3Path());
                 while (!pageBuilder.isFull()) {
                     String line = reader.readLine();
                     if (line == null) {
-                        LOG.info("Reached end of CSV for path {}", handle.getS3Path());
+                        LOG.info("Reached end of CSV for path %s", handle.getS3Path());
                         completeProcessing();
                         break;
                     }
                     long lineBytes = calculateLineBytes(line);
-                    LOG.debug("Read line: {}", line);
+                    LOG.debug("Read line: %s", line);
                     if (skipFirstLine) {
                         skipFirstLine = false;
                         bytesWithinPrimary += lineBytes;
@@ -357,7 +356,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                         continue;
                     }
                     String[] values = csvProcessingService.parseCsvLine(line, handle.getDelimiter());
-                    LOG.debug("Appending row with {} values for path {}", values.length, handle.getS3Path());
+                    LOG.debug("Appending row with %s values for path %s", values.length, handle.getS3Path());
                     boolean finishesSplit = false;
                     if (!split.isLast() && bytesWithinPrimary + lineBytes > primaryLength) {
                         finishesSplit = true;
@@ -371,22 +370,22 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                 }
 
                 if (pageBuilder.isEmpty()) {
-                    LOG.info("No rows produced in this batch for path {}", handle.getS3Path());
+                    LOG.info("No rows produced in this batch for path %s", handle.getS3Path());
                     finished = true;
                     closeSession();
                     return TableFunctionProcessorState.Finished.FINISHED;
                 }
                 Page page = pageBuilder.build();
-                LOG.info("Produced {} rows for path {}", page.getPositionCount(), handle.getS3Path());
+                LOG.info("Produced %s rows for path %s", page.getPositionCount(), handle.getS3Path());
                 return TableFunctionProcessorState.Processed.produced(page);
             }
             catch (IOException e) {
-                LOG.error("Error while reading CSV content for path {}", handle.getS3Path(), e);
+                LOG.error(e, "Error while reading CSV content for path %s", handle.getS3Path());
                 closeSession();
                 throw new UncheckedIOException("Failed to read CSV content", e);
             }
             catch (RuntimeException e) {
-                LOG.error("Unexpected runtime error for path {}", handle.getS3Path(), e);
+                LOG.error(e, "Unexpected runtime error for path %s", handle.getS3Path());
                 closeSession();
                 throw e;
             }
@@ -401,7 +400,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                 closeSession();
                 return;
             }
-            LOG.info("Opening CSV stream for path {}", handle.getS3Path());
+            LOG.info("Opening CSV stream for path %s", handle.getS3Path());
             if (split.isWholeFile()) {
                 reader = sessionClient.openReader(handle.getS3Path(), charset);
             }
@@ -411,14 +410,14 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
             try {
                 if (handle.isHeaderPresent() && split.isFirst()) {
                     String header = reader.readLine();
-                    LOG.info("Skipped CSV header for path {}: {}", handle.getS3Path(), header);
+                    LOG.info("Skipped CSV header for path %s: %s", handle.getS3Path(), header);
                     if (header != null) {
                         bytesWithinPrimary += calculateLineBytes(header);
                     }
                 }
             }
             catch (IOException e) {
-                LOG.error("Unable to read CSV header for path {}", handle.getS3Path(), e);
+                LOG.error(e, "Unable to read CSV header for path %s", handle.getS3Path());
                 closeSession();
                 throw new UncheckedIOException("Failed to read CSV header", e);
             }
@@ -452,7 +451,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                 reader.close();
             }
             catch (IOException e) {
-                LOG.error("Error closing CSV stream for path {}", handle.getS3Path(), e);
+                LOG.error(e, "Error closing CSV stream for path %s", handle.getS3Path());
                 throw new UncheckedIOException("Failed to close CSV stream", e);
             }
             finally {

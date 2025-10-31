@@ -2,8 +2,7 @@ package marcbp.trino.s3file.txt;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import io.airlift.log.Logger;
 import marcbp.trino.s3file.util.S3ClientBuilder;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
@@ -49,7 +48,7 @@ import static java.util.Objects.requireNonNull;
  * Table function that streams plain text files from S3-compatible storage as rows for Trino.
  */
 public final class TextTableFunction extends AbstractConnectorTableFunction {
-    private static final Logger LOG = LoggerFactory.getLogger(TextTableFunction.class);
+    private static final Logger LOG = Logger.get(TextTableFunction.class);
     private static final String PATH_ARGUMENT = "PATH";
     private static final String LINE_BREAK_ARGUMENT = "LINE_BREAK";
     private static final String ENCODING_ARGUMENT = "ENCODING";
@@ -111,7 +110,7 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
             throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "LINE_BREAK cannot be empty");
         }
 
-        LOG.info("Analyzing txt.load table function for path {} with line break {}", s3Path, formatForLog(lineBreak));
+        LOG.info("Analyzing txt.load table function for path %s with line break %s", s3Path, formatForLog(lineBreak));
 
         long fileSize;
         try (S3ClientBuilder.SessionClient s3 = s3ClientBuilder.forSession(session)) {
@@ -277,7 +276,7 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
             if (!(handle instanceof Handle textHandle)) {
                 throw new IllegalArgumentException("Unexpected handle type: " + handle.getClass().getName());
             }
-            LOG.info("Creating text data processor for path {}", textHandle.getS3Path());
+            LOG.info("Creating text data processor for path %s", textHandle.getS3Path());
             return new Processor(session, s3ClientBuilder, textHandle, null);
         }
 
@@ -328,7 +327,7 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
         public TableFunctionProcessorState process(List<Optional<Page>> unused) {
             try {
                 if (finished) {
-                    LOG.info("Text processor already finished for path {}", handle.getS3Path());
+                    LOG.info("Text processor already finished for path %s", handle.getS3Path());
                     closeSession();
                     return TableFunctionProcessorState.Finished.FINISHED;
                 }
@@ -364,12 +363,12 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
                 return TableFunctionProcessorState.Processed.produced(page);
             }
             catch (IOException e) {
-                LOG.error("Error while reading text content for path {}", handle.getS3Path(), e);
+                LOG.error(e, "Error while reading text content for path %s", handle.getS3Path());
                 closeSession();
                 throw new UncheckedIOException("Failed to read text content", e);
             }
             catch (RuntimeException e) {
-                LOG.error("Unexpected runtime error for path {}", handle.getS3Path(), e);
+                LOG.error(e, "Unexpected runtime error for path %s", handle.getS3Path());
                 closeSession();
                 throw e;
             }
@@ -384,7 +383,7 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
                 closeSession();
                 return;
             }
-            LOG.info("Opening text stream for path {} (split {}-{})", handle.getS3Path(), split.getStartOffset(), split.getRangeEndExclusive());
+            LOG.info("Opening text stream for path %s (split %s-%s)", handle.getS3Path(), split.getStartOffset(), split.getRangeEndExclusive());
             reader = sessionClient.openReader(handle.getS3Path(), split.getStartOffset(), split.getRangeEndExclusive(), charset);
         }
 
@@ -429,7 +428,7 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
                 reader.close();
             }
             catch (IOException e) {
-                LOG.error("Error closing text stream for path {}", handle.getS3Path(), e);
+                LOG.error(e, "Error closing text stream for path %s", handle.getS3Path());
                 throw new UncheckedIOException("Failed to close text stream", e);
             }
             finally {

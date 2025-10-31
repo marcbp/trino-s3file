@@ -1,8 +1,7 @@
 package marcbp.trino.s3file.util;
 
 import io.trino.spi.connector.ConnectorSession;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import io.airlift.log.Logger;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
@@ -37,13 +36,13 @@ import static java.util.Objects.requireNonNull;
  * Builder for session-scoped S3 clients with optional execution interceptors.
  */
 public final class S3ClientBuilder {
-    private static final Logger LOG = LoggerFactory.getLogger(S3ClientBuilder.class);
+    private static final Logger LOG = Logger.get(S3ClientBuilder.class);
     private static final Pattern S3_URI = Pattern.compile("s3://([^/]+)/(.+)");
     private static final ExecutionAttribute<ConnectorSession> SESSION_ATTRIBUTE =
             new ExecutionAttribute<>("trino.connector.session");
 
     private final S3ClientConfig config;
-    private final ExecutionInterceptor userInterceptor;
+    private final String interceptorClassName;
 
     public S3ClientBuilder() {
         this(S3ClientConfig.defaults());
@@ -51,9 +50,10 @@ public final class S3ClientBuilder {
 
     public S3ClientBuilder(S3ClientConfig clientConfig) {
         this.config = requireNonNull(clientConfig, "clientConfig is null");
-        this.userInterceptor = clientConfig.interceptorClass()
-                .map(S3ClientBuilder::instantiateInterceptor)
-                .orElse(null);
+        this.interceptorClassName = clientConfig.interceptorClass().orElse(null);
+        if (interceptorClassName != null) {
+            LOG.info("Configured AWS execution interceptor: %s", interceptorClassName);
+        }
     }
 
     public static ExecutionAttribute<ConnectorSession> sessionAttribute() {
@@ -70,7 +70,7 @@ public final class S3ClientBuilder {
         builder.region(Region.of(config.region()));
 
         config.endpoint().ifPresent(endpoint -> {
-            LOG.info("Using custom S3 endpoint: {}", endpoint);
+            LOG.info("Using custom S3 endpoint: %s", endpoint);
             try {
                 builder.endpointOverride(new URI(endpoint));
             }
@@ -95,11 +95,14 @@ public final class S3ClientBuilder {
         }
         builder.credentialsProvider(credentialsProvider);
 
-        builder.overrideConfiguration(b -> b.addExecutionInterceptor(new SessionAttributeInterceptor(session)));
-
-        if (userInterceptor != null) {
-            builder.overrideConfiguration(b -> b.addExecutionInterceptor(userInterceptor));
-        }
+        builder.overrideConfiguration(b -> {
+            if (interceptorClassName != null) {
+                ExecutionInterceptor interceptor = instantiateInterceptor(interceptorClassName);
+                b.addExecutionInterceptor(interceptor);
+                LOG.debug("Registered execution interceptor %s for session %s", interceptor.getClass().getName(), session.getUser());
+            }
+            b.addExecutionInterceptor(new SessionAttributeInterceptor(session));
+        });
 
         builder.serviceConfiguration(S3Configuration.builder()
                 .pathStyleAccessEnabled(config.pathStyleAccess())
@@ -187,7 +190,7 @@ public final class S3ClientBuilder {
             }
 
             ResponseInputStream<GetObjectResponse> stream = client.getObject(requestBuilder.build());
-            LOG.info("Opened S3 object {}/{}", location.bucket(), location.key());
+            LOG.info("Opened S3 object %s/%s", location.bucket(), location.key());
             return new ClosingBufferedReader(new InputStreamReader(stream, charset), stream);
         }
 
