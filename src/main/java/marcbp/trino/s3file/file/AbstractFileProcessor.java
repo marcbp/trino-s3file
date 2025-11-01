@@ -100,11 +100,6 @@ public abstract class AbstractFileProcessor<H extends BaseFileHandle>
     protected abstract List<io.trino.spi.type.Type> columnTypes();
 
     /**
-     * Batch size hint for the page builder.
-     */
-    protected abstract int batchSize();
-
-    /**
      * Fetches the next logical record from the underlying representation.
      * The returned {@link RecordReadResult} indicates whether data should be appended,
      * skipped, or whether the split has been exhausted.
@@ -167,7 +162,7 @@ public abstract class AbstractFileProcessor<H extends BaseFileHandle>
             }
 
             logger.debug("Processing split %s for %s", split.getId(), handle.getS3Path());
-            PageBuilder pageBuilder = new PageBuilder(batchSize(), columnTypes());
+            PageBuilder pageBuilder = new PageBuilder(handle.getBatchSize(), columnTypes());
             while (!pageBuilder.isFull()) {
                 RecordReadResult<?> result = readNextRecord();
                 if (result.status() == RecordStatus.END) {

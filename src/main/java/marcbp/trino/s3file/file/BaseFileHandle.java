@@ -13,16 +13,20 @@ import static java.util.Objects.requireNonNull;
  * Common connector table function handle metadata shared by file-backed functions.
  */
 public abstract class BaseFileHandle implements ConnectorTableFunctionHandle {
+    public static final int DEFAULT_BATCH_SIZE = 1024;
+
     private final String s3Path;
     private final String charsetName;
     private final long fileSize;
     private final int splitSizeBytes;
+    private final int batchSize;
 
-    protected BaseFileHandle(String s3Path, long fileSize, int splitSizeBytes, String charsetName) {
+    protected BaseFileHandle(String s3Path, long fileSize, int splitSizeBytes, String charsetName, int batchSize) {
         this.s3Path = requireNonNull(s3Path, "s3Path is null");
         this.charsetName = requireNonNull(charsetName, "charsetName is null");
         this.fileSize = fileSize;
         this.splitSizeBytes = splitSizeBytes;
+        this.batchSize = batchSize;
     }
 
     @JsonProperty("s3Path")
@@ -43,6 +47,11 @@ public abstract class BaseFileHandle implements ConnectorTableFunctionHandle {
     @JsonProperty("charset")
     public String getCharsetName() {
         return charsetName;
+    }
+
+    @JsonProperty("batchSize")
+    public int getBatchSize() {
+        return batchSize;
     }
 
     @JsonIgnore

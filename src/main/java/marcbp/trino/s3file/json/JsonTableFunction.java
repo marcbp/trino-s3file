@@ -58,7 +58,6 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
     private static final String ENCODING_ARGUMENT = "ENCODING";
     static final String ADDITIONAL_COLUMNS_ARGUMENT = "ADDITIONAL_COLUMNS";
 
-    private static final int DEFAULT_BATCH_SIZE = 1024;
     private static final int DEFAULT_SPLIT_SIZE_BYTES = 8 * 1024 * 1024;
     private static final int LOOKAHEAD_BYTES = 256 * 1024;
 
@@ -155,7 +154,6 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
     public static final class Handle extends BaseFileHandle {
         private final List<String> columns;
         private final List<ColumnType> columnTypes;
-        private final Integer batchSize;
 
         @JsonCreator
         public Handle(@JsonProperty("s3Path") String s3Path,
@@ -165,10 +163,9 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
                       @JsonProperty("fileSize") long fileSize,
                       @JsonProperty("splitSizeBytes") int splitSizeBytes,
                       @JsonProperty("charset") String charsetName) {
-            super(s3Path, fileSize, splitSizeBytes, charsetName);
+            super(s3Path, fileSize, splitSizeBytes, charsetName, batchSize == null ? BaseFileHandle.DEFAULT_BATCH_SIZE : batchSize);
             this.columns = List.copyOf(requireNonNull(columns, "columns is null"));
             this.columnTypes = List.copyOf(requireNonNull(columnTypes, "columnTypes is null"));
-            this.batchSize = batchSize;
         }
 
         @JsonProperty
@@ -181,21 +178,12 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
             return columnTypes;
         }
 
-        @JsonProperty
-        public Integer getBatchSize() {
-            return batchSize;
-        }
-
         public List<Type> resolveColumnTypes() {
             List<Type> types = new ArrayList<>(columnTypes.size());
             for (ColumnType columnType : columnTypes) {
                 types.add(columnType.trinoType());
             }
             return List.copyOf(types);
-        }
-
-        public int batchSizeOrDefault() {
-            return batchSize == null ? DEFAULT_BATCH_SIZE : batchSize;
         }
     }
 
@@ -264,11 +252,6 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
         @Override
         protected List<Type> columnTypes() {
             return columnTypes;
-        }
-
-        @Override
-        protected int batchSize() {
-            return handle.batchSizeOrDefault();
         }
 
     }

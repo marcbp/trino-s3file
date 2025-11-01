@@ -31,7 +31,6 @@ import java.nio.charset.StandardCharsets;
 import marcbp.trino.s3file.util.S3UriUtils.S3Location;
 
 import static java.util.Objects.requireNonNull;
-import static marcbp.trino.s3file.util.S3UriUtils.parse;
 
 /**
  * Builder for session-scoped S3 clients with optional execution interceptors.
@@ -71,7 +70,7 @@ public final class S3ClientBuilder {
         }
 
         public BufferedReader openReader(String s3Uri, long start, Long endExclusive, Charset charset) {
-            S3Location location = parse(s3Uri);
+            S3Location location = S3UriUtils.parse(s3Uri);
             GetObjectRequest.Builder requestBuilder = GetObjectRequest.builder()
                     .bucket(location.bucket())
                     .key(location.key());
@@ -94,7 +93,7 @@ public final class S3ClientBuilder {
         }
 
         public long getObjectSize(String s3Uri) {
-            S3Location location = parse(s3Uri);
+            S3Location location = S3UriUtils.parse(s3Uri);
             HeadObjectResponse response = client.headObject(HeadObjectRequest.builder()
                     .bucket(location.bucket())
                     .key(location.key())

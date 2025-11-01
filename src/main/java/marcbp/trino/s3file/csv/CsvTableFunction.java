@@ -51,7 +51,6 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
     private static final String DELIMITER_ARGUMENT = "DELIMITER";
     private static final String ENCODING_ARGUMENT = "ENCODING";
 
-    private static final int DEFAULT_BATCH_SIZE = 1024;
     private static final int DEFAULT_SPLIT_SIZE_BYTES = 8 * 1024 * 1024;
     private static final int LOOKAHEAD_BYTES = 256 * 1024;
 
@@ -162,7 +161,6 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
         private final List<String> columns;
         private final char delimiter;
         private final boolean headerPresent;
-        private final Integer batchSize;
 
         @JsonCreator
         public Handle(@JsonProperty("s3Path") String s3Path,
@@ -173,11 +171,10 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                       @JsonProperty("fileSize") long fileSize,
                       @JsonProperty("splitSizeBytes") int splitSizeBytes,
                       @JsonProperty("charset") String charsetName) {
-            super(s3Path, fileSize, splitSizeBytes, charsetName);
+            super(s3Path, fileSize, splitSizeBytes, charsetName, batchSize == null ? BaseFileHandle.DEFAULT_BATCH_SIZE : batchSize);
             this.columns = List.copyOf(requireNonNull(columns, "columns is null"));
             this.delimiter = delimiter;
             this.headerPresent = headerPresent;
-            this.batchSize = batchSize;
         }
 
         @JsonProperty
@@ -195,21 +192,12 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
             return headerPresent;
         }
 
-        @JsonProperty
-        public Integer getBatchSize() {
-            return batchSize;
-        }
-
         public List<Type> resolveColumnTypes() {
             List<Type> types = new ArrayList<>(columns.size());
             for (int i = 0; i < columns.size(); i++) {
                 types.add(VarcharType.createUnboundedVarcharType());
             }
             return List.copyOf(types);
-        }
-
-        public int batchSizeOrDefault() {
-            return batchSize == null ? DEFAULT_BATCH_SIZE : batchSize;
         }
     }
 
@@ -299,12 +287,6 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
         protected List<Type> columnTypes() {
             return columnTypes;
         }
-
-        @Override
-        protected int batchSize() {
-            return handle.batchSizeOrDefault();
-        }
-
     }
 
 }

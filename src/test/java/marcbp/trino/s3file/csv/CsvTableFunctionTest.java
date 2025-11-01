@@ -66,7 +66,7 @@ class CsvTableFunctionTest {
         assertEquals(PATH, handle.getS3Path());
         assertEquals(List.of("first", "second"), handle.getColumns());
         assertTrue(handle.isHeaderPresent());
-        assertEquals(1024, handle.batchSizeOrDefault());
+        assertEquals(1024, handle.getBatchSize());
         assertEquals(64L, handle.getFileSize());
         assertEquals(8 * 1024 * 1024, handle.getSplitSizeBytes());
         assertEquals(StandardCharsets.UTF_8.name(), handle.getCharsetName());
@@ -100,7 +100,7 @@ class CsvTableFunctionTest {
 
         CsvTableFunction.Handle handle = (CsvTableFunction.Handle) analysis.getHandle();
         assertEquals(List.of("column_1", "column_2", "column_3"), handle.getColumns());
-        assertTrue(handle.batchSizeOrDefault() > 0);
+        assertTrue(handle.getBatchSize() > 0);
         assertEquals(64L, handle.getFileSize());
         assertEquals(StandardCharsets.UTF_8.name(), handle.getCharsetName());
 

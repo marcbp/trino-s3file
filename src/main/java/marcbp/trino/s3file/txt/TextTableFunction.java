@@ -51,7 +51,6 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
     private static final String LINE_BREAK_ARGUMENT = "LINE_BREAK";
     private static final String ENCODING_ARGUMENT = "ENCODING";
 
-    private static final int DEFAULT_BATCH_SIZE = 1024;
     private static final int DEFAULT_SPLIT_SIZE_BYTES = 8 * 1024 * 1024;
     private static final int LOOKAHEAD_BYTES = 256 * 1024;
 
@@ -141,7 +140,6 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
 
     public static final class Handle extends BaseFileHandle {
         private final String lineBreak;
-        private final Integer batchSize;
 
         @JsonCreator
         public Handle(@JsonProperty("s3Path") String s3Path,
@@ -150,19 +148,13 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
                       @JsonProperty("fileSize") long fileSize,
                       @JsonProperty("splitSizeBytes") int splitSizeBytes,
                       @JsonProperty("charset") String charsetName) {
-            super(s3Path, fileSize, splitSizeBytes, charsetName);
+            super(s3Path, fileSize, splitSizeBytes, charsetName, batchSize == null ? BaseFileHandle.DEFAULT_BATCH_SIZE : batchSize);
             this.lineBreak = requireNonNull(lineBreak, "lineBreak is null");
-            this.batchSize = batchSize == null ? DEFAULT_BATCH_SIZE : batchSize;
         }
 
         @JsonProperty
         public String getLineBreak() {
             return lineBreak;
-        }
-
-        @JsonProperty
-        public Integer getBatchSize() {
-            return batchSize;
         }
 
         public List<Type> resolveColumnTypes() {
@@ -201,11 +193,6 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
         @Override
         protected List<Type> columnTypes() {
             return columnTypes;
-        }
-
-        @Override
-        protected int batchSize() {
-            return handle.getBatchSize();
         }
 
         @Override
