@@ -37,8 +37,7 @@ class CsvTableFunctionTest {
 
     private final S3ClientBuilder s3ClientBuilder = mock(S3ClientBuilder.class);
     private final S3ClientBuilder.SessionClient sessionClient = mock(S3ClientBuilder.SessionClient.class);
-    private final CsvProcessingService csvProcessingService = new CsvProcessingService();
-    private final CsvTableFunction function = new CsvTableFunction(s3ClientBuilder, csvProcessingService);
+    private final CsvTableFunction function = new CsvTableFunction(s3ClientBuilder);
 
     @BeforeEach
     void setUp() {

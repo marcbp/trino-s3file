@@ -211,7 +211,7 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
 
         @Override
         protected RecordReadResult<?> readNextRecord() throws IOException {
-            Optional<TextLines.TextRecord> record = TextLines.readNextLine(
+            Optional<TextFormatSupport.TextRecord> record = TextFormatSupport.readNextLine(
                     reader(),
                     charset,
                     lineBreakBytes,
@@ -221,14 +221,14 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
             if (record.isEmpty()) {
                 return RecordReadResult.finished();
             }
-            TextLines.TextRecord textRecord = record.get();
+            TextFormatSupport.TextRecord textRecord = record.get();
             return RecordReadResult.produce(textRecord.value(), textRecord.bytes(), textRecord.finishesSplit());
         }
 
         @Override
         protected void appendRecord(PageBuilder pageBuilder, Object payload) {
             BlockBuilder blockBuilder = pageBuilder.getBlockBuilder(0);
-            TextLines.writeLine(blockBuilder, outputType, (String) payload);
+            TextFormatSupport.writeLine(blockBuilder, outputType, (String) payload);
             pageBuilder.declarePosition();
         }
 

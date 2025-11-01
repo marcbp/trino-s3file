@@ -17,7 +17,6 @@ import io.trino.spi.function.table.ConnectorTableFunction;
 import io.trino.spi.function.table.ConnectorTableFunctionHandle;
 import io.trino.spi.function.table.TableFunctionProcessorProvider;
 import io.trino.spi.transaction.IsolationLevel;
-import marcbp.trino.s3file.csv.CsvProcessingService;
 import marcbp.trino.s3file.csv.CsvTableFunction;
 import marcbp.trino.s3file.json.JsonTableFunction;
 import marcbp.trino.s3file.txt.TextTableFunction;
@@ -50,8 +49,7 @@ public final class S3FileConnector implements Connector {
 
     public S3FileConnector(S3ClientConfig clientConfig) {
         this.s3ClientBuilder = new S3ClientBuilder(requireNonNull(clientConfig, "clientConfig is null"));
-        CsvProcessingService csvProcessingService = new CsvProcessingService();
-        this.csvTableFunction = new CsvTableFunction(s3ClientBuilder, csvProcessingService);
+        this.csvTableFunction = new CsvTableFunction(s3ClientBuilder);
         this.textTableFunction = new TextTableFunction(s3ClientBuilder);
         this.jsonTableFunction = new JsonTableFunction(s3ClientBuilder);
         this.functionProvider = new InlineFunctionProvider();

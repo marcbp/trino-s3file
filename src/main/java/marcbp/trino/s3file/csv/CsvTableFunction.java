@@ -24,6 +24,7 @@ import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 import io.airlift.log.Logger;
 import marcbp.trino.s3file.file.AbstractFileProcessor;
+import marcbp.trino.s3file.csv.CsvFormatSupport;
 import marcbp.trino.s3file.file.AbstractFileProcessor.RecordReadResult;
 import marcbp.trino.s3file.file.BaseFileHandle;
 import marcbp.trino.s3file.file.BaseFileProcessorProvider;
@@ -58,9 +59,8 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
     private static final int LOOKAHEAD_BYTES = 256 * 1024;
 
     private final S3ClientBuilder s3ClientBuilder;
-    private final CsvProcessingService csvProcessingService;
 
-    public CsvTableFunction(S3ClientBuilder s3ClientBuilder, CsvProcessingService csvProcessingService) {
+    public CsvTableFunction(S3ClientBuilder s3ClientBuilder) {
         super(
                 "csv",
                 "load",
@@ -87,7 +87,6 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                 ),
                 ReturnTypeSpecification.GenericTable.GENERIC_TABLE);
         this.s3ClientBuilder = requireNonNull(s3ClientBuilder, "s3ClientBuilder is null");
-        this.csvProcessingService = requireNonNull(csvProcessingService, "csvProcessingService is null");
     }
 
     @Override
@@ -130,7 +129,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
         long fileSize;
         try (S3ClientBuilder.SessionClient s3 = s3ClientBuilder.forSession(session);
              BufferedReader reader = s3.openReader(s3Path, charset)) {
-            columnNames = csvProcessingService.inferColumnNames(reader, s3Path, delimiter, headerPresent);
+            columnNames = CsvFormatSupport.inferColumnNames(reader, s3Path, delimiter, headerPresent);
             fileSize = s3.getObjectSize(s3Path);
         }
         catch (IOException e) {
@@ -158,7 +157,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
     }
 
     public TableFunctionSplitProcessor createSplitProcessor(ConnectorSession session, Handle handle, FileSplit split) {
-        return new FileSplitProcessor(new Processor(session, s3ClientBuilder, csvProcessingService, handle, split));
+        return new FileSplitProcessor(new Processor(session, s3ClientBuilder, handle, split));
     }
 
     public static final class Handle extends BaseFileHandle {
@@ -226,7 +225,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
         @Override
         protected TableFunctionDataProcessor createDataProcessor(ConnectorSession session, Handle handle) {
             LOG.info("Creating data processor for path %s", handle.getS3Path());
-            return new Processor(session, s3ClientBuilder, csvProcessingService, handle, null);
+            return new Processor(session, s3ClientBuilder, handle, null);
         }
 
         @Override
@@ -236,14 +235,12 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
     }
 
     private static final class Processor extends AbstractFileProcessor<Handle> {
-        private final CsvProcessingService csvProcessingService;
         private final List<Type> columnTypes;
         private final byte[] lineBreakBytes;
         private boolean skipFirstLine;
 
-        private Processor(ConnectorSession session, S3ClientBuilder s3ClientBuilder, CsvProcessingService csvProcessingService, Handle handle, FileSplit split) {
+        private Processor(ConnectorSession session, S3ClientBuilder s3ClientBuilder, Handle handle, FileSplit split) {
             super(session, s3ClientBuilder, handle, split);
-            this.csvProcessingService = requireNonNull(csvProcessingService, "csvProcessingService is null");
             this.columnTypes = handle.resolveColumnTypes();
             this.lineBreakBytes = "\n".getBytes(charset);
             this.skipFirstLine = split.getStartOffset() > 0;
@@ -259,7 +256,8 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
             if (handle.isHeaderPresent() && split.isFirst()) {
                 String header = reader.readLine();
                 if (header != null) {
-                    addBytesWithinPrimary(calculateLineBytes(header));
+                    // Keep byte accounting aligned after discarding header row.
+                    addBytesWithinPrimary(CsvFormatSupport.calculateLineBytes(header, charset, lineBreakBytes));
                 }
             }
         }
@@ -271,7 +269,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                 return RecordReadResult.finished();
             }
 
-            long lineBytes = calculateLineBytes(line);
+            long lineBytes = CsvFormatSupport.calculateLineBytes(line, charset, lineBreakBytes);
             if (skipFirstLine) {
                 skipFirstLine = false;
                 return RecordReadResult.skip(lineBytes);
@@ -280,7 +278,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                 return RecordReadResult.skip(lineBytes);
             }
 
-            String[] values = csvProcessingService.parseCsvLine(line, handle.getDelimiter());
+            String[] values = CsvFormatSupport.parseCsvLine(line, handle.getDelimiter());
             boolean finishesSplit = !split.isLast() && bytesWithinPrimary + lineBytes > primaryLength;
             return RecordReadResult.produce(values, lineBytes, finishesSplit);
         }
@@ -299,10 +297,6 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                 }
             }
             pageBuilder.declarePosition();
-        }
-
-        private long calculateLineBytes(String value) {
-            return value.getBytes(charset).length + lineBreakBytes.length;
         }
 
         @Override

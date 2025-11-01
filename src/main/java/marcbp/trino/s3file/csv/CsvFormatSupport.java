@@ -2,27 +2,30 @@ package marcbp.trino.s3file.csv;
 
 import com.opencsv.CSVParser;
 import com.opencsv.CSVParserBuilder;
-import io.airlift.log.Logger;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.List;
 
 import static java.util.Objects.requireNonNull;
 
 /**
- * Encapsulates CSV parsing helpers used by the connector.
+ * CSV-specific utilities shared across the connector.
  */
-public final class CsvProcessingService {
-    private static final Logger LOG = Logger.get(CsvProcessingService.class);
+public final class CsvFormatSupport {
+    private CsvFormatSupport() {}
 
-    public List<String> inferColumnNames(BufferedReader reader, String sourceDescription, char delimiter, boolean headerPresent) {
+    public static long calculateLineBytes(String value, Charset charset, byte[] lineBreakBytes) {
+        return value.getBytes(charset).length + lineBreakBytes.length;
+    }
+
+    public static List<String> inferColumnNames(BufferedReader reader, String sourceDescription, char delimiter, boolean headerPresent) {
         requireNonNull(reader, "reader is null");
         try {
             String header = reader.readLine();
-            LOG.info("Read header from %s: %s", sourceDescription, header);
             if (header == null) {
                 throw new IllegalArgumentException("CSV file is empty: " + sourceDescription);
             }
@@ -43,7 +46,6 @@ public final class CsvProcessingService {
                 }
             }
             else {
-                LOG.info("Header disabled for %s ; generating default column names", sourceDescription);
                 for (int i = 0; i < tokens.length; i++) {
                     columns.add("column_" + (i + 1));
                 }
@@ -54,19 +56,16 @@ public final class CsvProcessingService {
             return List.copyOf(columns);
         }
         catch (IOException e) {
-            LOG.error(e, "Failed to read CSV header for %s", sourceDescription);
             throw new UncheckedIOException("Failed to read CSV header: " + sourceDescription, e);
         }
     }
 
-    public String[] parseCsvLine(String line, char delimiter) {
+    public static String[] parseCsvLine(String line, char delimiter) {
         CSVParser parser = new CSVParserBuilder()
                 .withSeparator(delimiter)
                 .build();
         try {
-            String[] parsed = parser.parseLine(line);
-            LOG.debug("Parsed line with %s tokens", parsed.length);
-            return parsed;
+            return parser.parseLine(line);
         }
         catch (IOException e) {
             throw new IllegalArgumentException("Failed to parse CSV line: " + line, e);

@@ -30,6 +30,7 @@ import static java.util.Objects.requireNonNull;
  */
 public abstract class AbstractFileProcessor<H extends BaseFileHandle>
         implements TableFunctionDataProcessor {
+    protected final Logger logger;
     protected final S3ClientBuilder.SessionClient sessionClient;
     protected final H handle;
     protected final FileSplit split;
@@ -46,6 +47,7 @@ public abstract class AbstractFileProcessor<H extends BaseFileHandle>
             S3ClientBuilder s3ClientBuilder,
             H handle,
             FileSplit split) {
+        this.logger = Logger.get(getClass());
         this.sessionClient = requireNonNull(s3ClientBuilder, "s3ClientBuilder is null").forSession(session);
         this.handle = requireNonNull(handle, "handle is null");
         this.split = (split != null) ? split : handle.toWholeFileSplit();
@@ -103,13 +105,6 @@ public abstract class AbstractFileProcessor<H extends BaseFileHandle>
     protected abstract int batchSize();
 
     /**
-     * Creates a {@link PageBuilder} sized for the next output batch.
-     */
-    protected final PageBuilder newPageBuilder() {
-        return new PageBuilder(batchSize(), columnTypes());
-    }
-
-    /**
      * Fetches the next logical record from the underlying representation.
      * The returned {@link RecordReadResult} indicates whether data should be appended,
      * skipped, or whether the split has been exhausted.
@@ -122,10 +117,6 @@ public abstract class AbstractFileProcessor<H extends BaseFileHandle>
      */
     protected abstract void appendRecord(PageBuilder pageBuilder, Object payload);
 
-    protected Logger logger() {
-        return Logger.get(getClass());
-    }
-
     protected void closeReader() {
         if (reader == null) {
             return;
@@ -134,7 +125,7 @@ public abstract class AbstractFileProcessor<H extends BaseFileHandle>
             reader.close();
         }
         catch (IOException e) {
-            logger().warn(e, "Failed to close reader for %s", handle.getS3Path());
+            logger.warn(e, "Failed to close reader for %s", handle.getS3Path());
             throw new UncheckedIOException("Failed to close reader for " + handle.getS3Path(), e);
         }
         finally {
@@ -164,23 +155,23 @@ public abstract class AbstractFileProcessor<H extends BaseFileHandle>
     public final TableFunctionProcessorState process(List<Optional<Page>> unused) {
         try {
             if (isFinished()) {
-                logger().debug("Split %s already finished for %s", split.getId(), handle.getS3Path());
+                logger.debug("Split %s already finished for %s", split.getId(), handle.getS3Path());
                 closeSession();
                 return TableFunctionProcessorState.Finished.FINISHED;
             }
             ensureReader();
             if (isFinished()) {
-                logger().debug("Nothing to process after reader initialisation for %s", handle.getS3Path());
+                logger.debug("Nothing to process after reader initialisation for %s", handle.getS3Path());
                 closeSession();
                 return TableFunctionProcessorState.Finished.FINISHED;
             }
 
-            logger().debug("Processing split %s for %s", split.getId(), handle.getS3Path());
-            PageBuilder pageBuilder = newPageBuilder();
+            logger.debug("Processing split %s for %s", split.getId(), handle.getS3Path());
+            PageBuilder pageBuilder = new PageBuilder(batchSize(), columnTypes());
             while (!pageBuilder.isFull()) {
                 RecordReadResult<?> result = readNextRecord();
                 if (result.status() == RecordStatus.END) {
-                    logger().debug("Reached end of split %s for %s", split.getId(), handle.getS3Path());
+                    logger.debug("Reached end of split %s for %s", split.getId(), handle.getS3Path());
                     completeProcessing();
                     break;
                 }
@@ -188,34 +179,34 @@ public abstract class AbstractFileProcessor<H extends BaseFileHandle>
                     addBytesWithinPrimary(result.bytesConsumed());
                 }
                 if (result.status() == RecordStatus.SKIP) {
-                    logger().debug("Skipping record for %s (split %s)", handle.getS3Path(), split.getId());
+                    logger.debug("Skipping record for %s (split %s)", handle.getS3Path(), split.getId());
                     continue;
                 }
 
                 appendRecord(pageBuilder, result.payload());
                 if (result.finishesSplit()) {
-                    logger().debug("Split %s fully processed for %s", split.getId(), handle.getS3Path());
+                    logger.debug("Split %s fully processed for %s", split.getId(), handle.getS3Path());
                     completeProcessing();
                     break;
                 }
             }
 
             if (pageBuilder.isEmpty()) {
-                logger().debug("No rows produced for split %s (%s)", split.getId(), handle.getS3Path());
+                logger.debug("No rows produced for split %s (%s)", split.getId(), handle.getS3Path());
                 markFinished();
                 return TableFunctionProcessorState.Finished.FINISHED;
             }
             Page page = pageBuilder.build();
-            logger().debug("Produced %s rows for split %s (%s)", page.getPositionCount(), split.getId(), handle.getS3Path());
+            logger.debug("Produced %s rows for split %s (%s)", page.getPositionCount(), split.getId(), handle.getS3Path());
             return TableFunctionProcessorState.Processed.produced(page);
         }
         catch (IOException e) {
-            logger().error(e, "I/O error while processing %s", handle.getS3Path());
+            logger.error(e, "I/O error while processing %s", handle.getS3Path());
             closeSession();
             throw new UncheckedIOException("Failed to process data for " + handle.getS3Path(), e);
         }
         catch (RuntimeException e) {
-            logger().error(e, "Runtime error while processing %s", handle.getS3Path());
+            logger.error(e, "Runtime error while processing %s", handle.getS3Path());
             closeSession();
             throw e;
         }
@@ -248,16 +239,10 @@ public abstract class AbstractFileProcessor<H extends BaseFileHandle>
         }
 
         public static <T> RecordReadResult<T> skip(long bytesConsumed) {
-            if (bytesConsumed < 0) {
-                throw new IllegalArgumentException("bytesConsumed must be non-negative");
-            }
             return new RecordReadResult<>(RecordStatus.SKIP, null, bytesConsumed, false);
         }
 
         public static <T> RecordReadResult<T> produce(T payload, long bytesConsumed, boolean finishesSplit) {
-            if (bytesConsumed < 0) {
-                throw new IllegalArgumentException("bytesConsumed must be non-negative");
-            }
             Objects.requireNonNull(payload, "payload is null");
             return new RecordReadResult<>(RecordStatus.PRODUCE, payload, bytesConsumed, finishesSplit);
         }
