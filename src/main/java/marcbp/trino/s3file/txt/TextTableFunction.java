@@ -4,7 +4,6 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import io.airlift.log.Logger;
 import marcbp.trino.s3file.file.AbstractFileProcessor;
-import marcbp.trino.s3file.file.AbstractFileProcessor.RecordReadResult;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.file.SplitPlanner;
 import marcbp.trino.s3file.util.S3ClientBuilder;
@@ -18,7 +17,6 @@ import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorTransactionHandle;
 import io.trino.spi.function.table.AbstractConnectorTableFunction;
 import io.trino.spi.function.table.Argument;
-import io.trino.spi.function.table.ConnectorTableFunctionHandle;
 import io.trino.spi.function.table.Descriptor;
 import io.trino.spi.function.table.ReturnTypeSpecification;
 import io.trino.spi.function.table.ScalarArgument;
@@ -49,15 +47,16 @@ import static java.util.Objects.requireNonNull;
  * Table function that streams plain text files from S3-compatible storage as rows for Trino.
  */
 public final class TextTableFunction extends AbstractConnectorTableFunction {
-    private static final Logger LOG = Logger.get(TextTableFunction.class);
     private static final String PATH_ARGUMENT = "PATH";
     private static final String LINE_BREAK_ARGUMENT = "LINE_BREAK";
     private static final String ENCODING_ARGUMENT = "ENCODING";
+
     private static final int DEFAULT_BATCH_SIZE = 1024;
     private static final int DEFAULT_SPLIT_SIZE_BYTES = 8 * 1024 * 1024;
     private static final int LOOKAHEAD_BYTES = 256 * 1024;
 
     private final S3ClientBuilder s3ClientBuilder;
+    private final Logger logger = Logger.get(TextTableFunction.class);
 
     public TextTableFunction(S3ClientBuilder s3ClientBuilder) {
         super(
@@ -111,7 +110,7 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
             throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "LINE_BREAK cannot be empty");
         }
 
-        LOG.info("Analyzing txt.load table function for path %s with line break %s", s3Path, TextFormatSupport.formatForLog(lineBreak));
+        logger.info("Analyzing txt.load table function for path %s with line break %s", s3Path, TextFormatSupport.formatForLog(lineBreak));
 
         long fileSize;
         try (S3ClientBuilder.SessionClient s3 = s3ClientBuilder.forSession(session)) {

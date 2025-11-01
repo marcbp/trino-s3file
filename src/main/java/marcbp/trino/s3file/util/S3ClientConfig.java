@@ -14,12 +14,12 @@ public record S3ClientConfig(
         boolean pathStyleAccess,
         Optional<String> interceptorClass) {
 
-    public static final String REGION_KEY = "aws.region";
-    public static final String ENDPOINT_KEY = "aws.endpoint";
-    public static final String ACCESS_KEY_KEY = "aws.access-key";
-    public static final String SECRET_KEY_KEY = "aws.secret-key";
-    public static final String PATH_STYLE_KEY = "aws.path-style-access";
-    public static final String INTERCEPTOR_CLASS_KEY = "aws.interceptor-class";
+    public static final String REGION_KEY = "s3.region";
+    public static final String ENDPOINT_KEY = "s3.endpoint";
+    public static final String ACCESS_KEY_KEY = "s3.access-key";
+    public static final String SECRET_KEY_KEY = "s3.secret-key";
+    public static final String PATH_STYLE_KEY = "s3.path-style-access";
+    public static final String INTERCEPTOR_CLASS_KEY = "s3.interceptor-class";
 
     public static S3ClientConfig from(Map<String, String> config) {
         String region = optionalValue(config.get(REGION_KEY)).orElse("us-east-1");

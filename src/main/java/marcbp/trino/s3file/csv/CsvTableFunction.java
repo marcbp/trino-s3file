@@ -11,7 +11,6 @@ import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorTransactionHandle;
 import io.trino.spi.function.table.AbstractConnectorTableFunction;
 import io.trino.spi.function.table.Argument;
-import io.trino.spi.function.table.ConnectorTableFunctionHandle;
 import io.trino.spi.function.table.Descriptor;
 import io.trino.spi.function.table.ReturnTypeSpecification;
 import io.trino.spi.function.table.ScalarArgument;
@@ -24,15 +23,12 @@ import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 import io.airlift.log.Logger;
 import marcbp.trino.s3file.file.AbstractFileProcessor;
-import marcbp.trino.s3file.csv.CsvFormatSupport;
-import marcbp.trino.s3file.file.AbstractFileProcessor.RecordReadResult;
 import marcbp.trino.s3file.file.BaseFileHandle;
 import marcbp.trino.s3file.file.BaseFileProcessorProvider;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.file.FileSplitProcessor;
 import marcbp.trino.s3file.file.SplitPlanner;
 import marcbp.trino.s3file.util.S3ClientBuilder;
-import marcbp.trino.s3file.util.CharsetUtils;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -50,15 +46,17 @@ import static marcbp.trino.s3file.util.CharsetUtils.resolve;
 /**
  * Table function that reads CSV data from S3-compatible storage, inferring columns on the fly.
  */
-public final class CsvTableFunction extends AbstractConnectorTableFunction {
-    private static final Logger LOG = Logger.get(CsvTableFunction.class);
+public final class CsvTableFunction extends AbstractConnectorTableFunction {    
     private static final String PATH_ARGUMENT = "PATH";
     private static final String DELIMITER_ARGUMENT = "DELIMITER";
     private static final String ENCODING_ARGUMENT = "ENCODING";
+
+    private static final int DEFAULT_BATCH_SIZE = 1024;
     private static final int DEFAULT_SPLIT_SIZE_BYTES = 8 * 1024 * 1024;
     private static final int LOOKAHEAD_BYTES = 256 * 1024;
 
     private final S3ClientBuilder s3ClientBuilder;
+    private final Logger logger = Logger.get(CsvTableFunction.class);
 
     public CsvTableFunction(S3ClientBuilder s3ClientBuilder) {
         super(
@@ -115,15 +113,15 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
             delimiter = (char) delimiterSlice.getByte(0);
         }
 
-        LOG.info("Analyzing load table function for path %s with delimiter %s", s3Path, delimiter);
+        logger.info("Analyzing load table function for path %s with delimiter %s", s3Path, delimiter);
         boolean headerPresent = true;
         ScalarArgument headerArg = (ScalarArgument) arguments.get("HEADER");
         if (headerArg != null && headerArg.getValue() instanceof Slice headerSlice) {
             String headerText = headerSlice.toStringUtf8();
-            LOG.info("HEADER argument value: %s", headerText);
+            logger.info("HEADER argument value: %s", headerText);
             headerPresent = Boolean.parseBoolean(headerText.trim());
         }
-        LOG.info("Header present: %s", headerPresent);
+        logger.info("Header present: %s", headerPresent);
 
         List<String> columnNames;
         long fileSize;
@@ -133,10 +131,10 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
             fileSize = s3.getObjectSize(s3Path);
         }
         catch (IOException e) {
-            LOG.error(e, "Failed to infer column names for %s", s3Path);
+            logger.error(e, "Failed to infer column names for %s", s3Path);
             throw new UncheckedIOException("Failed to infer column names", e);
         }
-        LOG.info("Detected %s columns: %s", columnNames.size(), columnNames);
+        logger.info("Detected %s columns: %s", columnNames.size(), columnNames);
         List<Type> columnTypes = columnNames.stream()
                 .map(name -> (Type) VarcharType.createUnboundedVarcharType())
                 .toList();
@@ -161,8 +159,6 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
     }
 
     public static final class Handle extends BaseFileHandle {
-        private static final int DEFAULT_BATCH_SIZE = 1024;
-
         private final List<String> columns;
         private final char delimiter;
         private final boolean headerPresent;
@@ -224,7 +220,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
 
         @Override
         protected TableFunctionDataProcessor createDataProcessor(ConnectorSession session, Handle handle) {
-            LOG.info("Creating data processor for path %s", handle.getS3Path());
+            logger.info("Creating data processor for path %s", handle.getS3Path());
             return new Processor(session, s3ClientBuilder, handle, null);
         }
 

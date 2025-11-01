@@ -80,7 +80,7 @@ public final class S3ClientBuilder {
         });
 
         if (config.accessKey().isPresent() ^ config.secretKey().isPresent()) {
-            throw new IllegalArgumentException("Both aws.access-key and aws.secret-key must be provided together");
+            throw new IllegalArgumentException("Both s3.access-key and s3.secret-key must be provided together");
         }
 
         AwsCredentialsProvider credentialsProvider;

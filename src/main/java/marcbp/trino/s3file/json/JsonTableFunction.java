@@ -22,19 +22,16 @@ import io.trino.spi.function.table.ScalarArgument;
 import io.trino.spi.function.table.ScalarArgumentSpecification;
 import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.function.table.TableFunctionDataProcessor;
-import io.trino.spi.function.table.ConnectorTableFunctionHandle;
 import io.trino.spi.function.table.TableFunctionProcessorProvider;
 import io.trino.spi.function.table.TableFunctionSplitProcessor;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.file.AbstractFileProcessor;
-import marcbp.trino.s3file.file.AbstractFileProcessor.RecordReadResult;
 import marcbp.trino.s3file.file.BaseFileHandle;
 import marcbp.trino.s3file.file.BaseFileProcessorProvider;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.file.FileSplitProcessor;
 import marcbp.trino.s3file.file.SplitPlanner;
-import marcbp.trino.s3file.json.JsonFormatSupport;
 import marcbp.trino.s3file.json.JsonFormatSupport.ColumnDefinition;
 import marcbp.trino.s3file.json.JsonFormatSupport.ColumnType;
 import marcbp.trino.s3file.json.JsonFormatSupport.ColumnsMetadata;
@@ -57,15 +54,16 @@ import static java.util.Objects.requireNonNull;
  * Table function that streams newline-delimited JSON objects from S3-compatible storage.
  */
 public final class JsonTableFunction extends AbstractConnectorTableFunction {
-    private static final Logger LOG = Logger.get(JsonTableFunction.class);
     private static final String PATH_ARGUMENT = "PATH";
     private static final String ENCODING_ARGUMENT = "ENCODING";
     static final String ADDITIONAL_COLUMNS_ARGUMENT = "ADDITIONAL_COLUMNS";
-    private static final int DEFAULT_BATCH_SIZE = 512;
+
+    private static final int DEFAULT_BATCH_SIZE = 1024;
     private static final int DEFAULT_SPLIT_SIZE_BYTES = 8 * 1024 * 1024;
     private static final int LOOKAHEAD_BYTES = 256 * 1024;
 
     private final S3ClientBuilder s3ClientBuilder;
+    private final Logger logger = Logger.get(JsonTableFunction.class);
 
     public JsonTableFunction(S3ClientBuilder s3ClientBuilder) {
         super(
@@ -125,11 +123,11 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
             fileSize = s3.getObjectSize(s3Path);
         }
         catch (IOException e) {
-            LOG.error(e, "Failed to analyze json.load for %s", s3Path);
+            logger.error(e, "Failed to analyze json for %s", s3Path);
             throw new UncheckedIOException("Failed to inspect JSON data", e);
         }
 
-        LOG.info("Detected %s JSON field(s) for path %s: %s", columnNames.size(), s3Path, JsonFormatSupport.describeColumns(columnNames, detectedTypes));
+        logger.info("Detected %s JSON field(s) for path %s: %s", columnNames.size(), s3Path, JsonFormatSupport.describeColumns(columnNames, detectedTypes));
         List<Type> columnTypes = new ArrayList<>(detectedTypes.size());
         for (ColumnType columnType : detectedTypes) {
             columnTypes.add(columnType.trinoType());
@@ -208,7 +206,7 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
 
         @Override
         protected TableFunctionDataProcessor createDataProcessor(ConnectorSession session, Handle handle) {
-            LOG.info("Creating JSON data processor for path %s", handle.getS3Path());
+            logger.info("Creating JSON data processor for path %s", handle.getS3Path());
             return new Processor(session, s3ClientBuilder, handle, null);
         }
 
