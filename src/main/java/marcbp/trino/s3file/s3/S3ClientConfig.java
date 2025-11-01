@@ -1,4 +1,4 @@
-package marcbp.trino.s3file.util;
+package marcbp.trino.s3file.s3;
 
 import java.util.Map;
 import java.util.Optional;

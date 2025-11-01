@@ -1,4 +1,4 @@
-package marcbp.trino.s3file.util;
+package marcbp.trino.s3file.s3;
 
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;

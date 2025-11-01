@@ -10,7 +10,7 @@ import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.file.FileSplit;
-import marcbp.trino.s3file.util.S3ClientBuilder;
+import marcbp.trino.s3file.s3.S3ClientBuilder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 

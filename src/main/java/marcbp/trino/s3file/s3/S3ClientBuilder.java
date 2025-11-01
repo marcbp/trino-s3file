@@ -1,4 +1,4 @@
-package marcbp.trino.s3file.util;
+package marcbp.trino.s3file.s3;
 
 import io.trino.spi.connector.ConnectorSession;
 import io.airlift.log.Logger;
@@ -28,7 +28,7 @@ import java.net.URISyntaxException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 
-import marcbp.trino.s3file.util.S3UriUtils.S3Location;
+import marcbp.trino.s3file.s3.S3UriUtils.S3Location;
 
 import static java.util.Objects.requireNonNull;
 

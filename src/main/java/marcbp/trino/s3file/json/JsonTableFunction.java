@@ -6,10 +6,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.NullNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.airlift.log.Logger;
-import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
 import io.trino.spi.PageBuilder;
-import io.trino.spi.TrinoException;
 import io.trino.spi.block.BlockBuilder;
 import io.trino.spi.connector.ConnectorAccessControl;
 import io.trino.spi.connector.ConnectorSession;
@@ -18,7 +16,6 @@ import io.trino.spi.function.table.AbstractConnectorTableFunction;
 import io.trino.spi.function.table.Argument;
 import io.trino.spi.function.table.Descriptor;
 import io.trino.spi.function.table.ReturnTypeSpecification;
-import io.trino.spi.function.table.ScalarArgument;
 import io.trino.spi.function.table.ScalarArgumentSpecification;
 import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.function.table.TableFunctionDataProcessor;
@@ -35,27 +32,26 @@ import marcbp.trino.s3file.file.SplitPlanner;
 import marcbp.trino.s3file.json.JsonFormatSupport.ColumnDefinition;
 import marcbp.trino.s3file.json.JsonFormatSupport.ColumnType;
 import marcbp.trino.s3file.json.JsonFormatSupport.ColumnsMetadata;
-import marcbp.trino.s3file.util.CharsetUtils;
-import marcbp.trino.s3file.util.S3ClientBuilder;
+import marcbp.trino.s3file.s3.S3ClientBuilder;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static java.util.Objects.requireNonNull;
+import static marcbp.trino.s3file.util.TableFunctionArguments.encodingArgumentSpecification;
+import static marcbp.trino.s3file.util.TableFunctionArguments.pathArgumentSpecification;
+import static marcbp.trino.s3file.util.TableFunctionArguments.requirePath;
+import static marcbp.trino.s3file.util.TableFunctionArguments.resolveEncoding;
 
 /**
  * Table function that streams newline-delimited JSON objects from S3-compatible storage.
  */
 public final class JsonTableFunction extends AbstractConnectorTableFunction {
-    private static final String PATH_ARGUMENT = "PATH";
-    private static final String ENCODING_ARGUMENT = "ENCODING";
     static final String ADDITIONAL_COLUMNS_ARGUMENT = "ADDITIONAL_COLUMNS";
 
     private static final int DEFAULT_SPLIT_SIZE_BYTES = 8 * 1024 * 1024;
@@ -69,15 +65,8 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
                 "json",
                 "load",
                 List.of(
-                        ScalarArgumentSpecification.builder()
-                                .name(PATH_ARGUMENT)
-                                .type(VarcharType.VARCHAR)
-                                .build(),
-                        ScalarArgumentSpecification.builder()
-                                .name(ENCODING_ARGUMENT)
-                                .type(VarcharType.VARCHAR)
-                                .defaultValue(Slices.utf8Slice(StandardCharsets.UTF_8.name()))
-                                .build(),
+                        pathArgumentSpecification(),
+                        encodingArgumentSpecification(),
                         ScalarArgumentSpecification.builder()
                                 .name(ADDITIONAL_COLUMNS_ARGUMENT)
                                 .type(VarcharType.VARCHAR)
@@ -93,20 +82,8 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
                                          ConnectorTransactionHandle transactionHandle,
                                          Map<String, Argument> arguments,
                                          ConnectorAccessControl accessControl) {
-        ScalarArgument pathArgument = (ScalarArgument) arguments.get(PATH_ARGUMENT);
-        if (pathArgument == null) {
-            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "Argument PATH is required");
-        }
-        Object rawValue = pathArgument.getValue();
-        if (!(rawValue instanceof Slice slice)) {
-            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "PATH must be a string");
-        }
-        String s3Path = slice.toStringUtf8();
-        if (s3Path.isBlank()) {
-            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "PATH cannot be blank");
-        }
-
-        Charset charset = CharsetUtils.resolve(arguments, ENCODING_ARGUMENT);
+        String s3Path = requirePath(arguments);
+        Charset charset = resolveEncoding(arguments);
 
         List<String> columnNames;
         List<ColumnType> detectedTypes;

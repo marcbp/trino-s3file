@@ -6,7 +6,7 @@ import io.trino.spi.PageBuilder;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.function.table.TableFunctionDataProcessor;
 import io.trino.spi.function.table.TableFunctionProcessorState;
-import marcbp.trino.s3file.util.S3ClientBuilder;
+import marcbp.trino.s3file.s3.S3ClientBuilder;
 
 import java.io.BufferedReader;
 import java.io.IOException;

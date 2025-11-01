@@ -20,8 +20,8 @@ import io.trino.spi.transaction.IsolationLevel;
 import marcbp.trino.s3file.csv.CsvTableFunction;
 import marcbp.trino.s3file.json.JsonTableFunction;
 import marcbp.trino.s3file.txt.TextTableFunction;
-import marcbp.trino.s3file.util.S3ClientBuilder;
-import marcbp.trino.s3file.util.S3ClientConfig;
+import marcbp.trino.s3file.s3.S3ClientBuilder;
+import marcbp.trino.s3file.s3.S3ClientConfig;
 import marcbp.trino.s3file.file.FileSplit;
 
 import java.util.Optional;

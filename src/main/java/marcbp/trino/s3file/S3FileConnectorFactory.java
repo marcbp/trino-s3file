@@ -3,7 +3,7 @@ package marcbp.trino.s3file;
 import io.trino.spi.connector.Connector;
 import io.trino.spi.connector.ConnectorContext;
 import io.trino.spi.connector.ConnectorFactory;
-import marcbp.trino.s3file.util.S3ClientConfig;
+import marcbp.trino.s3file.s3.S3ClientConfig;
 
 import java.util.Map;
 

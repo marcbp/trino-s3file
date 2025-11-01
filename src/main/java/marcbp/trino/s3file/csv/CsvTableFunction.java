@@ -5,7 +5,6 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
 import io.trino.spi.PageBuilder;
-import io.trino.spi.TrinoException;
 import io.trino.spi.block.BlockBuilder;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorTransactionHandle;
@@ -28,28 +27,27 @@ import marcbp.trino.s3file.file.BaseFileProcessorProvider;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.file.FileSplitProcessor;
 import marcbp.trino.s3file.file.SplitPlanner;
-import marcbp.trino.s3file.util.S3ClientBuilder;
+import marcbp.trino.s3file.s3.S3ClientBuilder;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static java.util.Objects.requireNonNull;
-import static marcbp.trino.s3file.util.CharsetUtils.resolve;
+import static marcbp.trino.s3file.util.TableFunctionArguments.encodingArgumentSpecification;
+import static marcbp.trino.s3file.util.TableFunctionArguments.pathArgumentSpecification;
+import static marcbp.trino.s3file.util.TableFunctionArguments.requirePath;
+import static marcbp.trino.s3file.util.TableFunctionArguments.resolveEncoding;
 
 /**
  * Table function that reads CSV data from S3-compatible storage, inferring columns on the fly.
  */
 public final class CsvTableFunction extends AbstractConnectorTableFunction {    
-    private static final String PATH_ARGUMENT = "PATH";
     private static final String DELIMITER_ARGUMENT = "DELIMITER";
-    private static final String ENCODING_ARGUMENT = "ENCODING";
 
     private static final int DEFAULT_SPLIT_SIZE_BYTES = 8 * 1024 * 1024;
     private static final int LOOKAHEAD_BYTES = 256 * 1024;
@@ -62,10 +60,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                 "csv",
                 "load",
                 List.of(
-                        ScalarArgumentSpecification.builder()
-                                .name(PATH_ARGUMENT)
-                                .type(VarcharType.VARCHAR)
-                                .build(),
+                        pathArgumentSpecification(),
                         ScalarArgumentSpecification.builder()
                                 .name(DELIMITER_ARGUMENT)
                                 .type(VarcharType.VARCHAR)
@@ -76,11 +71,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                                 .type(VarcharType.VARCHAR)
                                 .defaultValue(Slices.utf8Slice("true"))
                                 .build(),
-                        ScalarArgumentSpecification.builder()
-                                .name(ENCODING_ARGUMENT)
-                                .type(VarcharType.VARCHAR)
-                                .defaultValue(Slices.utf8Slice(StandardCharsets.UTF_8.name()))
-                                .build()
+                        encodingArgumentSpecification()
                 ),
                 ReturnTypeSpecification.GenericTable.GENERIC_TABLE);
         this.s3ClientBuilder = requireNonNull(s3ClientBuilder, "s3ClientBuilder is null");
@@ -91,20 +82,8 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                                          ConnectorTransactionHandle transactionHandle,
                                          Map<String, Argument> arguments,
                                          io.trino.spi.connector.ConnectorAccessControl accessControl) {
-        ScalarArgument pathArgument = (ScalarArgument) arguments.get(PATH_ARGUMENT);
-        if (pathArgument == null) {
-            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "Argument PATH is required");
-        }
-        Object rawValue = pathArgument.getValue();
-        if (!(rawValue instanceof Slice slice)) {
-            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "PATH must be a string");
-        }
-        String s3Path = slice.toStringUtf8();
-        if (s3Path.isBlank()) {
-            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "PATH cannot be blank");
-        }
-
-        Charset charset = resolve(arguments, ENCODING_ARGUMENT);
+        String s3Path = requirePath(arguments);
+        Charset charset = resolveEncoding(arguments);
 
         char delimiter = ';';
         ScalarArgument delimiterArg = (ScalarArgument) arguments.get(DELIMITER_ARGUMENT);
@@ -117,7 +96,6 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
         ScalarArgument headerArg = (ScalarArgument) arguments.get("HEADER");
         if (headerArg != null && headerArg.getValue() instanceof Slice headerSlice) {
             String headerText = headerSlice.toStringUtf8();
-            logger.info("HEADER argument value: %s", headerText);
             headerPresent = Boolean.parseBoolean(headerText.trim());
         }
         logger.info("Header present: %s", headerPresent);
