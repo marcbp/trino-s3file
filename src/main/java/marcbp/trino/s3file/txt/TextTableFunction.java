@@ -4,12 +4,12 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import io.airlift.log.Logger;
 import marcbp.trino.s3file.file.AbstractFileProcessor;
+import marcbp.trino.s3file.file.AbstractFileProcessor.RecordReadResult;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.file.SplitPlanner;
 import marcbp.trino.s3file.util.S3ClientBuilder;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
-import io.trino.spi.Page;
 import io.trino.spi.PageBuilder;
 import io.trino.spi.TrinoException;
 import io.trino.spi.block.BlockBuilder;
@@ -26,14 +26,11 @@ import io.trino.spi.function.table.ScalarArgumentSpecification;
 import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.function.table.TableFunctionDataProcessor;
 import io.trino.spi.function.table.TableFunctionProcessorProvider;
-import io.trino.spi.function.table.TableFunctionProcessorState;
 import io.trino.spi.function.table.TableFunctionSplitProcessor;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -108,13 +105,13 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
         String lineBreak = "\n";
         ScalarArgument lineBreakArg = (ScalarArgument) arguments.get(LINE_BREAK_ARGUMENT);
         if (lineBreakArg != null && lineBreakArg.getValue() instanceof Slice delimiterSlice) {
-            lineBreak = decodeEscapes(delimiterSlice.toStringUtf8());
+            lineBreak = TextFormatSupport.decodeEscapes(delimiterSlice.toStringUtf8());
         }
         if (lineBreak.isEmpty()) {
             throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "LINE_BREAK cannot be empty");
         }
 
-        LOG.info("Analyzing txt.load table function for path %s with line break %s", s3Path, formatForLog(lineBreak));
+        LOG.info("Analyzing txt.load table function for path %s with line break %s", s3Path, TextFormatSupport.formatForLog(lineBreak));
 
         long fileSize;
         try (S3ClientBuilder.SessionClient s3 = s3ClientBuilder.forSession(session)) {
@@ -141,41 +138,6 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
 
     public TableFunctionSplitProcessor createSplitProcessor(ConnectorSession session, Handle handle, FileSplit split) {
         return new FileSplitProcessor(new Processor(session, s3ClientBuilder, handle, split));
-    }
-
-    private static String decodeEscapes(String value) {
-        StringBuilder result = new StringBuilder();
-        boolean escaping = false;
-        for (int i = 0; i < value.length(); i++) {
-            char ch = value.charAt(i);
-            if (escaping) {
-                switch (ch) {
-                    case 'n' -> result.append('\n');
-                    case 'r' -> result.append('\r');
-                    case 't' -> result.append('\t');
-                    case '\\' -> result.append('\\');
-                    default -> result.append(ch);
-                }
-                escaping = false;
-            }
-            else if (ch == '\\') {
-                escaping = true;
-            }
-            else {
-                result.append(ch);
-            }
-        }
-        if (escaping) {
-            result.append('\\');
-        }
-        return result.toString();
-    }
-
-    private static String formatForLog(String delimiter) {
-        return delimiter
-                .replace("\r", "\\r")
-                .replace("\n", "\\n")
-                .replace("\t", "\\t");
     }
 
     public static final class Handle extends BaseFileHandle {
@@ -234,95 +196,41 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
             super(session, s3ClientBuilder, handle, split);
             this.columnTypes = handle.resolveColumnTypes();
             this.outputType = (VarcharType) columnTypes.get(0);
-            this.lineBreakBytes = handle.getLineBreak().getBytes(charset());
+            this.lineBreakBytes = handle.getLineBreak().getBytes(charset);
         }
 
         @Override
-        protected BufferedReader openReader() {
-            return sessionClient().openReader(handle().getS3Path(), split().getStartOffset(), split().getRangeEndExclusive(), charset());
+        protected List<Type> columnTypes() {
+            return columnTypes;
         }
 
         @Override
-        protected void handleReaderCloseException(IOException e) {
-            LOG.error(e, "Error closing text stream for path %s", handle().getS3Path());
-            throw new UncheckedIOException("Failed to close text stream", e);
+        protected int batchSize() {
+            return handle.getBatchSize();
         }
 
         @Override
-        public TableFunctionProcessorState process(List<Optional<Page>> unused) {
-            try {
-                if (isFinished()) {
-                    LOG.info("Text processor already finished for path %s", handle().getS3Path());
-                    closeSession();
-                    return TableFunctionProcessorState.Finished.FINISHED;
-                }
-                if (primaryLength() == 0) {
-                    markFinished();
-                    return TableFunctionProcessorState.Finished.FINISHED;
-                }
-                ensureReader();
-                if (isFinished()) {
-                    return TableFunctionProcessorState.Finished.FINISHED;
-                }
-                PageBuilder pageBuilder = new PageBuilder(handle().getBatchSize(), columnTypes);
-                while (!pageBuilder.isFull()) {
-                    LineRead record = nextRecord();
-                    if (record == null) {
-                        completeProcessing();
-                        break;
-                    }
-                    appendRow(pageBuilder, record.value());
-                    if (record.finishesSplit()) {
-                        completeProcessing();
-                        break;
-                    }
-                }
-
-                if (pageBuilder.isEmpty()) {
-                    markFinished();
-                    return TableFunctionProcessorState.Finished.FINISHED;
-                }
-                Page page = pageBuilder.build();
-                return TableFunctionProcessorState.Processed.produced(page);
+        protected RecordReadResult<?> readNextRecord() throws IOException {
+            Optional<TextLines.TextRecord> record = TextLines.readNextLine(
+                    reader(),
+                    charset,
+                    lineBreakBytes,
+                    primaryLength,
+                    bytesWithinPrimary,
+                    split.isLast());
+            if (record.isEmpty()) {
+                return RecordReadResult.finished();
             }
-            catch (IOException e) {
-                LOG.error(e, "Error while reading text content for path %s", handle().getS3Path());
-                closeSession();
-                throw new UncheckedIOException("Failed to read text content", e);
-            }
-            catch (RuntimeException e) {
-                LOG.error(e, "Unexpected runtime error for path %s", handle().getS3Path());
-                closeSession();
-                throw e;
-            }
+            TextLines.TextRecord textRecord = record.get();
+            return RecordReadResult.produce(textRecord.value(), textRecord.bytes(), textRecord.finishesSplit());
         }
 
-        private LineRead nextRecord() throws IOException {
-            while (true) {
-                String line = reader().readLine();
-                if (line == null) {
-                    return null;
-                }
-                long lineBytes = calculateLineBytes(line);
-                boolean finishesSplit = false;
-                if (!split().isLast() && bytesWithinPrimary() + lineBytes > primaryLength()) {
-                    finishesSplit = true;
-                }
-                addBytesWithinPrimary(lineBytes);
-                return new LineRead(line, finishesSplit);
-            }
-        }
-
-        private void appendRow(PageBuilder pageBuilder, String value) {
+        @Override
+        protected void appendRecord(PageBuilder pageBuilder, Object payload) {
             BlockBuilder blockBuilder = pageBuilder.getBlockBuilder(0);
-            outputType.writeSlice(blockBuilder, Slices.utf8Slice(value));
+            TextLines.writeLine(blockBuilder, outputType, (String) payload);
             pageBuilder.declarePosition();
         }
 
-        private long calculateLineBytes(String value) {
-            return value.getBytes(charset()).length + lineBreakBytes.length;
-        }
     }
-
-    private record LineRead(String value, boolean finishesSplit) {}
 }
