@@ -24,6 +24,29 @@ FROM TABLE(
 
 Fields and types are inferred from the first JSON object: booleans map to `boolean`, integral numbers to `bigint`, floating numbers to `double`, nested objects/arrays stay as JSON text (`varchar`), and other values remain `varchar`.
 
+## Load XML files
+
+```sql
+SELECT *
+FROM TABLE(
+    s3file.xml.load(
+        path => 's3://mybucket/books.xml',
+        row_element => 'book',    -- element treated as one row
+        include_text => 'false',  -- set to 'true' to expose mixed-content text
+        empty_as_null => 'true',  -- convert empty strings to NULL when set to 'true'
+        encoding => 'UTF-8'
+    )
+);
+```
+
+- `path` (required): XML document location in S3/MinIO.
+- `row_element` (optional, default `'row'`): element name that represents one logical row; only direct children of that element become columns.
+- `include_text` (optional, default `'false'`): expose mixed-content text (outside child elements) as an extra column named `text`.
+- `empty_as_null` (optional, default `'false'`): convert empty attribute/element values to `NULL`.
+- `encoding` (optional, default `'UTF-8'`): character set for decoding the file.
+
+Attributes are automatically projected as columns prefixed with `@`, while first-level child elements become `VARCHAR` columns. Nested structures are not flattened; compute additional parsing in SQL as needed.
+
 ## Load CSV files
 
 ```sql
@@ -104,4 +127,7 @@ aws --endpoint-url http://localhost:9000 s3 cp docker/examples/events.jsonl s3:/
 
 # upload sample text file (used by txt.load example)
 aws --endpoint-url http://localhost:9000 s3 cp docker/examples/messages.txt s3://mybucket/messages.txt
+
+# upload a simple XML document (used by xml.load example)
+aws --endpoint-url http://localhost:9000 s3 cp docker/examples/books.xml s3://mybucket/books.xml
 ```

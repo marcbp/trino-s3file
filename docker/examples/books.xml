@@ -1,0 +1,20 @@
+<catalog>
+  <book id="bk101" tag="new">
+    <author>Gambardella, Matthew</author>
+    <title>XML Developer's Guide</title>
+    <genre>Computer</genre>
+    <price>44.95</price>
+  </book>
+  <book id="bk102" tag="old">
+    <author>Ralls, Kim</author>
+    <title>Midnight Rain</title>
+    <genre>Fantasy</genre>
+    <price>5.95</price>
+  </book>
+  <book id="bk103" tag="new">
+    <author>Corets, Eva</author>
+    <title>Maeve Ascendant</title>
+    <genre/>
+    <price>9.99</price>
+  </book>
+</catalog>

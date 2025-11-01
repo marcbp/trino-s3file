@@ -6,7 +6,6 @@ import io.trino.spi.connector.ConnectorMetadata;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorSplitManager;
 import io.trino.spi.connector.ConnectorSplitSource;
-import io.trino.spi.connector.ConnectorSplit;
 import io.trino.spi.connector.ConnectorTableHandle;
 import io.trino.spi.connector.ConnectorTransactionHandle;
 import io.trino.spi.connector.Constraint;
@@ -20,6 +19,7 @@ import io.trino.spi.transaction.IsolationLevel;
 import marcbp.trino.s3file.csv.CsvTableFunction;
 import marcbp.trino.s3file.json.JsonTableFunction;
 import marcbp.trino.s3file.txt.TextTableFunction;
+import marcbp.trino.s3file.xml.XmlTableFunction;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
 import marcbp.trino.s3file.s3.S3ClientConfig;
 import marcbp.trino.s3file.file.FileSplit;
@@ -40,6 +40,7 @@ public final class S3FileConnector implements Connector {
     private final CsvTableFunction csvTableFunction;
     private final TextTableFunction textTableFunction;
     private final JsonTableFunction jsonTableFunction;
+    private final XmlTableFunction xmlTableFunction;
     private final FunctionProvider functionProvider;
     private final ConnectorSplitManager splitManager;
 
@@ -52,6 +53,7 @@ public final class S3FileConnector implements Connector {
         this.csvTableFunction = new CsvTableFunction(s3ClientBuilder);
         this.textTableFunction = new TextTableFunction(s3ClientBuilder);
         this.jsonTableFunction = new JsonTableFunction(s3ClientBuilder);
+        this.xmlTableFunction = new XmlTableFunction(s3ClientBuilder);
         this.functionProvider = new InlineFunctionProvider();
         this.splitManager = new InlineSplitManager();
     }
@@ -68,7 +70,7 @@ public final class S3FileConnector implements Connector {
 
     @Override
     public Set<ConnectorTableFunction> getTableFunctions() {
-        return Set.of(csvTableFunction, textTableFunction, jsonTableFunction);
+        return Set.of(csvTableFunction, textTableFunction, jsonTableFunction, xmlTableFunction);
     }
 
     @Override
@@ -108,6 +110,10 @@ public final class S3FileConnector implements Connector {
                 LOG.info("Supplying JSON processor provider for path %s", jsonHandle.getS3Path());
                 return jsonTableFunction.createProcessorProvider();
             }
+            if (functionHandle instanceof XmlTableFunction.Handle xmlHandle) {
+                LOG.info("Supplying XML processor provider for path %s", xmlHandle.getS3Path());
+                return xmlTableFunction.createProcessorProvider();
+            }
             throw new IllegalArgumentException("Unexpected handle type: " + functionHandle.getClass().getName());
         }
     }
@@ -128,6 +134,11 @@ public final class S3FileConnector implements Connector {
             if (functionHandle instanceof JsonTableFunction.Handle jsonHandle) {
                 List<FileSplit> splits = jsonTableFunction.createSplits(jsonHandle);
                 LOG.info("Providing %s JSON split(s) for path %s", splits.size(), jsonHandle.getS3Path());
+                return new FixedSplitSource(splits);
+            }
+            if (functionHandle instanceof XmlTableFunction.Handle xmlHandle) {
+                List<FileSplit> splits = xmlTableFunction.createSplits(xmlHandle);
+                LOG.info("Providing %s XML split(s) for path %s", splits.size(), xmlHandle.getS3Path());
                 return new FixedSplitSource(splits);
             }
             throw new IllegalArgumentException("Unexpected handle type: " + functionHandle.getClass().getName());
