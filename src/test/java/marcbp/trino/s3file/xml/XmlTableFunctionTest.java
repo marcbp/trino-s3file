@@ -25,6 +25,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -91,6 +92,7 @@ class XmlTableFunctionTest {
         assertEquals(StandardCharsets.UTF_8.name(), handle.getCharsetName());
         assertEquals(512L, handle.getFileSize());
         assertFalse(handle.isEmptyAsNull());
+        assertFalse(handle.hasInvalidRowColumn());
 
         List<FileSplit> splits = function.createSplits(handle);
         assertEquals(1, splits.size());
@@ -140,6 +142,7 @@ class XmlTableFunctionTest {
         assertEquals(List.of("@status", "message", "text"), handle.columnNames());
         assertEquals(1024L, handle.getFileSize());
         assertFalse(handle.isEmptyAsNull());
+        assertFalse(handle.hasInvalidRowColumn());
 
         verify(sessionClient).openReader(eq(PATH), any(Charset.class));
         verify(sessionClient).getObjectSize(eq(PATH));
@@ -173,10 +176,48 @@ class XmlTableFunctionTest {
         XmlTableFunction.Handle handle = (XmlTableFunction.Handle) analysis.getHandle();
         assertTrue(handle.isEmptyAsNull());
         assertEquals(List.of("@code", "name"), handle.columnNames());
+        assertFalse(handle.hasInvalidRowColumn());
 
         verify(sessionClient).openReader(eq(PATH), any(Charset.class));
         verify(sessionClient).getObjectSize(eq(PATH));
         verify(sessionClient).close();
+    }
+
+    @Test
+    void analyzeAddsInvalidRowColumnWhenRequested() {
+        when(sessionClient.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
+                new BufferedReader(new StringReader("""
+                        <items>
+                          <item code="1"><name>Valid</name></item>
+                        </items>
+                        """)));
+        when(sessionClient.getObjectSize(eq(PATH))).thenReturn(256L);
+
+        Map<String, Argument> arguments = Map.of(
+                "PATH", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PATH)),
+                "ROW_ELEMENT", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice("item")),
+                "INVALID_ROW_COLUMN", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice("raw_row"))
+        );
+
+        TableFunctionAnalysis analysis = function.analyze(
+                mock(ConnectorSession.class),
+                new ConnectorTransactionHandle() {},
+                arguments,
+                null);
+
+        Descriptor descriptor = analysis.getReturnedType().orElseThrow();
+        Descriptor expected = Descriptor.descriptor(
+                List.of("@code", "name", "raw_row"),
+                List.of(
+                        VarcharType.createUnboundedVarcharType(),
+                        VarcharType.createUnboundedVarcharType(),
+                        VarcharType.createUnboundedVarcharType()));
+        assertEquals(expected, descriptor);
+
+        XmlTableFunction.Handle handle = (XmlTableFunction.Handle) analysis.getHandle();
+        assertTrue(handle.hasInvalidRowColumn());
+        assertEquals("raw_row", handle.getInvalidRowColumn());
+        assertEquals(List.of("@code", "name", "raw_row"), handle.columnNames());
     }
 
     @Test
@@ -195,18 +236,60 @@ class XmlTableFunctionTest {
                 new Column("name", ColumnSource.ELEMENT, "name"),
                 new Column("text", ColumnSource.TEXT, "")));
 
-        String[] valuesWithoutNull = XmlFormatSupport.readNextRecord(
+        XmlFormatSupport.RowExtraction withoutNull = XmlFormatSupport.readNextRecord(
                 XmlFormatSupport.newXmlReader(new BufferedReader(new StringReader(xml))),
                 schema,
                 "item",
                 false);
-        assertArrayEquals(new String[] {"", "", null}, valuesWithoutNull);
+        assertFalse(withoutNull.done());
+        assertTrue(withoutNull.valid());
+        assertArrayEquals(new String[] {"", "", null}, withoutNull.values());
 
-        String[] valuesWithNull = XmlFormatSupport.readNextRecord(
+        XmlFormatSupport.RowExtraction withNull = XmlFormatSupport.readNextRecord(
                 XmlFormatSupport.newXmlReader(new BufferedReader(new StringReader(xml))),
                 schema,
                 "item",
                 true);
-        assertArrayEquals(new String[] {null, null, null}, valuesWithNull);
+        assertFalse(withNull.done());
+        assertTrue(withNull.valid());
+        assertArrayEquals(new String[] {null, null, null}, withNull.values());
+
+        XmlFormatSupport.RowExtraction finished = XmlFormatSupport.readNextRecord(
+                XmlFormatSupport.newXmlReader(new BufferedReader(new StringReader("<items></items>"))),
+                schema,
+                "item",
+                true);
+        assertTrue(finished.done());
+    }
+
+    @Test
+    void readNextRecordCapturesInvalidRowWhenRawColumnProvided() throws Exception {
+        String xml = """
+                <items>
+                  <item code="1">
+                    <name><first>Nested</first></name>
+                  </item>
+                </items>
+                """;
+
+        XmlFormatSupport.Schema baseSchema = new XmlFormatSupport.Schema(List.of(
+                new Column("@code", ColumnSource.ATTRIBUTE, "code"),
+                new Column("name", ColumnSource.ELEMENT, "name")));
+        XmlFormatSupport.Schema schema = XmlFormatSupport.appendRawColumn(baseSchema, "raw_row");
+
+        XmlFormatSupport.RowExtraction extraction = XmlFormatSupport.readNextRecord(
+                XmlFormatSupport.newXmlReader(new BufferedReader(new StringReader(xml))),
+                schema,
+                "item",
+                false);
+
+        assertFalse(extraction.done());
+        assertFalse(extraction.valid());
+        String[] values = extraction.values();
+        assertNull(values[0]);
+        assertNull(values[1]);
+        String raw = values[2];
+        assertTrue(raw.contains("<item"));
+        assertTrue(raw.contains("<first>Nested</first>"));
     }
 }

@@ -54,6 +54,7 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
     private static final String ROW_ELEMENT_ARGUMENT = "ROW_ELEMENT";
     private static final String INCLUDE_TEXT_ARGUMENT = "INCLUDE_TEXT";
     private static final String EMPTY_AS_NULL_ARGUMENT = "EMPTY_AS_NULL";
+    private static final String INVALID_ROW_COLUMN_ARGUMENT = "INVALID_ROW_COLUMN";
 
     private static final Logger logger = Logger.get(XmlTableFunction.class);
     private final S3ClientBuilder s3ClientBuilder;
@@ -78,7 +79,12 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
                         ScalarArgumentSpecification.builder()
                                 .name(EMPTY_AS_NULL_ARGUMENT)
                                 .type(VarcharType.VARCHAR)
-                                .defaultValue(Slices.utf8Slice("true"))
+                                .defaultValue(Slices.utf8Slice("false"))
+                                .build(),
+                        ScalarArgumentSpecification.builder()
+                                .name(INVALID_ROW_COLUMN_ARGUMENT)
+                                .type(VarcharType.VARCHAR)
+                                .defaultValue(Slices.utf8Slice("_errors"))
                                 .build()
                 ),
                 ReturnTypeSpecification.GenericTable.GENERIC_TABLE);
@@ -95,6 +101,7 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         String rowElement = resolveRowElement(arguments);
         boolean includeText = resolveIncludeText(arguments);
         boolean emptyAsNull = resolveEmptyAsNull(arguments);
+        String invalidRowColumn = resolveInvalidRowColumn(arguments);
 
         XmlFormatSupport.Schema schema;
         long fileSize;
@@ -104,6 +111,9 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
             schema = XmlFormatSupport.inferSchema(reader, s3Path, rowElement);
             if (!includeText) {
                 schema = filterTextColumn(schema);
+            }
+            if (!invalidRowColumn.isEmpty()) {
+                schema = XmlFormatSupport.appendRawColumn(schema, invalidRowColumn);
             }
             fileSize = s3.getObjectSize(s3Path);
         }
@@ -122,7 +132,7 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         logger.info("Detected %s XML field(s) for %s", columnNames.size(), s3Path);
         return TableFunctionAnalysis.builder()
                 .returnedType(descriptor)
-                .handle(new Handle(s3Path, rowElement, schema.columns(), emptyAsNull, null, fileSize, charset.name()))
+                .handle(new Handle(s3Path, rowElement, schema.columns(), emptyAsNull, invalidRowColumn.isEmpty() ? null : invalidRowColumn, null, fileSize, charset.name()))
                 .build();
     }
 
@@ -166,6 +176,18 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         return Boolean.parseBoolean(slice.toStringUtf8().trim());
     }
 
+    private static String resolveInvalidRowColumn(Map<String, Argument> arguments) {
+        ScalarArgument argument = (ScalarArgument) arguments.get(INVALID_ROW_COLUMN_ARGUMENT);
+        if (argument == null) {
+            return "";
+        }
+        Object value = argument.getValue();
+        if (!(value instanceof Slice slice)) {
+            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "INVALID_ROW_COLUMN must be a string");
+        }
+        return slice.toStringUtf8().trim();
+    }
+
     private static XmlFormatSupport.Schema filterTextColumn(XmlFormatSupport.Schema schema) {
         List<XmlFormatSupport.Column> filtered = new ArrayList<>();
         for (XmlFormatSupport.Column column : schema.columns()) {
@@ -192,12 +214,14 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         private final String rowElement;
         private final List<XmlFormatSupport.Column> columns;
         private final boolean emptyAsNull;
+        private final String invalidRowColumn;
 
         @JsonCreator
         public Handle(@JsonProperty("s3Path") String s3Path,
                       @JsonProperty("rowElement") String rowElement,
                       @JsonProperty("columns") List<XmlFormatSupport.Column> columns,
                       @JsonProperty("emptyAsNull") boolean emptyAsNull,
+                      @JsonProperty("invalidRowColumn") String invalidRowColumn,
                       @JsonProperty("batchSize") Integer batchSize,
                       @JsonProperty("fileSize") long fileSize,
                       @JsonProperty("charset") String charsetName) {
@@ -205,6 +229,7 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
             this.rowElement = requireNonNull(rowElement, "rowElement is null");
             this.columns = List.copyOf(requireNonNull(columns, "columns is null"));
             this.emptyAsNull = emptyAsNull;
+            this.invalidRowColumn = invalidRowColumn == null ? "" : invalidRowColumn;
         }
 
         @JsonProperty
@@ -220,6 +245,15 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         @JsonProperty("emptyAsNull")
         public boolean isEmptyAsNull() {
             return emptyAsNull;
+        }
+
+        @JsonProperty("invalidRowColumn")
+        public String getInvalidRowColumn() {
+            return invalidRowColumn;
+        }
+
+        public boolean hasInvalidRowColumn() {
+            return !invalidRowColumn.isEmpty();
         }
 
         public List<String> columnNames() {
@@ -290,11 +324,11 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
                 return RecordReadResult.finished();
             }
             try {
-                String[] values = XmlFormatSupport.readNextRecord(xmlReader, schema, handle.getRowElement(), emptyAsNull);
-                if (values == null) {
+                XmlFormatSupport.RowExtraction row = XmlFormatSupport.readNextRecord(xmlReader, schema, handle.getRowElement(), emptyAsNull);
+                if (row.done()) {
                     return RecordReadResult.finished();
                 }
-                return RecordReadResult.produce(values, 0, false);
+                return RecordReadResult.produce(row.values(), 0, false);
             }
             catch (XMLStreamException e) {
                 throw new IOException("Failed to read XML record for " + handle.getS3Path(), e);

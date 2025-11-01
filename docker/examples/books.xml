@@ -17,4 +17,10 @@
     <genre/>
     <price>9.99</price>
   </book>
+  <book id="bk104" tag="new">
+    <title>
+      <main>Advanced XML</main>
+      <subtitle>Processing</subtitle>
+    </title>
+  </book>
 </catalog>

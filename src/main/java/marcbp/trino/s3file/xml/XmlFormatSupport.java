@@ -10,7 +10,9 @@ import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -41,6 +43,15 @@ public final class XmlFormatSupport {
         catch (XMLStreamException e) {
             throw new IOException("Failed to parse XML for " + sourceDescription, e);
         }
+    }
+
+    public static Schema appendRawColumn(Schema schema, String columnName) {
+        if (columnName == null || columnName.isBlank()) {
+            throw new IllegalArgumentException("columnName must not be blank");
+        }
+        List<Column> columns = new ArrayList<>(schema.columns());
+        columns.add(new Column(columnName, ColumnSource.RAW, ""));
+        return new Schema(columns);
     }
 
     public static XMLStreamReader newXmlReader(BufferedReader reader) throws XMLStreamException {
@@ -128,7 +139,7 @@ public final class XmlFormatSupport {
         }
     }
 
-    public static String[] readNextRecord(XMLStreamReader reader, Schema schema, String rowElement, boolean emptyAsNull) throws XMLStreamException {
+    public static RowExtraction readNextRecord(XMLStreamReader reader, Schema schema, String rowElement, boolean emptyAsNull) throws XMLStreamException {
         while (reader.hasNext()) {
             int event = reader.next();
             if (event != XMLStreamConstants.START_ELEMENT) {
@@ -139,56 +150,229 @@ public final class XmlFormatSupport {
             }
             return extractRow(reader, schema, rowElement, emptyAsNull);
         }
-        return null;
+        return RowExtraction.finished();
     }
 
-    private static String[] extractRow(XMLStreamReader reader, Schema schema, String rowElement, boolean emptyAsNull) throws XMLStreamException {
-        Map<String, String> attributeValues = new LinkedHashMap<>();
-        for (int i = 0; i < reader.getAttributeCount(); i++) {
-            attributeValues.put(reader.getAttributeLocalName(i), reader.getAttributeValue(i));
+    private static RowExtraction extractRow(XMLStreamReader reader, Schema schema, String rowElement, boolean emptyAsNull) throws XMLStreamException {
+        int columnCount = schema.columns().size();
+        String[] values = new String[columnCount];
+        boolean[] seen = new boolean[columnCount];
+
+        Map<String, Integer> attributeIndex = new LinkedHashMap<>();
+        Map<String, Integer> elementIndex = new LinkedHashMap<>();
+        int textColumnIndex = -1;
+        int rawColumnIndex = -1;
+
+        for (int columnIndex = 0; columnIndex < schema.columns().size(); columnIndex++) {
+            Column column = schema.columns().get(columnIndex);
+            switch (column.source()) {
+                case ATTRIBUTE -> attributeIndex.put(column.sourceName(), columnIndex);
+                case ELEMENT -> elementIndex.putIfAbsent(column.sourceName(), columnIndex);
+                case TEXT -> textColumnIndex = columnIndex;
+                case RAW -> rawColumnIndex = columnIndex;
+            }
         }
 
-        Map<String, String> elementValues = new LinkedHashMap<>();
-        StringBuilder textContent = new StringBuilder();
+        StringBuilder rawBuilder = rawColumnIndex >= 0 ? new StringBuilder() : null;
+        appendStartElementForRaw(reader, rawBuilder);
+
+        Map<String, String> attributes = new LinkedHashMap<>();
+        for (int i = 0; i < reader.getAttributeCount(); i++) {
+            attributes.put(reader.getAttributeLocalName(i), reader.getAttributeValue(i));
+        }
+
+        for (Map.Entry<String, Integer> entry : attributeIndex.entrySet()) {
+            String attributeValue = attributes.get(entry.getKey());
+            int index = entry.getValue();
+            values[index] = normalizeValue(attributeValue, emptyAsNull);
+            seen[index] = true;
+        }
+
+        StringBuilder textBuilder = textColumnIndex >= 0 ? new StringBuilder() : null;
+        Deque<ElementFrame> frames = new ArrayDeque<>();
+        boolean invalid = false;
 
         while (reader.hasNext()) {
             int event = reader.next();
-            if (event == XMLStreamConstants.START_ELEMENT) {
-                String localName = reader.getLocalName();
-                String text = reader.getElementText();
-                if (text != null) {
-                    elementValues.putIfAbsent(localName, text.trim());
+            switch (event) {
+                case XMLStreamConstants.START_ELEMENT -> {
+                    String localName = reader.getLocalName();
+                    appendStartElementForRaw(reader, rawBuilder);
+                    ElementFrame frame;
+                    if (frames.isEmpty()) {
+                        int columnIndex = elementIndex.getOrDefault(localName, -1);
+                        frame = new ElementFrame(columnIndex);
+                        frames.push(frame);
+                        if (columnIndex >= 0 && seen[columnIndex]) {
+                            invalid = true;
+                        }
+                    }
+                    else {
+                        ElementFrame parent = frames.peek();
+                        parent.markNested();
+                        frame = new ElementFrame(-1);
+                        frames.push(frame);
+                        invalid = true;
+                    }
                 }
-            }
-            else if (event == XMLStreamConstants.CHARACTERS || event == XMLStreamConstants.CDATA) {
-                if (!reader.isWhiteSpace()) {
-                    textContent.append(reader.getText());
+                case XMLStreamConstants.CHARACTERS, XMLStreamConstants.CDATA -> {
+                    String text = reader.getText();
+                    appendTextForRaw(rawBuilder, text);
+                    if (!frames.isEmpty()) {
+                        frames.peek().append(text);
+                    }
+                    else if (!reader.isWhiteSpace()) {
+                        if (textBuilder != null) {
+                            textBuilder.append(text);
+                        }
+                        else {
+                            invalid = true;
+                        }
+                    }
+                    else if (textBuilder != null) {
+                        textBuilder.append(text);
+                    }
                 }
-            }
-            else if (event == XMLStreamConstants.END_ELEMENT && rowElement.equals(reader.getLocalName())) {
-                break;
+                case XMLStreamConstants.END_ELEMENT -> {
+                    String localName = reader.getLocalName();
+                    appendEndElementForRaw(localName, rawBuilder);
+                    if (frames.isEmpty()) {
+                        if (!rowElement.equals(localName)) {
+                            throw new XMLStreamException("Unexpected closing tag </" + localName + "> inside <" + rowElement + ">");
+                        }
+                        String textValue = textBuilder == null ? null : textBuilder.toString().trim();
+                        if (textValue != null && textValue.isEmpty()) {
+                            textValue = null;
+                        }
+                        if (textColumnIndex >= 0) {
+                            values[textColumnIndex] = normalizeValue(textValue, emptyAsNull);
+                            seen[textColumnIndex] = true;
+                        }
+                        if (invalid && rawColumnIndex < 0) {
+                            throw new XMLStreamException("Unable to project XML row because it contains unsupported structure");
+                        }
+                        if (invalid) {
+                            for (int i = 0; i < values.length; i++) {
+                                if (i != rawColumnIndex) {
+                                    values[i] = null;
+                                }
+                            }
+                        }
+                        if (rawColumnIndex >= 0) {
+                            values[rawColumnIndex] = invalid ? rawBuilder.toString() : null;
+                        }
+                        return RowExtraction.row(values, !invalid);
+                    }
+
+                    ElementFrame frame = frames.pop();
+                    if (frame.columnIndex >= 0) {
+                        String text = frame.content.toString();
+                        String trimmed = text.trim();
+                        if (frame.hasNestedContent()) {
+                            invalid = true;
+                        }
+                        String normalised = normalizeValue(trimmed, emptyAsNull);
+                        int index = frame.columnIndex;
+                        values[index] = normalised;
+                        seen[index] = true;
+                    }
+                }
+                default -> {
+                    // Ignore
+                }
             }
         }
 
-        String[] values = new String[schema.columns.size()];
-        String textValue = textContent.length() == 0 ? null : textContent.toString().trim();
+        throw new XMLStreamException("Unexpected end of XML document while reading <" + rowElement + ">");
+    }
 
-        for (int i = 0; i < schema.columns.size(); i++) {
-            Column column = schema.columns.get(i);
-            switch (column.source) {
-                case ATTRIBUTE -> values[i] = normalizeValue(attributeValues.get(column.sourceName), emptyAsNull);
-                case ELEMENT -> values[i] = normalizeValue(elementValues.get(column.sourceName), emptyAsNull);
-                case TEXT -> values[i] = normalizeValue(textValue, emptyAsNull);
-            }
+    private static void appendStartElementForRaw(XMLStreamReader reader, StringBuilder rawBuilder) {
+        if (rawBuilder == null) {
+            return;
         }
-        return values;
+        rawBuilder.append('<').append(reader.getLocalName());
+        for (int i = 0; i < reader.getAttributeCount(); i++) {
+            rawBuilder.append(' ')
+                    .append(reader.getAttributeLocalName(i))
+                    .append("=\"")
+                    .append(escapeAttribute(reader.getAttributeValue(i)))
+                    .append('"');
+        }
+        rawBuilder.append('>');
+    }
+
+    private static void appendEndElementForRaw(String localName, StringBuilder rawBuilder) {
+        if (rawBuilder == null) {
+            return;
+        }
+        rawBuilder.append("</").append(localName).append('>');
+    }
+
+    private static void appendTextForRaw(StringBuilder rawBuilder, String text) {
+        if (rawBuilder == null || text == null || text.isEmpty()) {
+            return;
+        }
+        rawBuilder.append(escapeText(text));
+    }
+
+    private static String escapeAttribute(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value
+                .replace("&", "&amp;")
+                .replace("\"", "&quot;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;");
+    }
+
+    private static String escapeText(String value) {
+        return value
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;");
     }
 
     private static String normalizeValue(String value, boolean emptyAsNull) {
-        if (!emptyAsNull || value == null) {
-            return value;
+        if (value == null) {
+            return null;
         }
-        return value.isEmpty() ? null : value;
+        if (emptyAsNull && value.isEmpty()) {
+            return null;
+        }
+        return value;
+    }
+
+    private static final class ElementFrame {
+        private final int columnIndex;
+        private final StringBuilder content = new StringBuilder();
+        private boolean nestedContent;
+
+        private ElementFrame(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        void append(String text) {
+            content.append(text);
+        }
+
+        void markNested() {
+            nestedContent = true;
+        }
+
+        boolean hasNestedContent() {
+            return nestedContent;
+        }
+    }
+
+    public record RowExtraction(boolean done, String[] values, boolean valid) {
+        public static RowExtraction finished() {
+            return new RowExtraction(true, null, true);
+        }
+
+        public static RowExtraction row(String[] values, boolean valid) {
+            return new RowExtraction(false, values, valid);
+        }
     }
 
     public record Schema(List<Column> columns) {
@@ -220,6 +404,7 @@ public final class XmlFormatSupport {
     public enum ColumnSource {
         ATTRIBUTE,
         ELEMENT,
-        TEXT
+        TEXT,
+        RAW
     }
 }

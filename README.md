@@ -34,6 +34,7 @@ FROM TABLE(
         row_element => 'book',    -- element treated as one row
         include_text => 'false',  -- set to 'true' to expose mixed-content text
         empty_as_null => 'true',  -- convert empty strings to NULL when set to 'true'
+        invalid_row_column => '_errors', -- capture unparsable rows as raw XML
         encoding => 'UTF-8'
     )
 );
@@ -43,9 +44,14 @@ FROM TABLE(
 - `row_element` (optional, default `'row'`): element name that represents one logical row; only direct children of that element become columns.
 - `include_text` (optional, default `'false'`): expose mixed-content text (outside child elements) as an extra column named `text`.
 - `empty_as_null` (optional, default `'false'`): convert empty attribute/element values to `NULL`.
+- `invalid_row_column` (optional, default `'_errors'`): adds a `VARCHAR` column that receives the raw XML whenever a row cannot be projected (unexpected nesting, unknown fields, etc.). Use an empty string to disable it.
 - `encoding` (optional, default `'UTF-8'`): character set for decoding the file.
 
 Attributes are automatically projected as columns prefixed with `@`, while first-level child elements become `VARCHAR` columns. Nested structures are not flattened; compute additional parsing in SQL as needed.
+
+`include_text` is useful for XML elements that interleave literal text with child nodes. For example, the snippet `<entry status="new">Reminder<message>Hello</message></entry>` yields columns `@status = 'new'`, `message = 'Hello'`, and, when `include_text => 'true'`, `text = 'Reminder'`.
+
+Set `invalid_row_column` to keep malformed rows instead of failing the query. Those rows are emitted with `NULL` for projected fields and the raw XML in the dedicated column, which can then be inspected or reprocessed. Combine it with `empty_as_null => 'true'` to turn empty strings into SQL `NULL` while still capturing the original payload.
 
 ## Load CSV files
 
