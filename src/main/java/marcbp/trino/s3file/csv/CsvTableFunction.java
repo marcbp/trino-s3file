@@ -36,6 +36,7 @@ import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static java.util.Objects.requireNonNull;
 import static marcbp.trino.s3file.util.TableFunctionArguments.encodingArgumentSpecification;
@@ -101,11 +102,11 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
         logger.info("Header present: %s", headerPresent);
 
         List<String> columnNames;
-        long fileSize;
+        S3ClientBuilder.ObjectMetadata metadata;
         try (S3ClientBuilder.SessionClient s3 = s3ClientBuilder.forSession(session);
              BufferedReader reader = s3.openReader(s3Path, charset)) {
+            metadata = s3.getObjectMetadata(s3Path);
             columnNames = CsvFormatSupport.inferColumnNames(reader, s3Path, delimiter, headerPresent);
-            fileSize = s3.getObjectSize(s3Path);
         }
         catch (IOException e) {
             logger.error(e, "Failed to infer column names for %s", s3Path);
@@ -119,7 +120,17 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
 
         return TableFunctionAnalysis.builder()
                 .returnedType(descriptor)
-                .handle(new Handle(s3Path, columnNames, delimiter, headerPresent, null, fileSize, DEFAULT_SPLIT_SIZE_BYTES, charset.name()))
+                .handle(new Handle(
+                        s3Path,
+                        columnNames,
+                        delimiter,
+                        headerPresent,
+                        null,
+                        metadata.size(),
+                        DEFAULT_SPLIT_SIZE_BYTES,
+                        charset.name(),
+                        metadata.eTag().orElse(null),
+                        metadata.versionId().orElse(null)))
                 .build();
     }
 
@@ -148,8 +159,17 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                       @JsonProperty("batchSize") Integer batchSize,
                       @JsonProperty("fileSize") long fileSize,
                       @JsonProperty("splitSizeBytes") int splitSizeBytes,
-                      @JsonProperty("charset") String charsetName) {
-            super(s3Path, fileSize, splitSizeBytes, charsetName, batchSize == null ? BaseFileHandle.DEFAULT_BATCH_SIZE : batchSize);
+                      @JsonProperty("charset") String charsetName,
+                      @JsonProperty("etag") String eTag,
+                      @JsonProperty("versionId") String versionId) {
+            super(
+                    s3Path,
+                    fileSize,
+                    splitSizeBytes,
+                    charsetName,
+                    batchSize == null ? BaseFileHandle.DEFAULT_BATCH_SIZE : batchSize,
+                    Optional.ofNullable(eTag),
+                    Optional.ofNullable(versionId));
             this.columns = List.copyOf(requireNonNull(columns, "columns is null"));
             this.delimiter = delimiter;
             this.headerPresent = headerPresent;

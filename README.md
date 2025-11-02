@@ -5,6 +5,7 @@ A Trino connector for ad-hoc exploration, validation, or lightweight ingestion o
 - **Schema inference on read**: metadata are inferred at runtime from each object.
 - **Parameterized table functions**: pass parsing tweaks per query without redeploying.
 - **Distributed processing**: workers stream byte ranges concurrently so oversized files stay readable.
+- **Snapshot safety**: object versions or ETags are pinned to avoid mixing data when objects change mid-scan.
 
 ## Load JSON files
 

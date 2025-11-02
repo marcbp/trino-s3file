@@ -11,6 +11,7 @@ import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
+import marcbp.trino.s3file.s3.S3ClientBuilder.ObjectMetadata;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -18,6 +19,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -50,7 +52,7 @@ class TextTableFunctionTest {
 
     @Test
     void analyzeBuildsHandleWithDecodedLineBreak() {
-        when(sessionClient.getObjectSize(eq(PATH))).thenReturn(2048L);
+        when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(2048L, Optional.of("etag-text"), Optional.of("v1")));
         Map<String, Argument> arguments = Map.of(
                 "PATH", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PATH)),
                 "LINE_BREAK", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice("\\r\\n"))
@@ -62,10 +64,10 @@ class TextTableFunctionTest {
                 arguments,
                 null);
 
-        TextTableFunction.Handle handle = assertHandle(analysis, "\r\n", 2048L);
+        TextTableFunction.Handle handle = assertHandle(analysis, "\r\n", 2048L, Optional.of("etag-text"), Optional.of("v1"));
         assertEquals(Descriptor.descriptor(List.of("line"), List.of(VarcharType.createUnboundedVarcharType())),
                 analysis.getReturnedType().orElseThrow());
-        verify(sessionClient).getObjectSize(eq(PATH));
+        verify(sessionClient).getObjectMetadata(eq(PATH));
         verify(sessionClient).close();
     }
 
@@ -77,7 +79,9 @@ class TextTableFunctionTest {
                 null,
                 10,
                 4,
-                StandardCharsets.UTF_8.name());
+                StandardCharsets.UTF_8.name(),
+                null,
+                null);
 
         List<FileSplit> splits = function.createSplits(handle);
 
@@ -105,7 +109,11 @@ class TextTableFunctionTest {
         assertTrue(third.isLast());
     }
 
-    private static TextTableFunction.Handle assertHandle(TableFunctionAnalysis analysis, String expectedDelimiter, long expectedSize) {
+    private static TextTableFunction.Handle assertHandle(TableFunctionAnalysis analysis,
+                                                         String expectedDelimiter,
+                                                         long expectedSize,
+                                                         Optional<String> expectedEtag,
+                                                         Optional<String> expectedVersion) {
         assertInstanceOf(TextTableFunction.Handle.class, analysis.getHandle());
         TextTableFunction.Handle handle = (TextTableFunction.Handle) analysis.getHandle();
         assertEquals(PATH, handle.getS3Path());
@@ -114,6 +122,8 @@ class TextTableFunctionTest {
         assertEquals(8 * 1024 * 1024, handle.getSplitSizeBytes());
         assertEquals(1024, handle.getBatchSize());
         assertEquals(StandardCharsets.UTF_8.name(), handle.getCharsetName());
+        assertEquals(expectedEtag, handle.getETag());
+        assertEquals(expectedVersion, handle.getVersionId());
         List<Type> columnTypes = handle.resolveColumnTypes();
         assertEquals(1, columnTypes.size());
         assertEquals(VarcharType.createUnboundedVarcharType(), columnTypes.get(0));

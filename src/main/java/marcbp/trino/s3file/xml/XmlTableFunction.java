@@ -39,6 +39,7 @@ import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static java.util.Objects.requireNonNull;
@@ -104,10 +105,11 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         String invalidRowColumn = resolveInvalidRowColumn(arguments);
 
         XmlFormatSupport.Schema schema;
-        long fileSize;
+        S3ClientBuilder.ObjectMetadata metadata;
 
         try (S3ClientBuilder.SessionClient s3 = s3ClientBuilder.forSession(session);
              BufferedReader reader = s3.openReader(s3Path, charset)) {
+            metadata = s3.getObjectMetadata(s3Path);
             schema = XmlFormatSupport.inferSchema(reader, s3Path, rowElement);
             if (!includeText) {
                 schema = filterTextColumn(schema);
@@ -115,7 +117,6 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
             if (!invalidRowColumn.isEmpty()) {
                 schema = XmlFormatSupport.appendRawColumn(schema, invalidRowColumn);
             }
-            fileSize = s3.getObjectSize(s3Path);
         }
         catch (IOException e) {
             logger.error(e, "Failed to infer XML schema for %s", s3Path);
@@ -132,7 +133,17 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         logger.info("Detected %s XML field(s) for %s", columnNames.size(), s3Path);
         return TableFunctionAnalysis.builder()
                 .returnedType(descriptor)
-                .handle(new Handle(s3Path, rowElement, schema.columns(), emptyAsNull, invalidRowColumn.isEmpty() ? null : invalidRowColumn, null, fileSize, charset.name()))
+                .handle(new Handle(
+                        s3Path,
+                        rowElement,
+                        schema.columns(),
+                        emptyAsNull,
+                        invalidRowColumn.isEmpty() ? null : invalidRowColumn,
+                        null,
+                        metadata.size(),
+                        charset.name(),
+                        metadata.eTag().orElse(null),
+                        metadata.versionId().orElse(null)))
                 .build();
     }
 
@@ -224,8 +235,17 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
                       @JsonProperty("invalidRowColumn") String invalidRowColumn,
                       @JsonProperty("batchSize") Integer batchSize,
                       @JsonProperty("fileSize") long fileSize,
-                      @JsonProperty("charset") String charsetName) {
-            super(s3Path, fileSize, Integer.MAX_VALUE, charsetName, batchSize == null ? BaseFileHandle.DEFAULT_BATCH_SIZE : batchSize);
+                      @JsonProperty("charset") String charsetName,
+                      @JsonProperty("etag") String eTag,
+                      @JsonProperty("versionId") String versionId) {
+            super(
+                    s3Path,
+                    fileSize,
+                    Integer.MAX_VALUE,
+                    charsetName,
+                    batchSize == null ? BaseFileHandle.DEFAULT_BATCH_SIZE : batchSize,
+                    Optional.ofNullable(eTag),
+                    Optional.ofNullable(versionId));
             this.rowElement = requireNonNull(rowElement, "rowElement is null");
             this.columns = List.copyOf(requireNonNull(columns, "columns is null"));
             this.emptyAsNull = emptyAsNull;

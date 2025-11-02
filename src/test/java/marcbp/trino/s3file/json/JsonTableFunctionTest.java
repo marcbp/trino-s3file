@@ -12,6 +12,7 @@ import io.trino.spi.type.BooleanType;
 import io.trino.spi.type.DoubleType;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
+import marcbp.trino.s3file.s3.S3ClientBuilder.ObjectMetadata;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -21,6 +22,7 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
@@ -48,7 +50,7 @@ class JsonTableFunctionTest {
                         {"event_id":1,"active":true,"amount":12.5,"meta":{"source":"app"},"note":"hello"}
                         {"event_id":2,"active":false,"amount":7.0,"note":"bye"}
                         """)));
-        when(sessionClient.getObjectSize(eq(PATH))).thenReturn(512L);
+        when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(512L, Optional.of("etag-json"), Optional.empty()));
 
         Map<String, Argument> arguments = Map.of(
                 "PATH", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PATH))
@@ -75,10 +77,12 @@ class JsonTableFunctionTest {
         assertEquals(PATH, handle.getS3Path());
         assertEquals(expectedDescriptor, Descriptor.descriptor(handle.getColumns(), handle.resolveColumnTypes()));
         assertEquals(512L, handle.getFileSize());
+        assertEquals(Optional.of("etag-json"), handle.getETag());
+        assertEquals(Optional.empty(), handle.getVersionId());
         assertEquals(StandardCharsets.UTF_8.name(), handle.getCharsetName());
 
         verify(sessionClient).openReader(eq(PATH), any(Charset.class));
-        verify(sessionClient).getObjectSize(eq(PATH));
+        verify(sessionClient).getObjectMetadata(eq(PATH));
         verify(sessionClient).close();
     }
 
@@ -89,7 +93,7 @@ class JsonTableFunctionTest {
                         {"event_id":1}
                         {"event_id":2,"campaign":"spring","score":42.5}
                         """)));
-        when(sessionClient.getObjectSize(eq(PATH))).thenReturn(256L);
+        when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(256L, Optional.empty(), Optional.of("v2")));
 
         Map<String, Argument> arguments = Map.of(
                 "PATH", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PATH)),
@@ -118,9 +122,11 @@ class JsonTableFunctionTest {
                 List.of(BigintType.BIGINT, VarcharType.createUnboundedVarcharType(), DoubleType.DOUBLE),
                 handle.resolveColumnTypes());
         assertEquals("ISO-8859-1", handle.getCharsetName());
+        assertEquals(Optional.empty(), handle.getETag());
+        assertEquals(Optional.of("v2"), handle.getVersionId());
 
         verify(sessionClient).openReader(eq(PATH), any(Charset.class));
-        verify(sessionClient).getObjectSize(eq(PATH));
+        verify(sessionClient).getObjectMetadata(eq(PATH));
         verify(sessionClient).close();
     }
 }

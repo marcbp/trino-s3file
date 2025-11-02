@@ -10,6 +10,7 @@ import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
+import marcbp.trino.s3file.s3.S3ClientBuilder.ObjectMetadata;
 import marcbp.trino.s3file.xml.XmlFormatSupport.Column;
 import marcbp.trino.s3file.xml.XmlFormatSupport.ColumnSource;
 import org.junit.jupiter.api.BeforeEach;
@@ -21,6 +22,7 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -62,7 +64,7 @@ class XmlTableFunctionTest {
                           </book>
                         </catalog>
                         """)));
-        when(sessionClient.getObjectSize(eq(PATH))).thenReturn(512L);
+        when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(512L, Optional.of("etag-xml"), Optional.empty()));
 
         Map<String, Argument> arguments = Map.of(
                 "PATH", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PATH)),
@@ -91,6 +93,8 @@ class XmlTableFunctionTest {
         assertEquals(List.of("@id", "author", "title", "genre"), handle.columnNames());
         assertEquals(StandardCharsets.UTF_8.name(), handle.getCharsetName());
         assertEquals(512L, handle.getFileSize());
+        assertEquals(Optional.of("etag-xml"), handle.getETag());
+        assertEquals(Optional.empty(), handle.getVersionId());
         assertFalse(handle.isEmptyAsNull());
         assertFalse(handle.hasInvalidRowColumn());
 
@@ -99,7 +103,7 @@ class XmlTableFunctionTest {
         assertTrue(splits.get(0).isWholeFile());
 
         verify(sessionClient).openReader(eq(PATH), any(Charset.class));
-        verify(sessionClient).getObjectSize(eq(PATH));
+        verify(sessionClient).getObjectMetadata(eq(PATH));
         verify(sessionClient).close();
     }
 
@@ -112,7 +116,7 @@ class XmlTableFunctionTest {
                           <entry status="done"><message>Bye</message></entry>
                         </feed>
                         """)));
-        when(sessionClient.getObjectSize(eq(PATH))).thenReturn(1024L);
+        when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(1024L, Optional.empty(), Optional.of("version-text")));
 
         Map<String, Argument> arguments = Map.of(
                 "PATH", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PATH)),
@@ -141,11 +145,13 @@ class XmlTableFunctionTest {
         assertEquals("ISO-8859-1", handle.getCharsetName());
         assertEquals(List.of("@status", "message", "text"), handle.columnNames());
         assertEquals(1024L, handle.getFileSize());
+        assertEquals(Optional.empty(), handle.getETag());
+        assertEquals(Optional.of("version-text"), handle.getVersionId());
         assertFalse(handle.isEmptyAsNull());
         assertFalse(handle.hasInvalidRowColumn());
 
         verify(sessionClient).openReader(eq(PATH), any(Charset.class));
-        verify(sessionClient).getObjectSize(eq(PATH));
+        verify(sessionClient).getObjectMetadata(eq(PATH));
         verify(sessionClient).close();
     }
 
@@ -159,7 +165,7 @@ class XmlTableFunctionTest {
                           </item>
                         </items>
                         """)));
-        when(sessionClient.getObjectSize(eq(PATH))).thenReturn(128L);
+        when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(128L, Optional.empty(), Optional.empty()));
 
         Map<String, Argument> arguments = Map.of(
                 "PATH", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PATH)),
@@ -179,7 +185,7 @@ class XmlTableFunctionTest {
         assertFalse(handle.hasInvalidRowColumn());
 
         verify(sessionClient).openReader(eq(PATH), any(Charset.class));
-        verify(sessionClient).getObjectSize(eq(PATH));
+        verify(sessionClient).getObjectMetadata(eq(PATH));
         verify(sessionClient).close();
     }
 
@@ -191,7 +197,7 @@ class XmlTableFunctionTest {
                           <item code="1"><name>Valid</name></item>
                         </items>
                         """)));
-        when(sessionClient.getObjectSize(eq(PATH))).thenReturn(256L);
+        when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(256L, Optional.empty(), Optional.empty()));
 
         Map<String, Argument> arguments = Map.of(
                 "PATH", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PATH)),

@@ -92,9 +92,9 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
 
         logger.info("Analyzing txt.load table function for path %s with line break %s", s3Path, TextFormatSupport.formatForLog(lineBreak));
 
-        long fileSize;
+        S3ClientBuilder.ObjectMetadata metadata;
         try (S3ClientBuilder.SessionClient s3 = s3ClientBuilder.forSession(session)) {
-            fileSize = s3.getObjectSize(s3Path);
+            metadata = s3.getObjectMetadata(s3Path);
         }
 
         List<String> columnNames = List.of("line");
@@ -103,7 +103,15 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
 
         return TableFunctionAnalysis.builder()
                 .returnedType(descriptor)
-                .handle(new Handle(s3Path, lineBreak, null, fileSize, DEFAULT_SPLIT_SIZE_BYTES, charset.name()))
+                .handle(new Handle(
+                        s3Path,
+                        lineBreak,
+                        null,
+                        metadata.size(),
+                        DEFAULT_SPLIT_SIZE_BYTES,
+                        charset.name(),
+                        metadata.eTag().orElse(null),
+                        metadata.versionId().orElse(null)))
                 .build();
     }
 
@@ -128,8 +136,17 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
                       @JsonProperty("batchSize") Integer batchSize,
                       @JsonProperty("fileSize") long fileSize,
                       @JsonProperty("splitSizeBytes") int splitSizeBytes,
-                      @JsonProperty("charset") String charsetName) {
-            super(s3Path, fileSize, splitSizeBytes, charsetName, batchSize == null ? BaseFileHandle.DEFAULT_BATCH_SIZE : batchSize);
+                      @JsonProperty("charset") String charsetName,
+                      @JsonProperty("etag") String eTag,
+                      @JsonProperty("versionId") String versionId) {
+            super(
+                    s3Path,
+                    fileSize,
+                    splitSizeBytes,
+                    charsetName,
+                    batchSize == null ? BaseFileHandle.DEFAULT_BATCH_SIZE : batchSize,
+                    Optional.ofNullable(eTag),
+                    Optional.ofNullable(versionId));
             this.lineBreak = requireNonNull(lineBreak, "lineBreak is null");
         }
 

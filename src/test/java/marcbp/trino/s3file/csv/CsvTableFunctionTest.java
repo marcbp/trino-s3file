@@ -8,7 +8,9 @@ import io.trino.spi.function.table.Descriptor;
 import io.trino.spi.function.table.ScalarArgument;
 import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.type.VarcharType;
+import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
+import marcbp.trino.s3file.s3.S3ClientBuilder.ObjectMetadata;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -18,15 +20,13 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
-import marcbp.trino.s3file.file.FileSplit;
-
 import static org.mockito.Mockito.*;
 
 /**
@@ -50,7 +50,7 @@ class CsvTableFunctionTest {
     void analyzeInfersColumnsFromHeader() {
         when(sessionClient.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("first;second\n1;2\n")));
-        when(sessionClient.getObjectSize(eq(PATH))).thenReturn(64L);
+        when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(64L, Optional.of("etag-1"), Optional.empty()));
 
         Map<String, Argument> arguments = Map.of(
                 "PATH", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PATH))
@@ -68,6 +68,8 @@ class CsvTableFunctionTest {
         assertTrue(handle.isHeaderPresent());
         assertEquals(1024, handle.getBatchSize());
         assertEquals(64L, handle.getFileSize());
+        assertEquals(Optional.of("etag-1"), handle.getETag());
+        assertEquals(Optional.empty(), handle.getVersionId());
         assertEquals(8 * 1024 * 1024, handle.getSplitSizeBytes());
         assertEquals(StandardCharsets.UTF_8.name(), handle.getCharsetName());
 
@@ -77,7 +79,7 @@ class CsvTableFunctionTest {
         assertEquals(expectedDescriptor, analysis.getReturnedType().orElseThrow());
 
         verify(sessionClient).openReader(eq(PATH), any(Charset.class));
-        verify(sessionClient).getObjectSize(eq(PATH));
+        verify(sessionClient).getObjectMetadata(eq(PATH));
         verify(sessionClient).close();
     }
 
@@ -85,7 +87,7 @@ class CsvTableFunctionTest {
     void analyzeWithoutHeaderGeneratesDefaultColumns() {
         when(sessionClient.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("value1;value2;value3\n1;2;3\n")));
-        when(sessionClient.getObjectSize(eq(PATH))).thenReturn(64L);
+        when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(64L, Optional.empty(), Optional.empty()));
 
         Map<String, Argument> arguments = Map.of(
                 "PATH", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PATH)),
@@ -113,7 +115,7 @@ class CsvTableFunctionTest {
         assertEquals(expectedDescriptor, analysis.getReturnedType().orElseThrow());
 
         verify(sessionClient).openReader(eq(PATH), any(Charset.class));
-        verify(sessionClient).getObjectSize(eq(PATH));
+        verify(sessionClient).getObjectMetadata(eq(PATH));
         verify(sessionClient).close();
     }
 
@@ -127,7 +129,9 @@ class CsvTableFunctionTest {
                 null,
                 25 * 1024 * 1024L,
                 8 * 1024 * 1024,
-                StandardCharsets.UTF_8.name());
+                StandardCharsets.UTF_8.name(),
+                null,
+                null);
 
         List<FileSplit> splits = function.createSplits(handle);
 

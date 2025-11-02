@@ -6,6 +6,7 @@ import io.trino.spi.function.table.ConnectorTableFunctionHandle;
 import marcbp.trino.s3file.util.CharsetUtils;
 
 import java.nio.charset.Charset;
+import java.util.Optional;
 
 import static java.util.Objects.requireNonNull;
 
@@ -20,13 +21,28 @@ public abstract class BaseFileHandle implements ConnectorTableFunctionHandle {
     private final long fileSize;
     private final int splitSizeBytes;
     private final int batchSize;
+    private final Optional<String> eTag;
+    private final Optional<String> versionId;
 
     protected BaseFileHandle(String s3Path, long fileSize, int splitSizeBytes, String charsetName, int batchSize) {
+        this(s3Path, fileSize, splitSizeBytes, charsetName, batchSize, Optional.empty(), Optional.empty());
+    }
+
+    protected BaseFileHandle(
+            String s3Path,
+            long fileSize,
+            int splitSizeBytes,
+            String charsetName,
+            int batchSize,
+            Optional<String> eTag,
+            Optional<String> versionId) {
         this.s3Path = requireNonNull(s3Path, "s3Path is null");
         this.charsetName = requireNonNull(charsetName, "charsetName is null");
         this.fileSize = fileSize;
         this.splitSizeBytes = splitSizeBytes;
         this.batchSize = batchSize;
+        this.eTag = eTag;
+        this.versionId = versionId;
     }
 
     @JsonProperty("s3Path")
@@ -52,6 +68,26 @@ public abstract class BaseFileHandle implements ConnectorTableFunctionHandle {
     @JsonProperty("batchSize")
     public int getBatchSize() {
         return batchSize;
+    }
+
+    @JsonIgnore
+    public Optional<String> getETag() {
+        return eTag;
+    }
+
+    @JsonIgnore
+    public Optional<String> getVersionId() {
+        return versionId;
+    }
+
+    @JsonProperty("etag")
+    public String getETagValue() {
+        return eTag.orElse(null);
+    }
+
+    @JsonProperty("versionId")
+    public String getVersionIdValue() {
+        return versionId.orElse(null);
     }
 
     @JsonIgnore

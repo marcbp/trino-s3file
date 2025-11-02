@@ -27,6 +27,7 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.util.Optional;
 
 import marcbp.trino.s3file.s3.S3UriUtils.S3Location;
 
@@ -38,6 +39,8 @@ import static java.util.Objects.requireNonNull;
 public final class S3ClientBuilder {
     public static final ExecutionAttribute<ConnectorSession> SESSION_ATTRIBUTE =
             new ExecutionAttribute<>("trino.connector.session");
+
+    public record ObjectMetadata(long size, Optional<String> eTag, Optional<String> versionId) {}
 
     private final Logger logger = Logger.get(S3ClientBuilder.class);
     private final S3ClientConfig config;
@@ -62,19 +65,28 @@ public final class S3ClientBuilder {
         }
 
         public BufferedReader openReader(String s3Uri, Charset charset) {
-            return openReader(s3Uri, 0, null, charset);
+            return openReader(s3Uri, 0, null, charset, Optional.empty(), Optional.empty());
         }
 
         public BufferedReader openReader(String s3Uri, long start, Long endExclusive) {
-            return openReader(s3Uri, start, endExclusive, StandardCharsets.UTF_8);
+            return openReader(s3Uri, start, endExclusive, StandardCharsets.UTF_8, Optional.empty(), Optional.empty());
         }
 
         public BufferedReader openReader(String s3Uri, long start, Long endExclusive, Charset charset) {
+            return openReader(s3Uri, start, endExclusive, charset, Optional.empty(), Optional.empty());
+        }
+
+        public BufferedReader openReader(String s3Uri, Charset charset, Optional<String> versionId, Optional<String> eTag) {
+            return openReader(s3Uri, 0, null, charset, versionId, eTag);
+        }
+
+        public BufferedReader openReader(String s3Uri, long start, Long endExclusive, Charset charset, Optional<String> versionId, Optional<String> eTag) {
             S3Location location = S3UriUtils.parse(s3Uri);
             GetObjectRequest.Builder requestBuilder = GetObjectRequest.builder()
                     .bucket(location.bucket())
                     .key(location.key());
 
+            // Build a ranged request so workers only pull their slice (with optional look-ahead).
             if (start > 0 || (endExclusive != null && endExclusive >= 0)) {
                 if (endExclusive != null && endExclusive < start) {
                     endExclusive = start;
@@ -87,18 +99,35 @@ public final class S3ClientBuilder {
                 requestBuilder.range(range.toString());
             }
 
+            // Prefer a specific object version; otherwise guard reads with the observed ETag.
+            versionId.ifPresentOrElse(
+                    requestBuilder::versionId,
+                    () -> eTag.ifPresent(requestBuilder::ifMatch));
+
             ResponseInputStream<GetObjectResponse> stream = client.getObject(requestBuilder.build());
-            logger.info("Opened S3 object %s/%s", location.bucket(), location.key());
+            logger.info("Opened S3 object %s/%s (versionId=%s, etag=%s)",
+                    location.bucket(),
+                    location.key(),
+                    versionId.orElse("n/a"),
+                    eTag.orElse("n/a"));
+
             return new ClosingBufferedReader(new InputStreamReader(stream, charset), stream);
         }
 
-        public long getObjectSize(String s3Uri) {
+        public ObjectMetadata getObjectMetadata(String s3Uri) {
             S3Location location = S3UriUtils.parse(s3Uri);
             HeadObjectResponse response = client.headObject(HeadObjectRequest.builder()
                     .bucket(location.bucket())
                     .key(location.key())
                     .build());
-            return response.contentLength();
+            return new ObjectMetadata(
+                    response.contentLength(),
+                    Optional.ofNullable(response.eTag()),
+                    Optional.ofNullable(response.versionId()));
+        }
+
+        public long getObjectSize(String s3Uri) {
+            return getObjectMetadata(s3Uri).size();
         }
 
         @Override

@@ -85,9 +85,19 @@ public abstract class AbstractFileProcessor<H extends BaseFileHandle>
 
     protected final BufferedReader openReader() throws IOException {
         if (split.isWholeFile()) {
-            return sessionClient.openReader(handle.getS3Path(), charset);
+            return sessionClient.openReader(
+                    handle.getS3Path(),
+                    charset,
+                    handle.getVersionId(),
+                    handle.getETag());
         }
-        return sessionClient.openReader(handle.getS3Path(), split.getStartOffset(), split.getRangeEndExclusive(), charset);
+        return sessionClient.openReader(
+                handle.getS3Path(),
+                split.getStartOffset(),
+                split.getRangeEndExclusive(),
+                charset,
+                handle.getVersionId(),
+                handle.getETag());
     }
 
     protected void afterReaderOpened(BufferedReader reader) throws IOException {
