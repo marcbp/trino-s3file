@@ -1,5 +1,7 @@
 # Trino s3file Plugin
 
+[![Tests](https://github.com/marcbp/trino-s3file/actions/workflows/tests.yml/badge.svg)](https://github.com/marcbp/trino-s3file/actions/workflows/tests.yml)
+
 A Trino connector for ad-hoc exploration, validation, or lightweight ingestion of JSON/CSV/TXT/XML S3 object files :
 
 - **Schema inference on read**: metadata are inferred at runtime from each object.
@@ -226,3 +228,7 @@ aws --endpoint-url http://localhost:9000 s3 cp docker/examples/messages.txt s3:/
 # upload a simple XML document (used by xml.load example)
 aws --endpoint-url http://localhost:9000 s3 cp docker/examples/books.xml s3://mybucket/books.xml
 ```
+
+## License
+
+Distributed under the Apache License 2.0.
