@@ -81,37 +81,21 @@ public final class S3ClientBuilder {
         }
 
         public BufferedReader openReader(String s3Uri, long start, Long endExclusive, Charset charset, Optional<String> versionId, Optional<String> eTag) {
-            S3Location location = S3UriUtils.parse(s3Uri);
-            GetObjectRequest.Builder requestBuilder = GetObjectRequest.builder()
-                    .bucket(location.bucket())
-                    .key(location.key());
-
-            // Build a ranged request so workers only pull their slice (with optional look-ahead).
-            if (start > 0 || (endExclusive != null && endExclusive >= 0)) {
-                if (endExclusive != null && endExclusive < start) {
-                    endExclusive = start;
-                }
-                StringBuilder range = new StringBuilder("bytes=").append(start).append("-");
-                if (endExclusive != null && endExclusive >= 0) {
-                    long inclusiveEnd = Math.max(start, endExclusive - 1);
-                    range.append(inclusiveEnd);
-                }
-                requestBuilder.range(range.toString());
-            }
-
-            // Prefer a specific object version; otherwise guard reads with the observed ETag.
-            versionId.ifPresentOrElse(
-                    requestBuilder::versionId,
-                    () -> eTag.ifPresent(requestBuilder::ifMatch));
-
-            ResponseInputStream<GetObjectResponse> stream = client.getObject(requestBuilder.build());
+            ResponseInputStream<GetObjectResponse> stream = openObjectStream(s3Uri, start, endExclusive, versionId, eTag);
             logger.info("Opened S3 object %s/%s (versionId=%s, etag=%s)",
-                    location.bucket(),
-                    location.key(),
+                    S3UriUtils.parse(s3Uri).bucket(),
+                    S3UriUtils.parse(s3Uri).key(),
                     versionId.orElse("n/a"),
                     eTag.orElse("n/a"));
 
             return new ClosingBufferedReader(new InputStreamReader(stream, charset), stream);
+        }
+
+        public byte[] readBytes(String s3Uri, long start, Long endExclusive, Optional<String> versionId, Optional<String> eTag)
+                throws IOException {
+            try (ResponseInputStream<GetObjectResponse> stream = openObjectStream(s3Uri, start, endExclusive, versionId, eTag)) {
+                return stream.readAllBytes();
+            }
         }
 
         public ObjectMetadata getObjectMetadata(String s3Uri) {
@@ -179,6 +163,36 @@ public final class S3ClientBuilder {
                     .build());
 
             return builder.build();
+        }
+
+        private ResponseInputStream<GetObjectResponse> openObjectStream(
+                String s3Uri,
+                long start,
+                Long endExclusive,
+                Optional<String> versionId,
+                Optional<String> eTag) {
+            S3Location location = S3UriUtils.parse(s3Uri);
+            GetObjectRequest.Builder requestBuilder = GetObjectRequest.builder()
+                    .bucket(location.bucket())
+                    .key(location.key());
+
+            if (start > 0 || (endExclusive != null && endExclusive >= 0)) {
+                if (endExclusive != null && endExclusive < start) {
+                    endExclusive = start;
+                }
+                StringBuilder range = new StringBuilder("bytes=").append(start).append("-");
+                if (endExclusive != null && endExclusive >= 0) {
+                    long inclusiveEnd = Math.max(start, endExclusive - 1);
+                    range.append(inclusiveEnd);
+                }
+                requestBuilder.range(range.toString());
+            }
+
+            versionId.ifPresentOrElse(
+                    requestBuilder::versionId,
+                    () -> eTag.ifPresent(requestBuilder::ifMatch));
+
+            return client.getObject(requestBuilder.build());
         }
 
         private ExecutionInterceptor instantiateInterceptor(String className) {

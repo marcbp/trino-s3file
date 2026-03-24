@@ -5,6 +5,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import io.airlift.log.Logger;
 import marcbp.trino.s3file.file.AbstractFileProcessor;
 import marcbp.trino.s3file.file.FileSplit;
+import marcbp.trino.s3file.file.SplitBoundarySupport;
 import marcbp.trino.s3file.file.SplitPlanner;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
 import io.airlift.slice.Slice;
@@ -28,6 +29,7 @@ import io.trino.spi.function.table.TableFunctionSplitProcessor;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.nio.charset.Charset;
 import java.util.List;
@@ -181,6 +183,7 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
         private final VarcharType outputType;
         private final String lineBreak;
         private final byte[] lineBreakBytes;
+        private boolean skipFirstRecord;
 
         private Processor(ConnectorSession session, S3ClientBuilder s3ClientBuilder, Handle handle, FileSplit split) {
             super(session, s3ClientBuilder, handle, split);
@@ -188,6 +191,19 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
             this.outputType = (VarcharType) columnTypes.get(0);
             this.lineBreak = handle.getLineBreak();
             this.lineBreakBytes = lineBreak.getBytes(charset);
+            this.skipFirstRecord = split.getStartOffset() > 0;
+        }
+
+        @Override
+        protected boolean finishWhenEmptySplit() {
+            return primaryLength == 0 && split.getStartOffset() > 0;
+        }
+
+        @Override
+        protected void afterReaderOpened(BufferedReader reader) throws IOException {
+            if (skipFirstRecord) {
+                skipFirstRecord = !SplitBoundarySupport.startsAfterDelimiter(sessionClient, handle, split, lineBreakBytes);
+            }
         }
 
         @Override
@@ -209,6 +225,10 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
                 return RecordReadResult.finished();
             }
             TextFormatSupport.TextRecord textRecord = record.get();
+            if (skipFirstRecord) {
+                skipFirstRecord = false;
+                return RecordReadResult.skip(textRecord.bytes());
+            }
             return RecordReadResult.produce(textRecord.value(), textRecord.bytes(), textRecord.finishesSplit());
         }
 

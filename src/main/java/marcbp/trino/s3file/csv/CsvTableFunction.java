@@ -26,6 +26,7 @@ import marcbp.trino.s3file.file.BaseFileHandle;
 import marcbp.trino.s3file.file.BaseFileProcessorProvider;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.file.FileSplitProcessor;
+import marcbp.trino.s3file.file.SplitBoundarySupport;
 import marcbp.trino.s3file.file.SplitPlanner;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
 
@@ -235,6 +236,9 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
 
         @Override
         protected void afterReaderOpened(BufferedReader reader) throws IOException {
+            if (skipFirstLine) {
+                skipFirstLine = !SplitBoundarySupport.startsAtLineBoundary(sessionClient, handle, split);
+            }
             if (handle.isHeaderPresent() && split.isFirst()) {
                 String header = reader.readLine();
                 if (header != null) {

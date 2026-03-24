@@ -7,6 +7,8 @@ import io.trino.spi.function.table.Argument;
 import io.trino.spi.function.table.Descriptor;
 import io.trino.spi.function.table.ScalarArgument;
 import io.trino.spi.function.table.TableFunctionAnalysis;
+import io.trino.spi.function.table.TableFunctionProcessorState;
+import io.trino.spi.function.table.TableFunctionSplitProcessor;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.file.FileSplit;
@@ -15,7 +17,10 @@ import marcbp.trino.s3file.s3.S3ClientBuilder.ObjectMetadata;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.StringReader;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
@@ -107,6 +112,61 @@ class TextTableFunctionTest {
         assertEquals(10, third.getRangeEndExclusive());
         assertFalse(third.isFirst());
         assertTrue(third.isLast());
+    }
+
+    @Test
+    void processorSkipsPartialFirstRecordOnNonInitialSplit() throws IOException {
+        when(sessionClient.readBytes(eq(PATH), eq(4L), eq(5L), any(), any())).thenReturn(new byte[] {'x'});
+        when(sessionClient.openReader(eq(PATH), eq(5L), eq(40L), any(Charset.class), any(), any())).thenAnswer(invocation ->
+                new BufferedReader(new StringReader("a;bravo;charlie;")));
+
+        TextTableFunction.Handle handle = new TextTableFunction.Handle(
+                PATH,
+                ";",
+                null,
+                128,
+                32,
+                StandardCharsets.UTF_8.name(),
+                null,
+                null);
+        FileSplit split = new FileSplit("split-1", 5, 20, 40, false, false);
+
+        TableFunctionSplitProcessor processor = function.createSplitProcessor(mock(ConnectorSession.class), handle, split);
+        TableFunctionProcessorState state = processor.process();
+
+        TableFunctionProcessorState.Processed produced = assertInstanceOf(TableFunctionProcessorState.Processed.class, state);
+        assertEquals(2, produced.getResult().getPositionCount());
+        assertEquals("bravo", VarcharType.createUnboundedVarcharType().getObjectValue(null, produced.getResult().getBlock(0), 0));
+        assertEquals("charlie", VarcharType.createUnboundedVarcharType().getObjectValue(null, produced.getResult().getBlock(0), 1));
+        assertEquals(TableFunctionProcessorState.Finished.FINISHED, processor.process());
+
+        verify(sessionClient).openReader(eq(PATH), eq(5L), eq(40L), any(Charset.class), any(), any());
+    }
+
+    @Test
+    void processorKeepsFirstRecordWhenSplitStartsAfterDelimiter() throws IOException {
+        when(sessionClient.readBytes(eq(PATH), eq(5L), eq(6L), any(), any())).thenReturn(new byte[] {';'});
+        when(sessionClient.openReader(eq(PATH), eq(6L), eq(40L), any(Charset.class), any(), any())).thenAnswer(invocation ->
+                new BufferedReader(new StringReader("bravo;charlie;")));
+
+        TextTableFunction.Handle handle = new TextTableFunction.Handle(
+                PATH,
+                ";",
+                null,
+                128,
+                32,
+                StandardCharsets.UTF_8.name(),
+                null,
+                null);
+        FileSplit split = new FileSplit("split-1", 6, 20, 40, false, false);
+
+        TableFunctionSplitProcessor processor = function.createSplitProcessor(mock(ConnectorSession.class), handle, split);
+        TableFunctionProcessorState state = processor.process();
+
+        TableFunctionProcessorState.Processed produced = assertInstanceOf(TableFunctionProcessorState.Processed.class, state);
+        assertEquals(2, produced.getResult().getPositionCount());
+        assertEquals("bravo", VarcharType.createUnboundedVarcharType().getObjectValue(null, produced.getResult().getBlock(0), 0));
+        assertEquals("charlie", VarcharType.createUnboundedVarcharType().getObjectValue(null, produced.getResult().getBlock(0), 1));
     }
 
     private static TextTableFunction.Handle assertHandle(TableFunctionAnalysis analysis,

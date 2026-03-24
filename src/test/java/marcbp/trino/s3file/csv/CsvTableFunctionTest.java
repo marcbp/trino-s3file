@@ -7,6 +7,8 @@ import io.trino.spi.function.table.Argument;
 import io.trino.spi.function.table.Descriptor;
 import io.trino.spi.function.table.ScalarArgument;
 import io.trino.spi.function.table.TableFunctionAnalysis;
+import io.trino.spi.function.table.TableFunctionProcessorState;
+import io.trino.spi.function.table.TableFunctionSplitProcessor;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
@@ -15,6 +17,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.StringReader;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -24,6 +27,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -143,5 +147,33 @@ class CsvTableFunctionTest {
         FileSplit last = splits.get(splits.size() - 1);
         assertTrue(last.isLast());
         assertTrue(last.getStartOffset() < handle.getFileSize());
+    }
+
+    @Test
+    void processorKeepsBoundaryAlignedFirstRowOnNonInitialSplit() throws IOException {
+        when(sessionClient.readBytes(eq(PATH), eq(9L), eq(10L), any(), any())).thenReturn(new byte[] {'\n'});
+        when(sessionClient.openReader(eq(PATH), eq(10L), eq(40L), any(Charset.class), any(), any())).thenAnswer(invocation ->
+                new BufferedReader(new StringReader("3;4\n5;6\n")));
+
+        CsvTableFunction.Handle handle = new CsvTableFunction.Handle(
+                PATH,
+                List.of("c1", "c2"),
+                ';',
+                false,
+                null,
+                128,
+                32,
+                StandardCharsets.UTF_8.name(),
+                null,
+                null);
+        FileSplit split = new FileSplit("split-1", 10, 20, 40, false, false);
+
+        TableFunctionSplitProcessor processor = function.createSplitProcessor(mock(ConnectorSession.class), handle, split);
+        TableFunctionProcessorState state = processor.process();
+
+        TableFunctionProcessorState.Processed produced = assertInstanceOf(TableFunctionProcessorState.Processed.class, state);
+        assertEquals(2, produced.getResult().getPositionCount());
+        assertEquals("3", VarcharType.createUnboundedVarcharType().getObjectValue(null, produced.getResult().getBlock(0), 0));
+        assertEquals("5", VarcharType.createUnboundedVarcharType().getObjectValue(null, produced.getResult().getBlock(0), 1));
     }
 }

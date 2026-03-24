@@ -28,6 +28,7 @@ import marcbp.trino.s3file.file.BaseFileHandle;
 import marcbp.trino.s3file.file.BaseFileProcessorProvider;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.file.FileSplitProcessor;
+import marcbp.trino.s3file.file.SplitBoundarySupport;
 import marcbp.trino.s3file.file.SplitPlanner;
 import marcbp.trino.s3file.json.JsonFormatSupport.ColumnDefinition;
 import marcbp.trino.s3file.json.JsonFormatSupport.ColumnType;
@@ -205,6 +206,7 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
         private final List<String> columnNames;
         private final List<ColumnType> columnKinds;
         private final byte[] lineBreakBytes;
+        private boolean skipFirstLine;
 
         private Processor(ConnectorSession session, S3ClientBuilder s3ClientBuilder, Handle handle, FileSplit split) {
             super(session, s3ClientBuilder, handle, split);
@@ -212,6 +214,19 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
             this.columnNames = handle.getColumns();
             this.columnKinds = handle.getColumnTypes();
             this.lineBreakBytes = "\n".getBytes(charset);
+            this.skipFirstLine = split.getStartOffset() > 0;
+        }
+
+        @Override
+        protected boolean finishWhenEmptySplit() {
+            return primaryLength == 0 && split.getStartOffset() > 0;
+        }
+
+        @Override
+        protected void afterReaderOpened(BufferedReader reader) throws IOException {
+            if (skipFirstLine) {
+                skipFirstLine = !SplitBoundarySupport.startsAtLineBoundary(sessionClient, handle, split);
+            }
         }
 
         @Override
@@ -221,7 +236,11 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
                 return RecordReadResult.finished();
             }
             long lineBytes = calculateLineBytes(line);
-            if (line.isEmpty()) {
+            if (skipFirstLine) {
+                skipFirstLine = false;
+                return RecordReadResult.skip(lineBytes);
+            }
+            if (line.isBlank()) {
                 return RecordReadResult.skip(lineBytes);
             }
             boolean finishesSplit = !split.isLast() && bytesWithinPrimary + lineBytes > primaryLength;

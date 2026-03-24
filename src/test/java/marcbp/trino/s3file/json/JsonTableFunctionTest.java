@@ -7,16 +7,20 @@ import io.trino.spi.function.table.Argument;
 import io.trino.spi.function.table.Descriptor;
 import io.trino.spi.function.table.ScalarArgument;
 import io.trino.spi.function.table.TableFunctionAnalysis;
+import io.trino.spi.function.table.TableFunctionProcessorState;
+import io.trino.spi.function.table.TableFunctionSplitProcessor;
 import io.trino.spi.type.BigintType;
 import io.trino.spi.type.BooleanType;
 import io.trino.spi.type.DoubleType;
 import io.trino.spi.type.VarcharType;
+import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
 import marcbp.trino.s3file.s3.S3ClientBuilder.ObjectMetadata;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.StringReader;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -25,6 +29,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
@@ -128,5 +133,68 @@ class JsonTableFunctionTest {
         verify(sessionClient).openReader(eq(PATH), any(Charset.class));
         verify(sessionClient).getObjectMetadata(eq(PATH));
         verify(sessionClient).close();
+    }
+
+    @Test
+    void processorSkipsPartialFirstLineOnNonInitialSplit() throws IOException {
+        when(sessionClient.readBytes(eq(PATH), eq(11L), eq(12L), any(), any())).thenReturn(new byte[] {'x'});
+        when(sessionClient.openReader(eq(PATH), eq(12L), eq(64L), any(Charset.class), any(), any())).thenAnswer(invocation ->
+                new BufferedReader(new StringReader("""
+                        ive":false}
+                        {"event_id":2,"active":true}
+                        """)));
+
+        JsonTableFunction.Handle handle = new JsonTableFunction.Handle(
+                PATH,
+                List.of("event_id", "active"),
+                List.of(JsonFormatSupport.ColumnType.BIGINT, JsonFormatSupport.ColumnType.BOOLEAN),
+                null,
+                256,
+                64,
+                StandardCharsets.UTF_8.name(),
+                null,
+                null);
+        FileSplit split = new FileSplit("split-1", 12, 32, 64, false, false);
+
+        TableFunctionSplitProcessor processor = function.createSplitProcessor(mock(ConnectorSession.class), handle, split);
+        TableFunctionProcessorState state = processor.process();
+
+        TableFunctionProcessorState.Processed produced = assertInstanceOf(TableFunctionProcessorState.Processed.class, state);
+        assertEquals(1, produced.getResult().getPositionCount());
+        assertEquals(2L, BigintType.BIGINT.getObjectValue(null, produced.getResult().getBlock(0), 0));
+        assertEquals(true, BooleanType.BOOLEAN.getObjectValue(null, produced.getResult().getBlock(1), 0));
+        assertEquals(TableFunctionProcessorState.Finished.FINISHED, processor.process());
+
+        verify(sessionClient).openReader(eq(PATH), eq(12L), eq(64L), any(Charset.class), any(), any());
+    }
+
+    @Test
+    void processorKeepsFirstLineWhenSplitAlreadyStartsAtBoundary() throws IOException {
+        when(sessionClient.readBytes(eq(PATH), eq(31L), eq(32L), any(), any())).thenReturn(new byte[] {'\n'});
+        when(sessionClient.openReader(eq(PATH), eq(32L), eq(96L), any(Charset.class), any(), any())).thenAnswer(invocation ->
+                new BufferedReader(new StringReader("""
+                        {"event_id":2,"active":true}
+                        {"event_id":3,"active":false}
+                        """)));
+
+        JsonTableFunction.Handle handle = new JsonTableFunction.Handle(
+                PATH,
+                List.of("event_id", "active"),
+                List.of(JsonFormatSupport.ColumnType.BIGINT, JsonFormatSupport.ColumnType.BOOLEAN),
+                null,
+                256,
+                64,
+                StandardCharsets.UTF_8.name(),
+                null,
+                null);
+        FileSplit split = new FileSplit("split-1", 32, 64, 96, false, false);
+
+        TableFunctionSplitProcessor processor = function.createSplitProcessor(mock(ConnectorSession.class), handle, split);
+        TableFunctionProcessorState state = processor.process();
+
+        TableFunctionProcessorState.Processed produced = assertInstanceOf(TableFunctionProcessorState.Processed.class, state);
+        assertEquals(2, produced.getResult().getPositionCount());
+        assertEquals(2L, BigintType.BIGINT.getObjectValue(null, produced.getResult().getBlock(0), 0));
+        assertEquals(3L, BigintType.BIGINT.getObjectValue(null, produced.getResult().getBlock(0), 1));
     }
 }
