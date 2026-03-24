@@ -30,6 +30,7 @@ class TextFormatSupportTest {
         Optional<TextFormatSupport.TextRecord> record = TextFormatSupport.readNextLine(
                 reader,
                 StandardCharsets.UTF_8,
+                "\n",
                 "\n".getBytes(StandardCharsets.UTF_8),
                 5,
                 0,
@@ -40,6 +41,43 @@ class TextFormatSupportTest {
         assertEquals("first", textRecord.value());
         assertTrue(textRecord.finishesSplit());
         assertEquals(6, textRecord.bytes());
+    }
+
+    @Test
+    void readNextLineUsesConfiguredSeparator() throws Exception {
+        BufferedReader reader = new BufferedReader(new StringReader("alpha;bravo;charlie"));
+
+        Optional<TextFormatSupport.TextRecord> first = TextFormatSupport.readNextLine(
+                reader,
+                StandardCharsets.UTF_8,
+                ";",
+                ";".getBytes(StandardCharsets.UTF_8),
+                1024,
+                0,
+                true);
+        Optional<TextFormatSupport.TextRecord> second = TextFormatSupport.readNextLine(
+                reader,
+                StandardCharsets.UTF_8,
+                ";",
+                ";".getBytes(StandardCharsets.UTF_8),
+                1024,
+                first.orElseThrow().bytes(),
+                true);
+        Optional<TextFormatSupport.TextRecord> third = TextFormatSupport.readNextLine(
+                reader,
+                StandardCharsets.UTF_8,
+                ";",
+                ";".getBytes(StandardCharsets.UTF_8),
+                1024,
+                first.orElseThrow().bytes() + second.orElseThrow().bytes(),
+                true);
+
+        assertEquals("alpha", first.orElseThrow().value());
+        assertEquals(6, first.orElseThrow().bytes());
+        assertEquals("bravo", second.orElseThrow().value());
+        assertEquals(6, second.orElseThrow().bytes());
+        assertEquals("charlie", third.orElseThrow().value());
+        assertEquals(7, third.orElseThrow().bytes());
     }
 
     @Test

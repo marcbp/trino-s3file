@@ -179,13 +179,15 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
     private static final class Processor extends AbstractFileProcessor<Handle> {
         private final List<Type> columnTypes;
         private final VarcharType outputType;
+        private final String lineBreak;
         private final byte[] lineBreakBytes;
 
         private Processor(ConnectorSession session, S3ClientBuilder s3ClientBuilder, Handle handle, FileSplit split) {
             super(session, s3ClientBuilder, handle, split);
             this.columnTypes = handle.resolveColumnTypes();
             this.outputType = (VarcharType) columnTypes.get(0);
-            this.lineBreakBytes = handle.getLineBreak().getBytes(charset);
+            this.lineBreak = handle.getLineBreak();
+            this.lineBreakBytes = lineBreak.getBytes(charset);
         }
 
         @Override
@@ -198,6 +200,7 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
             Optional<TextFormatSupport.TextRecord> record = TextFormatSupport.readNextLine(
                     reader(),
                     charset,
+                    lineBreak,
                     lineBreakBytes,
                     primaryLength,
                     bytesWithinPrimary,
