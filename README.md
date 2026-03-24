@@ -203,7 +203,7 @@ docker compose run --rm tests mvn test
 Use the Trino CLI bundled in the container:
 
 ```bash
-docker compose exec -it trino trino --server http://localhost:8080
+docker compose exec -it trino-coordinator trino --server http://localhost:8080
 ```
 
 Once connected you can run the examples below.
@@ -213,6 +213,11 @@ Once connected you can run the examples below.
 Populate MinIO with demo data after the containers are up:
 
 ```bash
+# MinIO credentials from docker-compose.yml
+export AWS_ACCESS_KEY_ID=minio
+export AWS_SECRET_ACCESS_KEY=minio123
+export AWS_DEFAULT_REGION=us-east-1
+
 # create a bucket for the demo data
 aws --endpoint-url http://localhost:9000 s3 mb s3://mybucket
 
