@@ -19,7 +19,7 @@ import java.util.Optional;
 import static java.util.Objects.requireNonNull;
 
 /**
- * Base data processor wiring shared by the S3-backed table functions.
+ * Base data processor wiring shared by the S3-backed text table functions.
  *
  * <p>The template orchestrates processing in three stages:
  * <ol>
@@ -28,7 +28,7 @@ import static java.util.Objects.requireNonNull;
  *     <li>Finalisation – handling empty batches, signalling split completion, and transforming exceptions.</li>
  * </ol>
  */
-public abstract class AbstractFileProcessor<H extends BaseFileHandle>
+public abstract class AbstractTextFileProcessor<H extends BaseTextFileHandle>
         implements TableFunctionDataProcessor {
     protected final Logger logger;
     protected final S3ClientBuilder.SessionClient sessionClient;
@@ -42,7 +42,7 @@ public abstract class AbstractFileProcessor<H extends BaseFileHandle>
     protected boolean sessionClosed;
     protected long bytesWithinPrimary;
 
-    protected AbstractFileProcessor(
+    protected AbstractTextFileProcessor(
             ConnectorSession session,
             S3ClientBuilder s3ClientBuilder,
             H handle,

@@ -3,9 +3,9 @@ package marcbp.trino.s3file.txt;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import io.airlift.log.Logger;
-import marcbp.trino.s3file.file.AbstractFileProcessor;
+import marcbp.trino.s3file.file.AbstractTextFileProcessor;
 import marcbp.trino.s3file.file.FileSplit;
-import marcbp.trino.s3file.file.SplitBoundarySupport;
+import marcbp.trino.s3file.file.TextSplitBoundarySupport;
 import marcbp.trino.s3file.file.SplitPlanner;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
 import io.airlift.slice.Slice;
@@ -36,7 +36,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-import marcbp.trino.s3file.file.BaseFileHandle;
+import marcbp.trino.s3file.file.BaseTextFileHandle;
 import marcbp.trino.s3file.file.BaseFileProcessorProvider;
 import marcbp.trino.s3file.file.FileSplitProcessor;
 import static java.util.Objects.requireNonNull;
@@ -129,7 +129,7 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
         return new FileSplitProcessor(new Processor(session, s3ClientBuilder, handle, split));
     }
 
-    public static final class Handle extends BaseFileHandle {
+    public static final class Handle extends BaseTextFileHandle {
         private final String lineBreak;
 
         @JsonCreator
@@ -146,7 +146,7 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
                     fileSize,
                     splitSizeBytes,
                     charsetName,
-                    batchSize == null ? BaseFileHandle.DEFAULT_BATCH_SIZE : batchSize,
+                    batchSize == null ? BaseTextFileHandle.DEFAULT_BATCH_SIZE : batchSize,
                     Optional.ofNullable(eTag),
                     Optional.ofNullable(versionId));
             this.lineBreak = requireNonNull(lineBreak, "lineBreak is null");
@@ -178,7 +178,7 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
         }
     }
 
-    private static final class Processor extends AbstractFileProcessor<Handle> {
+    private static final class Processor extends AbstractTextFileProcessor<Handle> {
         private final List<Type> columnTypes;
         private final VarcharType outputType;
         private final String lineBreak;
@@ -202,7 +202,7 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
         @Override
         protected void afterReaderOpened(BufferedReader reader) throws IOException {
             if (skipFirstRecord) {
-                skipFirstRecord = !SplitBoundarySupport.startsAfterDelimiter(sessionClient, handle, split, lineBreakBytes);
+                skipFirstRecord = !TextSplitBoundarySupport.startsAfterDelimiter(sessionClient, handle, split, lineBreakBytes);
             }
         }
 

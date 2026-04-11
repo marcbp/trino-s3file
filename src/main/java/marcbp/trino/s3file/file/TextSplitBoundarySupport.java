@@ -5,14 +5,14 @@ import marcbp.trino.s3file.s3.S3ClientBuilder;
 import java.io.IOException;
 
 /**
- * Helpers for deciding whether a split starts on a logical record boundary.
+ * Helpers for deciding whether a text split starts on a logical record boundary.
  */
-public final class SplitBoundarySupport {
-    private SplitBoundarySupport() {}
+public final class TextSplitBoundarySupport {
+    private TextSplitBoundarySupport() {}
 
     public static boolean startsAtLineBoundary(
             S3ClientBuilder.SessionClient sessionClient,
-            BaseFileHandle handle,
+            BaseTextFileHandle handle,
             FileSplit split)
             throws IOException {
         if (split.isFirst()) {
@@ -29,7 +29,7 @@ public final class SplitBoundarySupport {
 
     public static boolean startsAfterDelimiter(
             S3ClientBuilder.SessionClient sessionClient,
-            BaseFileHandle handle,
+            BaseTextFileHandle handle,
             FileSplit split,
             byte[] delimiterBytes)
             throws IOException {

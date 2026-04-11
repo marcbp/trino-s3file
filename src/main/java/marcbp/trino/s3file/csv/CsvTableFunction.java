@@ -21,12 +21,12 @@ import io.trino.spi.function.table.TableFunctionSplitProcessor;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 import io.airlift.log.Logger;
-import marcbp.trino.s3file.file.AbstractFileProcessor;
-import marcbp.trino.s3file.file.BaseFileHandle;
+import marcbp.trino.s3file.file.AbstractTextFileProcessor;
+import marcbp.trino.s3file.file.BaseTextFileHandle;
 import marcbp.trino.s3file.file.BaseFileProcessorProvider;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.file.FileSplitProcessor;
-import marcbp.trino.s3file.file.SplitBoundarySupport;
+import marcbp.trino.s3file.file.TextSplitBoundarySupport;
 import marcbp.trino.s3file.file.SplitPlanner;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
 
@@ -147,7 +147,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
         return new FileSplitProcessor(new Processor(session, s3ClientBuilder, handle, split));
     }
 
-    public static final class Handle extends BaseFileHandle {
+    public static final class Handle extends BaseTextFileHandle {
         private final List<String> columns;
         private final char delimiter;
         private final boolean headerPresent;
@@ -168,7 +168,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                     fileSize,
                     splitSizeBytes,
                     charsetName,
-                    batchSize == null ? BaseFileHandle.DEFAULT_BATCH_SIZE : batchSize,
+                    batchSize == null ? BaseTextFileHandle.DEFAULT_BATCH_SIZE : batchSize,
                     Optional.ofNullable(eTag),
                     Optional.ofNullable(versionId));
             this.columns = List.copyOf(requireNonNull(columns, "columns is null"));
@@ -217,7 +217,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
         }
     }
 
-    private static final class Processor extends AbstractFileProcessor<Handle> {
+    private static final class Processor extends AbstractTextFileProcessor<Handle> {
         private final List<Type> columnTypes;
         private final byte[] lineBreakBytes;
         private boolean skipFirstLine;
@@ -237,7 +237,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
         @Override
         protected void afterReaderOpened(BufferedReader reader) throws IOException {
             if (skipFirstLine) {
-                skipFirstLine = !SplitBoundarySupport.startsAtLineBoundary(sessionClient, handle, split);
+                skipFirstLine = !TextSplitBoundarySupport.startsAtLineBoundary(sessionClient, handle, split);
             }
             if (handle.isHeaderPresent() && split.isFirst()) {
                 String header = reader.readLine();

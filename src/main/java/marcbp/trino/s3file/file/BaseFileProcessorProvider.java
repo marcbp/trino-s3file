@@ -10,9 +10,9 @@ import java.util.Objects;
 
 /**
  * Base {@link TableFunctionProcessorProvider} that performs common type checks
- * for table functions operating on {@link FileSplit}s.
+ * for text table functions operating on {@link FileSplit}s.
  */
-public abstract class BaseFileProcessorProvider<H extends BaseFileHandle> implements TableFunctionProcessorProvider {
+public abstract class BaseFileProcessorProvider<H extends BaseTextFileHandle> implements TableFunctionProcessorProvider {
     private final Class<H> handleType;
 
     protected BaseFileProcessorProvider(Class<H> handleType) {

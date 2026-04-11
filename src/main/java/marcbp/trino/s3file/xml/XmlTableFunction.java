@@ -23,8 +23,8 @@ import io.trino.spi.function.table.TableFunctionProcessorProvider;
 import io.trino.spi.function.table.TableFunctionSplitProcessor;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
-import marcbp.trino.s3file.file.AbstractFileProcessor;
-import marcbp.trino.s3file.file.BaseFileHandle;
+import marcbp.trino.s3file.file.AbstractTextFileProcessor;
+import marcbp.trino.s3file.file.BaseTextFileHandle;
 import marcbp.trino.s3file.file.BaseFileProcessorProvider;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.file.FileSplitProcessor;
@@ -221,7 +221,7 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         return new FileSplitProcessor(new Processor(session, s3ClientBuilder, handle, split));
     }
 
-    public static final class Handle extends BaseFileHandle {
+    public static final class Handle extends BaseTextFileHandle {
         private final String rowElement;
         private final List<XmlFormatSupport.Column> columns;
         private final boolean emptyAsNull;
@@ -243,7 +243,7 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
                     fileSize,
                     Integer.MAX_VALUE,
                     charsetName,
-                    batchSize == null ? BaseFileHandle.DEFAULT_BATCH_SIZE : batchSize,
+                    batchSize == null ? BaseTextFileHandle.DEFAULT_BATCH_SIZE : batchSize,
                     Optional.ofNullable(eTag),
                     Optional.ofNullable(versionId));
             this.rowElement = requireNonNull(rowElement, "rowElement is null");
@@ -310,7 +310,7 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         }
     }
 
-    private static final class Processor extends AbstractFileProcessor<Handle> {
+    private static final class Processor extends AbstractTextFileProcessor<Handle> {
         private final List<Type> columnTypes;
         private final XmlFormatSupport.Schema schema;
         private final boolean emptyAsNull;

@@ -11,9 +11,9 @@ import java.util.Optional;
 import static java.util.Objects.requireNonNull;
 
 /**
- * Common connector table function handle metadata shared by file-backed functions.
+ * Common connector table function handle metadata shared by text-backed functions.
  */
-public abstract class BaseFileHandle implements ConnectorTableFunctionHandle {
+public abstract class BaseTextFileHandle implements ConnectorTableFunctionHandle {
     public static final int DEFAULT_BATCH_SIZE = 1024;
 
     private final String s3Path;
@@ -24,11 +24,11 @@ public abstract class BaseFileHandle implements ConnectorTableFunctionHandle {
     private final Optional<String> eTag;
     private final Optional<String> versionId;
 
-    protected BaseFileHandle(String s3Path, long fileSize, int splitSizeBytes, String charsetName, int batchSize) {
+    protected BaseTextFileHandle(String s3Path, long fileSize, int splitSizeBytes, String charsetName, int batchSize) {
         this(s3Path, fileSize, splitSizeBytes, charsetName, batchSize, Optional.empty(), Optional.empty());
     }
 
-    protected BaseFileHandle(
+    protected BaseTextFileHandle(
             String s3Path,
             long fileSize,
             int splitSizeBytes,

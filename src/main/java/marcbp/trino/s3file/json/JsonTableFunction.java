@@ -23,12 +23,12 @@ import io.trino.spi.function.table.TableFunctionProcessorProvider;
 import io.trino.spi.function.table.TableFunctionSplitProcessor;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
-import marcbp.trino.s3file.file.AbstractFileProcessor;
-import marcbp.trino.s3file.file.BaseFileHandle;
+import marcbp.trino.s3file.file.AbstractTextFileProcessor;
+import marcbp.trino.s3file.file.BaseTextFileHandle;
 import marcbp.trino.s3file.file.BaseFileProcessorProvider;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.file.FileSplitProcessor;
-import marcbp.trino.s3file.file.SplitBoundarySupport;
+import marcbp.trino.s3file.file.TextSplitBoundarySupport;
 import marcbp.trino.s3file.file.SplitPlanner;
 import marcbp.trino.s3file.json.JsonFormatSupport.ColumnDefinition;
 import marcbp.trino.s3file.json.JsonFormatSupport.ColumnType;
@@ -139,7 +139,7 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
         return new FileSplitProcessor(new Processor(session, s3ClientBuilder, handle, split));
     }
 
-    public static final class Handle extends BaseFileHandle {
+    public static final class Handle extends BaseTextFileHandle {
         private final List<String> columns;
         private final List<ColumnType> columnTypes;
 
@@ -158,7 +158,7 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
                     fileSize,
                     splitSizeBytes,
                     charsetName,
-                    batchSize == null ? BaseFileHandle.DEFAULT_BATCH_SIZE : batchSize,
+                    batchSize == null ? BaseTextFileHandle.DEFAULT_BATCH_SIZE : batchSize,
                     Optional.ofNullable(eTag),
                     Optional.ofNullable(versionId));
             this.columns = List.copyOf(requireNonNull(columns, "columns is null"));
@@ -201,7 +201,7 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
         }
     }
 
-    private static final class Processor extends AbstractFileProcessor<Handle> {
+    private static final class Processor extends AbstractTextFileProcessor<Handle> {
         private final List<Type> columnTypes;
         private final List<String> columnNames;
         private final List<ColumnType> columnKinds;
@@ -225,7 +225,7 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
         @Override
         protected void afterReaderOpened(BufferedReader reader) throws IOException {
             if (skipFirstLine) {
-                skipFirstLine = !SplitBoundarySupport.startsAtLineBoundary(sessionClient, handle, split);
+                skipFirstLine = !TextSplitBoundarySupport.startsAtLineBoundary(sessionClient, handle, split);
             }
         }
 
