@@ -49,26 +49,32 @@ import static marcbp.trino.s3file.util.TableFunctionArguments.encodingArgumentSp
 import static marcbp.trino.s3file.util.TableFunctionArguments.pathArgumentSpecification;
 import static marcbp.trino.s3file.util.TableFunctionArguments.requirePath;
 import static marcbp.trino.s3file.util.TableFunctionArguments.resolveEncoding;
+import static marcbp.trino.s3file.util.TableFunctionArguments.resolveSplitSizeBytes;
+import static marcbp.trino.s3file.util.TableFunctionArguments.splitSizeMbArgumentSpecification;
 
 /**
  * Table function that streams newline-delimited JSON objects from S3-compatible storage.
  */
 public final class JsonTableFunction extends AbstractConnectorTableFunction {
     static final String ADDITIONAL_COLUMNS_ARGUMENT = "ADDITIONAL_COLUMNS";
-
-    private static final int DEFAULT_SPLIT_SIZE_BYTES = 8 * 1024 * 1024;
     private static final int LOOKAHEAD_BYTES = 256 * 1024;
 
     private final S3ClientBuilder s3ClientBuilder;
+    private final int defaultSplitSizeBytes;
     private final Logger logger = Logger.get(JsonTableFunction.class);
 
     public JsonTableFunction(S3ClientBuilder s3ClientBuilder) {
+        this(s3ClientBuilder, marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_SPLIT_SIZE_BYTES);
+    }
+
+    public JsonTableFunction(S3ClientBuilder s3ClientBuilder, int defaultSplitSizeBytes) {
         super(
                 "json",
                 "load",
                 List.of(
                         pathArgumentSpecification(),
                         encodingArgumentSpecification(),
+                        splitSizeMbArgumentSpecification(),
                         ScalarArgumentSpecification.builder()
                                 .name(ADDITIONAL_COLUMNS_ARGUMENT)
                                 .type(VarcharType.VARCHAR)
@@ -77,6 +83,7 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
                 ),
                 ReturnTypeSpecification.GenericTable.GENERIC_TABLE);
         this.s3ClientBuilder = requireNonNull(s3ClientBuilder, "s3ClientBuilder is null");
+        this.defaultSplitSizeBytes = defaultSplitSizeBytes;
     }
 
     @Override
@@ -86,6 +93,7 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
                                          ConnectorAccessControl accessControl) {
         String s3Path = requirePath(arguments);
         Charset charset = resolveEncoding(arguments);
+        int splitSizeBytes = resolveSplitSizeBytes(arguments, defaultSplitSizeBytes);
 
         List<String> columnNames;
         List<ColumnType> detectedTypes;
@@ -120,7 +128,7 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
                         detectedTypes,
                         null,
                         metadata.size(),
-                        DEFAULT_SPLIT_SIZE_BYTES,
+                        splitSizeBytes,
                         charset.name(),
                         metadata.eTag().orElse(null),
                         metadata.versionId().orElse(null)))

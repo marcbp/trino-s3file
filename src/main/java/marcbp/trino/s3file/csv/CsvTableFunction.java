@@ -44,20 +44,25 @@ import static marcbp.trino.s3file.util.TableFunctionArguments.encodingArgumentSp
 import static marcbp.trino.s3file.util.TableFunctionArguments.pathArgumentSpecification;
 import static marcbp.trino.s3file.util.TableFunctionArguments.requirePath;
 import static marcbp.trino.s3file.util.TableFunctionArguments.resolveEncoding;
+import static marcbp.trino.s3file.util.TableFunctionArguments.resolveSplitSizeBytes;
+import static marcbp.trino.s3file.util.TableFunctionArguments.splitSizeMbArgumentSpecification;
 
 /**
  * Table function that reads CSV data from S3-compatible storage, inferring columns on the fly.
  */
 public final class CsvTableFunction extends AbstractConnectorTableFunction {    
     private static final String DELIMITER_ARGUMENT = "DELIMITER";
-
-    private static final int DEFAULT_SPLIT_SIZE_BYTES = 8 * 1024 * 1024;
     private static final int LOOKAHEAD_BYTES = 256 * 1024;
 
     private final S3ClientBuilder s3ClientBuilder;
+    private final int defaultSplitSizeBytes;
     private final Logger logger = Logger.get(CsvTableFunction.class);
 
     public CsvTableFunction(S3ClientBuilder s3ClientBuilder) {
+        this(s3ClientBuilder, marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_SPLIT_SIZE_BYTES);
+    }
+
+    public CsvTableFunction(S3ClientBuilder s3ClientBuilder, int defaultSplitSizeBytes) {
         super(
                 "csv",
                 "load",
@@ -73,10 +78,12 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                                 .type(VarcharType.VARCHAR)
                                 .defaultValue(Slices.utf8Slice("true"))
                                 .build(),
-                        encodingArgumentSpecification()
+                        encodingArgumentSpecification(),
+                        splitSizeMbArgumentSpecification()
                 ),
                 ReturnTypeSpecification.GenericTable.GENERIC_TABLE);
         this.s3ClientBuilder = requireNonNull(s3ClientBuilder, "s3ClientBuilder is null");
+        this.defaultSplitSizeBytes = defaultSplitSizeBytes;
     }
 
     @Override
@@ -86,6 +93,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                                          io.trino.spi.connector.ConnectorAccessControl accessControl) {
         String s3Path = requirePath(arguments);
         Charset charset = resolveEncoding(arguments);
+        int splitSizeBytes = resolveSplitSizeBytes(arguments, defaultSplitSizeBytes);
 
         char delimiter = ';';
         ScalarArgument delimiterArg = (ScalarArgument) arguments.get(DELIMITER_ARGUMENT);
@@ -128,7 +136,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                         headerPresent,
                         null,
                         metadata.size(),
-                        DEFAULT_SPLIT_SIZE_BYTES,
+                        splitSizeBytes,
                         charset.name(),
                         metadata.eTag().orElse(null),
                         metadata.versionId().orElse(null)))

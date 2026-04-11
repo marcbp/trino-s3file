@@ -45,20 +45,25 @@ import static marcbp.trino.s3file.util.TableFunctionArguments.encodingArgumentSp
 import static marcbp.trino.s3file.util.TableFunctionArguments.pathArgumentSpecification;
 import static marcbp.trino.s3file.util.TableFunctionArguments.requirePath;
 import static marcbp.trino.s3file.util.TableFunctionArguments.resolveEncoding;
+import static marcbp.trino.s3file.util.TableFunctionArguments.resolveSplitSizeBytes;
+import static marcbp.trino.s3file.util.TableFunctionArguments.splitSizeMbArgumentSpecification;
 
 /**
  * Table function that streams plain text files from S3-compatible storage as rows for Trino.
  */
 public final class TextTableFunction extends AbstractConnectorTableFunction {
     private static final String LINE_BREAK_ARGUMENT = "LINE_BREAK";
-
-    private static final int DEFAULT_SPLIT_SIZE_BYTES = 8 * 1024 * 1024;
     private static final int LOOKAHEAD_BYTES = 256 * 1024;
 
     private final S3ClientBuilder s3ClientBuilder;
+    private final int defaultSplitSizeBytes;
     private final Logger logger = Logger.get(TextTableFunction.class);
 
     public TextTableFunction(S3ClientBuilder s3ClientBuilder) {
+        this(s3ClientBuilder, marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_SPLIT_SIZE_BYTES);
+    }
+
+    public TextTableFunction(S3ClientBuilder s3ClientBuilder, int defaultSplitSizeBytes) {
         super(
                 "txt",
                 "load",
@@ -69,10 +74,12 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
                                 .type(VarcharType.VARCHAR)
                                 .defaultValue(Slices.utf8Slice("\n"))
                                 .build(),
-                        encodingArgumentSpecification()
+                        encodingArgumentSpecification(),
+                        splitSizeMbArgumentSpecification()
                 ),
                 ReturnTypeSpecification.GenericTable.GENERIC_TABLE);
         this.s3ClientBuilder = requireNonNull(s3ClientBuilder, "s3ClientBuilder is null");
+        this.defaultSplitSizeBytes = defaultSplitSizeBytes;
     }
 
     @Override
@@ -82,6 +89,7 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
                                          ConnectorAccessControl accessControl) {
         String s3Path = requirePath(arguments);
         Charset charset = resolveEncoding(arguments);
+        int splitSizeBytes = resolveSplitSizeBytes(arguments, defaultSplitSizeBytes);
         
         String lineBreak = "\n";
         ScalarArgument lineBreakArg = (ScalarArgument) arguments.get(LINE_BREAK_ARGUMENT);
@@ -110,7 +118,7 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
                         lineBreak,
                         null,
                         metadata.size(),
-                        DEFAULT_SPLIT_SIZE_BYTES,
+                        splitSizeBytes,
                         charset.name(),
                         metadata.eTag().orElse(null),
                         metadata.versionId().orElse(null)))

@@ -43,10 +43,11 @@ import static org.mockito.Mockito.when;
  */
 class TextTableFunctionTest {
     private static final String PATH = "s3://bucket/messages.txt";
+    private static final int DEFAULT_SPLIT_SIZE_BYTES = 32 * 1024 * 1024;
 
     private final S3ClientBuilder s3ClientBuilder = mock(S3ClientBuilder.class);
     private final S3ClientBuilder.SessionClient sessionClient = mock(S3ClientBuilder.SessionClient.class);
-    private final TextTableFunction function = new TextTableFunction(s3ClientBuilder);
+    private final TextTableFunction function = new TextTableFunction(s3ClientBuilder, DEFAULT_SPLIT_SIZE_BYTES);
 
     @BeforeEach
     void setUp() throws IOException {
@@ -74,6 +75,25 @@ class TextTableFunctionTest {
                 analysis.getReturnedType().orElseThrow());
         verify(sessionClient).getObjectMetadata(eq(PATH));
         verify(sessionClient).close();
+    }
+
+    @Test
+    void analyzeAllowsSplitSizeOverridePerRequest() {
+        when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(2048L, Optional.empty(), Optional.empty()));
+
+        Map<String, Argument> arguments = Map.of(
+                "PATH", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PATH)),
+                "SPLIT_SIZE_MB", new ScalarArgument(io.trino.spi.type.BigintType.BIGINT, 1L)
+        );
+
+        TableFunctionAnalysis analysis = function.analyze(
+                mock(ConnectorSession.class),
+                new ConnectorTransactionHandle() {},
+                arguments,
+                null);
+
+        TextTableFunction.Handle handle = (TextTableFunction.Handle) analysis.getHandle();
+        assertEquals(1024 * 1024, handle.getSplitSizeBytes());
     }
 
     @Test
@@ -179,7 +199,7 @@ class TextTableFunctionTest {
         assertEquals(PATH, handle.getS3Path());
         assertEquals(expectedDelimiter, handle.getLineBreak());
         assertEquals(expectedSize, handle.getFileSize());
-        assertEquals(8 * 1024 * 1024, handle.getSplitSizeBytes());
+        assertEquals(DEFAULT_SPLIT_SIZE_BYTES, handle.getSplitSizeBytes());
         assertEquals(1024, handle.getBatchSize());
         assertEquals(StandardCharsets.UTF_8.name(), handle.getCharsetName());
         assertEquals(expectedEtag, handle.getETag());

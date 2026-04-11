@@ -38,10 +38,11 @@ import static org.mockito.Mockito.*;
  */
 class CsvTableFunctionTest {
     private static final String PATH = "s3://bucket/data.csv";
+    private static final int DEFAULT_SPLIT_SIZE_BYTES = 32 * 1024 * 1024;
 
     private final S3ClientBuilder s3ClientBuilder = mock(S3ClientBuilder.class);
     private final S3ClientBuilder.SessionClient sessionClient = mock(S3ClientBuilder.SessionClient.class);
-    private final CsvTableFunction function = new CsvTableFunction(s3ClientBuilder);
+    private final CsvTableFunction function = new CsvTableFunction(s3ClientBuilder, DEFAULT_SPLIT_SIZE_BYTES);
 
     @BeforeEach
     void setUp() {
@@ -74,7 +75,7 @@ class CsvTableFunctionTest {
         assertEquals(64L, handle.getFileSize());
         assertEquals(Optional.of("etag-1"), handle.getETag());
         assertEquals(Optional.empty(), handle.getVersionId());
-        assertEquals(8 * 1024 * 1024, handle.getSplitSizeBytes());
+        assertEquals(DEFAULT_SPLIT_SIZE_BYTES, handle.getSplitSizeBytes());
         assertEquals(StandardCharsets.UTF_8.name(), handle.getCharsetName());
 
         Descriptor expectedDescriptor = Descriptor.descriptor(
@@ -121,6 +122,27 @@ class CsvTableFunctionTest {
         verify(sessionClient).openReader(eq(PATH), any(Charset.class));
         verify(sessionClient).getObjectMetadata(eq(PATH));
         verify(sessionClient).close();
+    }
+
+    @Test
+    void analyzeAllowsSplitSizeOverridePerRequest() {
+        when(sessionClient.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
+                new BufferedReader(new StringReader("first;second\n1;2\n")));
+        when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(64L, Optional.empty(), Optional.empty()));
+
+        Map<String, Argument> arguments = Map.of(
+                "PATH", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PATH)),
+                "SPLIT_SIZE_MB", new ScalarArgument(io.trino.spi.type.BigintType.BIGINT, 4L)
+        );
+
+        TableFunctionAnalysis analysis = function.analyze(
+                mock(ConnectorSession.class),
+                new ConnectorTransactionHandle() {},
+                arguments,
+                null);
+
+        CsvTableFunction.Handle handle = (CsvTableFunction.Handle) analysis.getHandle();
+        assertEquals(4 * 1024 * 1024, handle.getSplitSizeBytes());
     }
 
     @Test

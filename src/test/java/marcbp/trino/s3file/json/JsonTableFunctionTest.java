@@ -36,10 +36,11 @@ import static org.mockito.Mockito.*;
 
 class JsonTableFunctionTest {
     private static final String PATH = "s3://bucket/events.jsonl";
+    private static final int CONNECTOR_SPLIT_SIZE_BYTES = 16 * 1024 * 1024;
 
     private final S3ClientBuilder s3ClientBuilder = mock(S3ClientBuilder.class);
     private final S3ClientBuilder.SessionClient sessionClient = mock(S3ClientBuilder.SessionClient.class);
-    private final JsonTableFunction function = new JsonTableFunction(s3ClientBuilder);
+    private final JsonTableFunction function = new JsonTableFunction(s3ClientBuilder, CONNECTOR_SPLIT_SIZE_BYTES);
 
     @BeforeEach
     void setUp() {
@@ -82,6 +83,7 @@ class JsonTableFunctionTest {
         assertEquals(PATH, handle.getS3Path());
         assertEquals(expectedDescriptor, Descriptor.descriptor(handle.getColumns(), handle.resolveColumnTypes()));
         assertEquals(512L, handle.getFileSize());
+        assertEquals(CONNECTOR_SPLIT_SIZE_BYTES, handle.getSplitSizeBytes());
         assertEquals(Optional.of("etag-json"), handle.getETag());
         assertEquals(Optional.empty(), handle.getVersionId());
         assertEquals(StandardCharsets.UTF_8.name(), handle.getCharsetName());
@@ -89,6 +91,30 @@ class JsonTableFunctionTest {
         verify(sessionClient).openReader(eq(PATH), any(Charset.class));
         verify(sessionClient).getObjectMetadata(eq(PATH));
         verify(sessionClient).close();
+    }
+
+    @Test
+    void analyzeAllowsSplitSizeOverridePerRequest() {
+        when(sessionClient.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
+                new BufferedReader(new StringReader("""
+                        {"event_id":1}
+                        {"event_id":2}
+                        """)));
+        when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(128L, Optional.empty(), Optional.empty()));
+
+        Map<String, Argument> arguments = Map.of(
+                "PATH", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PATH)),
+                "SPLIT_SIZE_MB", new ScalarArgument(io.trino.spi.type.BigintType.BIGINT, 2L)
+        );
+
+        TableFunctionAnalysis analysis = function.analyze(
+                mock(ConnectorSession.class),
+                new ConnectorTransactionHandle() {},
+                arguments,
+                null);
+
+        JsonTableFunction.Handle handle = (JsonTableFunction.Handle) analysis.getHandle();
+        assertEquals(2 * 1024 * 1024, handle.getSplitSizeBytes());
     }
 
     @Test

@@ -50,9 +50,9 @@ public final class S3FileConnector implements Connector {
 
     public S3FileConnector(S3ClientConfig clientConfig) {
         this.s3ClientBuilder = new S3ClientBuilder(requireNonNull(clientConfig, "clientConfig is null"));
-        this.csvTableFunction = new CsvTableFunction(s3ClientBuilder);
-        this.textTableFunction = new TextTableFunction(s3ClientBuilder);
-        this.jsonTableFunction = new JsonTableFunction(s3ClientBuilder);
+        this.csvTableFunction = new CsvTableFunction(s3ClientBuilder, clientConfig.splitSizeBytes());
+        this.textTableFunction = new TextTableFunction(s3ClientBuilder, clientConfig.splitSizeBytes());
+        this.jsonTableFunction = new JsonTableFunction(s3ClientBuilder, clientConfig.splitSizeBytes());
         this.xmlTableFunction = new XmlTableFunction(s3ClientBuilder);
         this.functionProvider = new InlineFunctionProvider();
         this.splitManager = new InlineSplitManager();
