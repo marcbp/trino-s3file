@@ -1,0 +1,5 @@
+id=1 firstname=André lastname=Merlaux age=25 status=active
+id=2 firstname=Roger lastname=Moulinier age=46 status=active
+id=3 firstname=Jacky lastname=Jacquard age=44 status=active
+id=4 firstname=Jean-René lastname=Calot age=47 status=active
+id=5 firstname=Georges lastname=Préjean nickname=Moïse age=67 status=inactive

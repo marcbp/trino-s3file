@@ -1,0 +1,33 @@
+<employees>
+  <employee id="1">
+    <firstname>André</firstname>
+    <lastname>Merlaux</lastname>
+    <age>25</age>
+    <status>active</status>
+  </employee>
+  <employee id="2">
+    <firstname>Roger</firstname>
+    <lastname>Moulinier</lastname>
+    <age>46</age>
+    <status>active</status>
+  </employee>
+  <employee id="3">
+    <firstname>Jacky</firstname>
+    <lastname>Jacquard</lastname>
+    <age>44</age>
+    <status>active</status>
+  </employee>
+  <employee id="4">
+    <firstname>Jean-René</firstname>
+    <lastname>Calot</lastname>
+    <age>47</age>
+    <status>active</status>
+  </employee>
+  <employee id="5">
+    <firstname>Georges</firstname>
+    <lastname>Préjean</lastname>
+    <nickname>Moïse</nickname>
+    <age>67</age>
+    <status>inactive</status>
+  </employee>
+</employees>

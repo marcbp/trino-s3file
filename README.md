@@ -15,33 +15,40 @@ A Trino connector for ad-hoc exploration, validation, or lightweight ingestion o
 SELECT *
 FROM TABLE(
     s3file.json.load(
-        path => 's3://mybucket/events.jsonl',
-        encoding => 'UTF-8'      -- override when the file is not UTF-8
+        path => 's3://mybucket/data.jsonl',
+        encoding => 'UTF-8',     -- override when the file is not UTF-8
+        additional_columns => 'nickname:varchar', -- include fields missing from the first object
+        split_size_mb => 64      -- optional per-query override; defaults to the connector setting
     )
 );
 ```
 
 - `path` (required): location of a newline-delimited JSON (NDJSON) object stream.
 - `encoding` (optional, default `'UTF-8'`): override the charset used when decoding the object.
+- `split_size_mb` (optional, default connector value `32`): target split size in MiB for distributed reads.
 - `additional_columns` (optional): comma-separated list of `name:type` pairs for fields that might not appear in the first JSON object. Types currently supported: `boolean`, `bigint`, `double`, `varchar`. Duplicate names override the inferred type.
 
 Fields and types are inferred from the first JSON object: booleans map to `boolean`, integral numbers to `bigint`, floating numbers to `double`, nested objects/arrays stay as JSON text (`varchar`), and other values remain `varchar`.
 
-**Example input** (`docker/examples/events.jsonl`)
+**Example input** (`docker/examples/data.jsonl`)
 
 ```json
-{"event_id":1,"user":"alice","amount":19.5}
-{"event_id":2,"user":"bob","amount":7.0,"metadata":{"source":"app"}}
-{"event_id":3,"user":"carol"}
+{"id":1,"firstname":"André","lastname":"Merlaux","age":25,"status":"active"}
+{"id":2,"firstname":"Roger","lastname":"Moulinier","age":46,"status":"active"}
+{"id":3,"firstname":"Jacky","lastname":"Jacquard","age":44,"status":"active"}
+{"id":4,"firstname":"Jean-René","lastname":"Calot","age":47,"status":"active"}
+{"id":5,"firstname":"Georges","lastname":"Préjean","nickname":"Moïse","age":67,"status":"inactive"}
 ```
 
 **Query output**
 
-| event_id | user  | amount | metadata            |
-|----------|-------|--------|---------------------|
-| 1        | alice | 19.5   | NULL                |
-| 2        | bob   | 7.0    | {"source":"app"}    |
-| 3        | carol | NULL   | NULL                |
+| id | firstname  | lastname  | nickname | age | status   |
+|----|------------|-----------|----------|-----|----------|
+| 1  | André      | Merlaux   | null     | 25  | active   |
+| 2  | Roger      | Moulinier | null     | 46  | active   |
+| 3  | Jacky      | Jacquard  | null     | 44  | active   |
+| 4  | Jean-René  | Calot     | null     | 47  | active   |
+| 5  | Georges    | Préjean   | Moïse    | 67  | inactive |
 
 ## Load XML files
 
@@ -49,11 +56,10 @@ Fields and types are inferred from the first JSON object: booleans map to `boole
 SELECT *
 FROM TABLE(
     s3file.xml.load(
-        path => 's3://mybucket/books.xml',
-        row_element => 'book',    -- element treated as one row
-        include_text => 'false',  -- set to 'true' to expose mixed-content text
+        path => 's3://mybucket/data.xml',
+        row_element => 'employee', -- element treated as one row
         empty_as_null => 'true',  -- convert empty strings to NULL when set to 'true'
-        invalid_row_column => '_errors', -- capture unparsable rows as raw XML
+        invalid_row_column => '', -- disable the default raw-error column for this example
         encoding => 'UTF-8'
     )
 );
@@ -72,46 +78,53 @@ Attributes are automatically projected as columns prefixed with `@`, while first
 
 Set `invalid_row_column` to keep malformed rows instead of failing the query. Those rows are emitted with `NULL` for projected fields and the raw XML in the dedicated column, which can then be inspected or reprocessed. Combine it with `empty_as_null => 'true'` to turn empty strings into SQL `NULL` while still capturing the original payload.
 
-**Example input** (`docker/examples/books.xml`)
+**Example input** (`docker/examples/data.xml`)
 
 ```xml
-<catalog>
-  <book id="bk101" tag="new">
-    <author>Gambardella, Matthew</author>
-    <title>XML Developer's Guide</title>
-    <genre>Computer</genre>
-    <price>44.95</price>
-  </book>
-  <book id="bk102" tag="old">
-    <author>Ralls, Kim</author>
-    <title>Midnight Rain</title>
-    <genre>Fantasy</genre>
-    <price>5.95</price>
-  </book>
-  <book id="bk103" tag="new">
-    <author>Corets, Eva</author>
-    <title>Maeve Ascendant</title>
-    <genre/>
-    <price>9.99</price>
-  </book>
-  <book id="bk104" tag="new">
-    <title>
-      <main>Advanced XML</main>
-      <subtitle>Processing</subtitle>
-    </title>
-  </book>
-</catalog>
+<employees>
+  <employee id="1">
+    <firstname>André</firstname>
+    <lastname>Merlaux</lastname>
+    <age>25</age>
+    <status>active</status>
+  </employee>
+  <employee id="2">
+    <firstname>Roger</firstname>
+    <lastname>Moulinier</lastname>
+    <age>46</age>
+    <status>active</status>
+  </employee>
+  <employee id="3">
+    <firstname>Jacky</firstname>
+    <lastname>Jacquard</lastname>
+    <age>44</age>
+    <status>active</status>
+  </employee>
+  <employee id="4">
+    <firstname>Jean-René</firstname>
+    <lastname>Calot</lastname>
+    <age>47</age>
+    <status>active</status>
+  </employee>
+  <employee id="5">
+    <firstname>Georges</firstname>
+    <lastname>Préjean</lastname>
+    <nickname>Moïse</nickname>
+    <age>67</age>
+    <status>inactive</status>
+  </employee>
+</employees>
 ```
 
 **Query output**
 
-| @id   | @tag | author              | title                  | genre    | price | _errors |
-|-------|------|---------------------|------------------------|----------|-------|---------|
-| bk101 | new  | Gambardella, Matthew| XML Developer's Guide  | Computer | 44.95 | NULL    |
-| bk102 | old  | Ralls, Kim          | Midnight Rain          | Fantasy  | 5.95  | NULL    |
-| bk103 | new  | Corets, Eva         | Maeve Ascendant        | NULL     | 9.99  | NULL    |
-
-Rows containing nested structures that cannot be projected (for example `book id="bk104"` above) are emitted with `NULL` column values and the raw XML stored in `_errors`.
+| @id | firstname  | lastname  | nickname | age | status   |
+|-----|------------|-----------|----------|-----|----------|
+| 1   | André      | Merlaux   | NULL     | 25  | active   |
+| 2   | Roger      | Moulinier | NULL     | 46  | active   |
+| 3   | Jacky      | Jacquard  | NULL     | 44  | active   |
+| 4   | Jean-René  | Calot     | NULL     | 47  | active   |
+| 5   | Georges    | Préjean   | Moïse    | 67  | inactive |
 
 ## Load CSV files
 
@@ -122,7 +135,8 @@ FROM TABLE(
         path => 's3://mybucket/data.csv',
         delimiter => ';',
         header => 'true',        -- set to 'false' when the CSV has no header row
-        encoding => 'UTF-8'      -- override when the file is not UTF-8
+        encoding => 'UTF-8',     -- override when the file is not UTF-8
+        split_size_mb => 64      -- optional per-query override; defaults to the connector setting
     )
 );
 ```
@@ -131,25 +145,30 @@ FROM TABLE(
 - `delimiter` (optional, default `';'`): single character separator.
 - `header` (optional, default `'true'`): when `'false'`, the first row is treated as data and column names default to `column_1`, `column_2`, …
 - `encoding` (optional, default `'UTF-8'`): character set for decoding the file.
+- `split_size_mb` (optional, default connector value `32`): target split size in MiB for distributed reads.
 
 The function returns all values as `VARCHAR`; cast in SQL as needed.
 
-**Example input** (`docker/examples/example.csv`)
+**Example input** (`docker/examples/data.csv`)
 
 ```csv
-id;name;active
-1;"Alice";true
-2;"Bob";false
-3;"Charlie";true
+id;firstname;lastname;nickname;age;status
+1;André;Merlaux;;25;active
+2;Roger;Moulinier;;46;active
+3;Jacky;Jacquard;;44;active
+4;Jean-René;Calot;;47;active
+5;Georges;Préjean;Moïse;67;inactive
 ```
 
 **Query output**
 
-| id | name    | active |
-|----|---------|--------|
-| 1  | Alice   | true   |
-| 2  | Bob     | false  |
-| 3  | Charlie | true   |
+| id | firstname  | lastname  | nickname | age | status   |
+|----|------------|-----------|----------|-----|----------|
+| 1  | André      | Merlaux   |          | 25  | active   |
+| 2  | Roger      | Moulinier |          | 46  | active   |
+| 3  | Jacky      | Jacquard  |          | 44  | active   |
+| 4  | Jean-René  | Calot     |          | 47  | active   |
+| 5  | Georges    | Préjean   | Moïse    | 67  | inactive |
 
 ## Load TXT files
 
@@ -157,9 +176,10 @@ id;name;active
 SELECT *
 FROM TABLE(
     s3file.txt.load(
-        path => 's3://mybucket/messages.txt',
+        path => 's3://mybucket/data.txt',
         line_break => '\n',  -- override with '\r\n' or any custom separator
-        encoding => 'UTF-8'  -- override when the file is not UTF-8
+        encoding => 'UTF-8', -- override when the file is not UTF-8
+        split_size_mb => 64  -- optional per-query override; defaults to the connector setting
     )
 );
 ```
@@ -167,24 +187,42 @@ FROM TABLE(
 - `path` (required): text file location in S3/MinIO.
 - `line_break` (optional, default `'\n'`): string separator used to split the file into rows.
 - `encoding` (optional, default `'UTF-8'`): character set for decoding the file.
+- `split_size_mb` (optional, default connector value `32`): target split size in MiB for distributed reads.
 
 The function yields a single `VARCHAR` column named `line` containing each record in order.
 
-**Example input** (`docker/examples/messages.txt`)
+**Example input** (`docker/examples/data.txt`)
 
 ```text
-Hello world
-Another line
+id=1 firstname=André lastname=Merlaux age=25 status=active
+id=2 firstname=Roger lastname=Moulinier age=46 status=active
+id=3 firstname=Jacky lastname=Jacquard age=44 status=active
+id=4 firstname=Jean-René lastname=Calot age=47 status=active
+id=5 firstname=Georges lastname=Préjean nickname=Moïse age=67 status=inactive
 ```
 
 **Query output**
 
-| line          |
-|---------------|
-| Hello world   |
-| Another line  |
+| line                                                                  |
+|-----------------------------------------------------------------------|
+| id=1 firstname=André lastname=Merlaux age=25 status=active            |
+| id=2 firstname=Roger lastname=Moulinier age=46 status=active          |
+| id=3 firstname=Jacky lastname=Jacquard age=44 status=active           |
+| id=4 firstname=Jean-René lastname=Calot age=47 status=active          |
+| id=5 firstname=Georges lastname=Préjean nickname=Moïse age=67 status=inactive |
 
 ## Quickstart
+
+### Connector Configuration
+
+Set the connector-wide split size default in the catalog properties:
+
+```properties
+connector.name=s3file
+s3.default-split-size-mb=32
+```
+
+`split_size_mb` on `txt.load`, `csv.load`, and `json.load` overrides this value per query. `xml.load` still reads whole files.
 
 ### Build and Run
 
@@ -222,16 +260,16 @@ export AWS_DEFAULT_REGION=us-east-1
 aws --endpoint-url http://localhost:9000 s3 mb s3://mybucket
 
 # upload sample CSV (used by csv.load example)
-aws --endpoint-url http://localhost:9000 s3 cp docker/examples/example.csv s3://mybucket/data.csv
+aws --endpoint-url http://localhost:9000 s3 cp docker/examples/data.csv s3://mybucket/data.csv
 
 # upload sample JSON stream (used by json.load example)
-aws --endpoint-url http://localhost:9000 s3 cp docker/examples/events.jsonl s3://mybucket/events.jsonl
+aws --endpoint-url http://localhost:9000 s3 cp docker/examples/data.jsonl s3://mybucket/data.jsonl
 
 # upload sample text file (used by txt.load example)
-aws --endpoint-url http://localhost:9000 s3 cp docker/examples/messages.txt s3://mybucket/messages.txt
+aws --endpoint-url http://localhost:9000 s3 cp docker/examples/data.txt s3://mybucket/data.txt
 
 # upload a simple XML document (used by xml.load example)
-aws --endpoint-url http://localhost:9000 s3 cp docker/examples/books.xml s3://mybucket/books.xml
+aws --endpoint-url http://localhost:9000 s3 cp docker/examples/data.xml s3://mybucket/data.xml
 ```
 
 ## License
