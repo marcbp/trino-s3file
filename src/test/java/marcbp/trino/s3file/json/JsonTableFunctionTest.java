@@ -161,8 +161,8 @@ class JsonTableFunctionTest {
 
         TableFunctionProcessorState.Processed produced = assertInstanceOf(TableFunctionProcessorState.Processed.class, state);
         assertEquals(1, produced.getResult().getPositionCount());
-        assertEquals(2L, BigintType.BIGINT.getObjectValue(null, produced.getResult().getBlock(0), 0));
-        assertEquals(true, BooleanType.BOOLEAN.getObjectValue(null, produced.getResult().getBlock(1), 0));
+        assertEquals(2L, BigintType.BIGINT.getObjectValue(produced.getResult().getBlock(0), 0));
+        assertEquals(true, BooleanType.BOOLEAN.getObjectValue(produced.getResult().getBlock(1), 0));
         assertEquals(TableFunctionProcessorState.Finished.FINISHED, processor.process());
 
         verify(sessionClient).openReader(eq(PATH), eq(12L), eq(64L), any(Charset.class), any(), any());
@@ -194,7 +194,7 @@ class JsonTableFunctionTest {
 
         TableFunctionProcessorState.Processed produced = assertInstanceOf(TableFunctionProcessorState.Processed.class, state);
         assertEquals(2, produced.getResult().getPositionCount());
-        assertEquals(2L, BigintType.BIGINT.getObjectValue(null, produced.getResult().getBlock(0), 0));
-        assertEquals(3L, BigintType.BIGINT.getObjectValue(null, produced.getResult().getBlock(0), 1));
+        assertEquals(2L, BigintType.BIGINT.getObjectValue(produced.getResult().getBlock(0), 0));
+        assertEquals(3L, BigintType.BIGINT.getObjectValue(produced.getResult().getBlock(0), 1));
     }
 }

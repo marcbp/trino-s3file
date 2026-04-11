@@ -82,7 +82,7 @@ class TextFormatSupportTest {
 
     @Test
     void writeLineAppendsUtf8Slice() {
-        PageBuilderStatus pageBuilderStatus = new PageBuilderStatus();
+        PageBuilderStatus pageBuilderStatus = new PageBuilderStatus(PageBuilderStatus.DEFAULT_MAX_PAGE_SIZE_IN_BYTES);
         BlockBuilderStatus blockBuilderStatus = pageBuilderStatus.createBlockBuilderStatus();
         BlockBuilder builder = VarcharType.createUnboundedVarcharType().createBlockBuilder(blockBuilderStatus, 1);
         TextFormatSupport.writeLine(builder, VarcharType.createUnboundedVarcharType(), "hello");

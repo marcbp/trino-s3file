@@ -136,8 +136,8 @@ class TextTableFunctionTest {
 
         TableFunctionProcessorState.Processed produced = assertInstanceOf(TableFunctionProcessorState.Processed.class, state);
         assertEquals(2, produced.getResult().getPositionCount());
-        assertEquals("bravo", VarcharType.createUnboundedVarcharType().getObjectValue(null, produced.getResult().getBlock(0), 0));
-        assertEquals("charlie", VarcharType.createUnboundedVarcharType().getObjectValue(null, produced.getResult().getBlock(0), 1));
+        assertEquals("bravo", VarcharType.createUnboundedVarcharType().getObjectValue(produced.getResult().getBlock(0), 0));
+        assertEquals("charlie", VarcharType.createUnboundedVarcharType().getObjectValue(produced.getResult().getBlock(0), 1));
         assertEquals(TableFunctionProcessorState.Finished.FINISHED, processor.process());
 
         verify(sessionClient).openReader(eq(PATH), eq(5L), eq(40L), any(Charset.class), any(), any());
@@ -165,8 +165,8 @@ class TextTableFunctionTest {
 
         TableFunctionProcessorState.Processed produced = assertInstanceOf(TableFunctionProcessorState.Processed.class, state);
         assertEquals(2, produced.getResult().getPositionCount());
-        assertEquals("bravo", VarcharType.createUnboundedVarcharType().getObjectValue(null, produced.getResult().getBlock(0), 0));
-        assertEquals("charlie", VarcharType.createUnboundedVarcharType().getObjectValue(null, produced.getResult().getBlock(0), 1));
+        assertEquals("bravo", VarcharType.createUnboundedVarcharType().getObjectValue(produced.getResult().getBlock(0), 0));
+        assertEquals("charlie", VarcharType.createUnboundedVarcharType().getObjectValue(produced.getResult().getBlock(0), 1));
     }
 
     private static TextTableFunction.Handle assertHandle(TableFunctionAnalysis analysis,

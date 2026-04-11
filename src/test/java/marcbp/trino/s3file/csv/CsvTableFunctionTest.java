@@ -173,7 +173,7 @@ class CsvTableFunctionTest {
 
         TableFunctionProcessorState.Processed produced = assertInstanceOf(TableFunctionProcessorState.Processed.class, state);
         assertEquals(2, produced.getResult().getPositionCount());
-        assertEquals("3", VarcharType.createUnboundedVarcharType().getObjectValue(null, produced.getResult().getBlock(0), 0));
-        assertEquals("5", VarcharType.createUnboundedVarcharType().getObjectValue(null, produced.getResult().getBlock(0), 1));
+        assertEquals("3", VarcharType.createUnboundedVarcharType().getObjectValue(produced.getResult().getBlock(0), 0));
+        assertEquals("5", VarcharType.createUnboundedVarcharType().getObjectValue(produced.getResult().getBlock(0), 1));
     }
 }
