@@ -12,7 +12,7 @@
 
     <properties>
         <trino.version>480</trino.version>
-        <maven.compiler.release>24</maven.compiler.release>
+        <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <airlift.log.version>336</airlift.log.version>
         <slf4j.version>1.7.36</slf4j.version>

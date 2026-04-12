@@ -85,6 +85,7 @@ public final class S3FileConnector implements Connector {
 
     @Override
     public void shutdown() {
+        s3ClientBuilder.close();
     }
 
     private enum TransactionHandle implements ConnectorTransactionHandle {
