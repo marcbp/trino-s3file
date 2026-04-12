@@ -5,7 +5,7 @@
 
     <groupId>marcbp</groupId>
     <artifactId>trino-s3file</artifactId>
-    <version>0.3</version>
+    <version>0.4</version>
     <name>S3 File Trino Plugin</name>
     <description>Trino connector exposing raw files stored in S3 storage.</description>
     <packaging>trino-plugin</packaging>
@@ -109,7 +109,7 @@
             <plugin>
                 <groupId>io.trino</groupId>
                 <artifactId>trino-maven-plugin</artifactId>
-                <version>15</version>
+                <version>17</version>
                 <extensions>true</extensions>
             </plugin>
             <plugin>
