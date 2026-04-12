@@ -16,9 +16,7 @@ SELECT *
 FROM TABLE(
     s3file.json.load(
         path => 's3://mybucket/data.jsonl',
-        encoding => 'UTF-8',     -- override when the file is not UTF-8
-        additional_columns => 'nickname:varchar', -- include fields missing from the first object
-        split_size_mb => 64      -- optional per-query override; defaults to the connector setting
+        additional_columns => 'nickname:varchar' -- include fields missing from the first object
     )
 );
 ```
@@ -135,8 +133,7 @@ FROM TABLE(
         path => 's3://mybucket/data.csv',
         delimiter => ';',
         header => 'true',        -- set to 'false' when the CSV has no header row
-        encoding => 'UTF-8',     -- override when the file is not UTF-8
-        split_size_mb => 64      -- optional per-query override; defaults to the connector setting
+        encoding => 'UTF-8'      -- override when the file is not UTF-8
     )
 );
 ```
@@ -178,8 +175,7 @@ FROM TABLE(
     s3file.txt.load(
         path => 's3://mybucket/data.txt',
         line_break => '\n',  -- override with '\r\n' or any custom separator
-        encoding => 'UTF-8', -- override when the file is not UTF-8
-        split_size_mb => 64  -- optional per-query override; defaults to the connector setting
+        encoding => 'UTF-8'  -- override when the file is not UTF-8
     )
 );
 ```
@@ -210,6 +206,12 @@ id=5 firstname=Georges lastname=Préjean nickname=Moïse age=67 status=inactive
 | id=3 firstname=Jacky lastname=Jacquard age=44 status=active           |
 | id=4 firstname=Jean-René lastname=Calot age=47 status=active          |
 | id=5 firstname=Georges lastname=Préjean nickname=Moïse age=67 status=inactive |
+
+## Parallelism Limits
+
+The connector can process `txt`, `csv`, and `json` files in parallel by splitting the object into byte ranges. This works best when records are much smaller than the configured split size.
+
+If a logical record is very large, a worker can fail the parse or return an incomplete row when the record crosses a split boundary. The simplest workaround is to increase `split_size_mb` (default to 32MB) so the largest expected record fits comfortably inside one split.
 
 ## Quickstart
 

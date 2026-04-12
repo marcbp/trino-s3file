@@ -146,7 +146,7 @@ public final class S3ClientBuilder {
             }
             else {
                 logger.info("Using AWS default credentials provider chain");
-                credentialsProvider = DefaultCredentialsProvider.create();
+                credentialsProvider = DefaultCredentialsProvider.builder().build();
             }
             builder.credentialsProvider(credentialsProvider);
             

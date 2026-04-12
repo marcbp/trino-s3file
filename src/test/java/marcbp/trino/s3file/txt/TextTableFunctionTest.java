@@ -70,7 +70,7 @@ class TextTableFunctionTest {
                 arguments,
                 null);
 
-        TextTableFunction.Handle handle = assertHandle(analysis, "\r\n", 2048L, Optional.of("etag-text"), Optional.of("v1"));
+        assertHandle(analysis, "\r\n", 2048L, Optional.of("etag-text"), Optional.of("v1"));
         assertEquals(Descriptor.descriptor(List.of("line"), List.of(VarcharType.createUnboundedVarcharType())),
                 analysis.getReturnedType().orElseThrow());
         verify(sessionClient).getObjectMetadata(eq(PATH));
