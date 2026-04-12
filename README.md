@@ -173,14 +173,24 @@ id;firstname;lastname;nickname;age;status
 ## Load TXT files
 
 ```sql
-SELECT *
-FROM TABLE(
-    s3file.txt.load(
-        path => 's3://mybucket/data.txt',
-        line_break => '\n',  -- override with '\r\n' or any custom separator
-        encoding => 'UTF-8'  -- override when the file is not UTF-8
+WITH parsed AS (
+    SELECT split_to_map(line, ' ', '=') AS fields
+    FROM TABLE(
+        s3file.txt.load(
+            path => 's3://mybucket/data.txt',
+            line_break => '\n',  -- override with '\r\n' or any custom separator
+            encoding => 'UTF-8'  -- override when the file is not UTF-8
+        )
     )
-);
+)
+SELECT
+    CAST(element_at(fields, 'id') AS bigint) AS id,
+    element_at(fields, 'firstname') AS firstname,
+    UPPER(element_at(fields, 'lastname')) AS lastname,
+    CAST(element_at(fields, 'age') AS bigint) AS age,
+    element_at(fields, 'nickname') AS nickname,
+    element_at(fields, 'status') AS status
+FROM parsed;
 ```
 
 - `path` (required): text file location in S3/MinIO.
@@ -188,7 +198,7 @@ FROM TABLE(
 - `encoding` (optional, default `'UTF-8'`): character set for decoding the file.
 - `split_size_mb` (optional, default connector value `32`): target split size in MiB for distributed reads.
 
-The function yields a single `VARCHAR` column named `line` containing each record in order.
+The function yields a single `VARCHAR` column named `line` containing each record in order. Use Trino SQL functions to split and cast the line into structured columns when needed.
 
 **Example input** (`docker/examples/data.txt`)
 
@@ -202,13 +212,13 @@ id=5 firstname=Georges lastname=Préjean nickname=Moïse age=67 status=inactive
 
 **Query output**
 
-| line                                                                  |
-|-----------------------------------------------------------------------|
-| id=1 firstname=André lastname=Merlaux age=25 status=active            |
-| id=2 firstname=Roger lastname=Moulinier age=46 status=active          |
-| id=3 firstname=Jacky lastname=Jacquard age=44 status=active           |
-| id=4 firstname=Jean-René lastname=Calot age=47 status=active          |
-| id=5 firstname=Georges lastname=Préjean nickname=Moïse age=67 status=inactive |
+| id | firstname | lastname | age | nickname | status |
+|----|-----------|----------|-----|----------|--------|
+| 1 | André | MERLAUX | 25 | null | active |
+| 2 | Roger | MOULINIER | 46 | null | active |
+| 3 | Jacky | JACQUARD | 44 | null | active |
+| 4 | Jean-René | CALOT | 47 | null | active |
+| 5 | Georges | PRÉJEAN | 67 | Moïse | inactive |
 
 ## Parallelism Limits
 
