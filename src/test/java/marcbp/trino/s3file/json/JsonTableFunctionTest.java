@@ -50,10 +50,10 @@ class JsonTableFunctionTest {
     }
 
     @Test
-    void analyzeInfersTypesFromFirstDocument() {
+    void analyzeInfersTypesFromSampleRows() {
         when(sessionClient.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("""
-                        {"event_id":1,"active":true,"amount":12.5,"meta":{"source":"app"},"note":"hello"}
+                        {"event_id":1,"active":true,"amount":12.5,"meta":{"source":"app"}}
                         {"event_id":2,"active":false,"amount":7.0,"note":"bye"}
                         """)));
         when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(512L, Optional.of("etag-json"), Optional.empty()));
@@ -90,6 +90,35 @@ class JsonTableFunctionTest {
 
         verify(sessionClient).openReader(eq(PATH), any(Charset.class));
         verify(sessionClient).getObjectMetadata(eq(PATH));
+        verify(sessionClient).close();
+    }
+
+    @Test
+    void analyzeHonorsSchemaSampleRowLimit() {
+        when(sessionClient.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
+                new BufferedReader(new StringReader("""
+                        {"event_id":1,"active":true}
+                        {"event_id":2,"active":false,"note":"later"}
+                        """)));
+        when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(128L, Optional.empty(), Optional.empty()));
+
+        Map<String, Argument> arguments = Map.of(
+                "PATH", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PATH)),
+                "SCHEMA_SAMPLE_ROWS", new ScalarArgument(BigintType.BIGINT, 1L)
+        );
+
+        TableFunctionAnalysis analysis = function.analyze(
+                mock(ConnectorSession.class),
+                new ConnectorTransactionHandle() {},
+                arguments,
+                null);
+
+        Descriptor descriptor = analysis.getReturnedType().orElseThrow();
+        Descriptor expectedDescriptor = Descriptor.descriptor(
+                List.of("event_id", "active"),
+                List.of(BigintType.BIGINT, BooleanType.BOOLEAN));
+        assertEquals(expectedDescriptor, descriptor);
+
         verify(sessionClient).close();
     }
 

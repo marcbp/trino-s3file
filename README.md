@@ -16,6 +16,7 @@ SELECT *
 FROM TABLE(
     s3file.json.load(
         path => 's3://mybucket/data.jsonl',
+        schema_sample_rows => 100,      -- inspect the first N rows to infer the schema
         additional_columns => 'nickname:varchar' -- include fields missing from the first object
     )
 );
@@ -24,9 +25,10 @@ FROM TABLE(
 - `path` (required): location of a newline-delimited JSON (NDJSON) object stream.
 - `encoding` (optional, default `'UTF-8'`): override the charset used when decoding the object.
 - `split_size_mb` (optional, default connector value `32`): target split size in MiB for distributed reads.
-- `additional_columns` (optional): comma-separated list of `name:type` pairs for fields that might not appear in the first JSON object. Types currently supported: `boolean`, `bigint`, `double`, `varchar`. Duplicate names override the inferred type.
+- `schema_sample_rows` (optional, default `100`): number of non-empty JSON rows used to infer the schema. Fields are merged across these rows, so columns that appear later in the sample are still detected.
+- `additional_columns` (optional): comma-separated list of `name:type` pairs for fields that might not appear in the sampled JSON rows, or to force a specific type. Types currently supported: `boolean`, `bigint`, `double`, `varchar`. Duplicate names override the inferred type.
 
-Fields and types are inferred from the first JSON object: booleans map to `boolean`, integral numbers to `bigint`, floating numbers to `double`, nested objects/arrays stay as JSON text (`varchar`), and other values remain `varchar`.
+Fields are inferred from the first `schema_sample_rows` JSON objects: booleans map to `boolean`, integral numbers to `bigint`, floating numbers to `double`, nested objects/arrays stay as JSON text (`varchar`), and other values remain `varchar`. When a field appears with different numeric shapes in the sample, the type is widened to `double`; otherwise incompatible mixes fall back to `varchar`.
 
 **Example input** (`docker/examples/data.jsonl`)
 
@@ -40,13 +42,13 @@ Fields and types are inferred from the first JSON object: booleans map to `boole
 
 **Query output**
 
-| id | firstname  | lastname  | nickname | age | status   |
-|----|------------|-----------|----------|-----|----------|
-| 1  | André      | Merlaux   | null     | 25  | active   |
-| 2  | Roger      | Moulinier | null     | 46  | active   |
-| 3  | Jacky      | Jacquard  | null     | 44  | active   |
-| 4  | Jean-René  | Calot     | null     | 47  | active   |
-| 5  | Georges    | Préjean   | Moïse    | 67  | inactive |
+| id | firstname | lastname | age | status | nickname |
+|----|-----------|----------|-----|--------|----------|
+| 1 | André | Merlaux | 25 | active | null |
+| 2 | Roger | Moulinier | 46 | active | null |
+| 3 | Jacky | Jacquard | 44 | active | null |
+| 4 | Jean-René | Calot | 47 | active | null |
+| 5 | Georges | Préjean | 67 | inactive | Moïse |
 
 ## Load XML files
 

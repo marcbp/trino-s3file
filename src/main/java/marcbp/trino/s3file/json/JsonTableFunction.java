@@ -17,10 +17,12 @@ import io.trino.spi.function.table.Argument;
 import io.trino.spi.function.table.Descriptor;
 import io.trino.spi.function.table.ReturnTypeSpecification;
 import io.trino.spi.function.table.ScalarArgumentSpecification;
+import io.trino.spi.function.table.ScalarArgument;
 import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.function.table.TableFunctionDataProcessor;
 import io.trino.spi.function.table.TableFunctionProcessorProvider;
 import io.trino.spi.function.table.TableFunctionSplitProcessor;
+import io.trino.spi.type.BigintType;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.file.AbstractTextFileProcessor;
@@ -57,6 +59,8 @@ import static marcbp.trino.s3file.util.TableFunctionArguments.splitSizeMbArgumen
  */
 public final class JsonTableFunction extends AbstractConnectorTableFunction {
     static final String ADDITIONAL_COLUMNS_ARGUMENT = "ADDITIONAL_COLUMNS";
+    static final String SCHEMA_SAMPLE_ROWS_ARGUMENT = "SCHEMA_SAMPLE_ROWS";
+    private static final long DEFAULT_SCHEMA_SAMPLE_ROWS = 100L;
     private static final int LOOKAHEAD_BYTES = 256 * 1024;
 
     private final S3ClientBuilder s3ClientBuilder;
@@ -76,6 +80,11 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
                         encodingArgumentSpecification(),
                         splitSizeMbArgumentSpecification(),
                         ScalarArgumentSpecification.builder()
+                                .name(SCHEMA_SAMPLE_ROWS_ARGUMENT)
+                                .type(BigintType.BIGINT)
+                                .defaultValue(DEFAULT_SCHEMA_SAMPLE_ROWS)
+                                .build(),
+                        ScalarArgumentSpecification.builder()
                                 .name(ADDITIONAL_COLUMNS_ARGUMENT)
                                 .type(VarcharType.VARCHAR)
                                 .defaultValue(Slices.utf8Slice(""))
@@ -94,6 +103,7 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
         String s3Path = requirePath(arguments);
         Charset charset = resolveEncoding(arguments);
         int splitSizeBytes = resolveSplitSizeBytes(arguments, defaultSplitSizeBytes);
+        int schemaSampleRows = resolveSchemaSampleRows(arguments);
 
         List<String> columnNames;
         List<ColumnType> detectedTypes;
@@ -101,7 +111,7 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
         try (S3ClientBuilder.SessionClient s3 = s3ClientBuilder.forSession(session);
              BufferedReader reader = s3.openReader(s3Path, charset)) {
             metadata = s3.getObjectMetadata(s3Path);
-            ColumnsMetadata columnsMetadata = JsonFormatSupport.inferColumns(reader, s3Path);
+            ColumnsMetadata columnsMetadata = JsonFormatSupport.inferColumns(reader, s3Path, schemaSampleRows);
             columnNames = new ArrayList<>(columnsMetadata.names());
             detectedTypes = new ArrayList<>(columnsMetadata.types());
 
@@ -113,7 +123,8 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
             throw new UncheckedIOException("Failed to inspect JSON data", e);
         }
 
-        logger.info("Detected %s JSON field(s) for path %s: %s", columnNames.size(), s3Path, JsonFormatSupport.describeColumns(columnNames, detectedTypes));
+        logger.info("Detected %s JSON field(s) for path %s after sampling %s row(s): %s",
+                columnNames.size(), s3Path, schemaSampleRows, JsonFormatSupport.describeColumns(columnNames, detectedTypes));
         List<Type> columnTypes = new ArrayList<>(detectedTypes.size());
         for (ColumnType columnType : detectedTypes) {
             columnTypes.add(columnType.trinoType());
@@ -133,6 +144,27 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
                         metadata.eTag().orElse(null),
                         metadata.versionId().orElse(null)))
                 .build();
+    }
+
+    private static int resolveSchemaSampleRows(Map<String, Argument> arguments) {
+        ScalarArgument sampleRowsArgument = (ScalarArgument) arguments.get(SCHEMA_SAMPLE_ROWS_ARGUMENT);
+        if (sampleRowsArgument == null) {
+            return (int) DEFAULT_SCHEMA_SAMPLE_ROWS;
+        }
+
+        Object rawValue = sampleRowsArgument.getValue();
+        if (!(rawValue instanceof Number sampleRowsValue)) {
+            throw new io.trino.spi.TrinoException(io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT, "SCHEMA_SAMPLE_ROWS must be an integer");
+        }
+
+        long sampleRows = sampleRowsValue.longValue();
+        if (sampleRows <= 0) {
+            throw new io.trino.spi.TrinoException(io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT, "SCHEMA_SAMPLE_ROWS must be a positive integer");
+        }
+        if (sampleRows > Integer.MAX_VALUE) {
+            throw new io.trino.spi.TrinoException(io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT, "SCHEMA_SAMPLE_ROWS is too large");
+        }
+        return (int) sampleRows;
     }
 
     public TableFunctionProcessorProvider createProcessorProvider() {

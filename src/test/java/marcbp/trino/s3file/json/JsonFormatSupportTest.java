@@ -31,6 +31,37 @@ class JsonFormatSupportTest {
     }
 
     @Test
+    void inferColumnsUnionsFieldsAcrossSampleRows() throws Exception {
+        BufferedReader reader = new BufferedReader(new StringReader("""
+                {"id":1,"flag":true}
+                {"id":2,"value":12.5}
+                {"id":3,"nickname":"Neo"}
+                """));
+
+        ColumnsMetadata metadata = JsonFormatSupport.inferColumns(reader, "source", 3);
+
+        assertEquals(List.of("id", "flag", "value", "nickname"), metadata.names());
+        assertEquals(List.of(
+                ColumnType.BIGINT,
+                ColumnType.BOOLEAN,
+                ColumnType.DOUBLE,
+                ColumnType.VARCHAR), metadata.types());
+    }
+
+    @Test
+    void inferColumnsStopsAfterConfiguredSampleRows() throws Exception {
+        BufferedReader reader = new BufferedReader(new StringReader("""
+                {"id":1}
+                {"extra":"ignored"}
+                """));
+
+        ColumnsMetadata metadata = JsonFormatSupport.inferColumns(reader, "source", 1);
+
+        assertEquals(List.of("id"), metadata.names());
+        assertEquals(List.of(ColumnType.BIGINT), metadata.types());
+    }
+
+    @Test
     void parseAdditionalColumnsParsesSpecification() {
         Map<String, Argument> arguments = Map.of(
                 JsonTableFunction.ADDITIONAL_COLUMNS_ARGUMENT,

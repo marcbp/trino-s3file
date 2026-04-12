@@ -17,6 +17,7 @@ import io.trino.spi.type.VarcharType;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -29,29 +30,43 @@ import static java.util.Objects.requireNonNull;
  */
 public final class JsonFormatSupport {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final int DEFAULT_SCHEMA_SAMPLE_ROWS = 100;
 
     private JsonFormatSupport() {
     }
 
     public static ColumnsMetadata inferColumns(BufferedReader reader, String path) throws IOException {
+        return inferColumns(reader, path, DEFAULT_SCHEMA_SAMPLE_ROWS);
+    }
+
+    public static ColumnsMetadata inferColumns(BufferedReader reader, String path, int sampleRows) throws IOException {
+        if (sampleRows <= 0) {
+            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "SCHEMA_SAMPLE_ROWS must be a positive integer");
+        }
+
+        Map<String, ColumnType> columns = new LinkedHashMap<>();
+        int sampledRows = 0;
         String line;
-        while ((line = reader.readLine()) != null) {
+        while (sampledRows < sampleRows && (line = reader.readLine()) != null) {
             line = line.trim();
             if (line.isEmpty()) {
                 continue;
             }
             ObjectNode objectNode = parseObject(line, path);
-            List<String> names = new ArrayList<>();
-            List<ColumnType> types = new ArrayList<>();
             objectNode.fieldNames().forEachRemaining(field -> {
-                names.add(field);
-                types.add(inferColumnType(objectNode.get(field)));
+                ColumnType observedType = inferColumnType(objectNode.get(field));
+                columns.merge(field, observedType, JsonFormatSupport::mergeColumnTypes);
             });
-            if (!names.isEmpty()) {
-                return new ColumnsMetadata(names, types);
+            sampledRows++;
+            if (!columns.isEmpty() && sampledRows >= sampleRows) {
+                break;
             }
         }
-        throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "No JSON object found in " + path);
+        if (columns.isEmpty()) {
+            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "No JSON object found in " + path);
+        }
+
+        return new ColumnsMetadata(new ArrayList<>(columns.keySet()), new ArrayList<>(columns.values()));
     }
 
     public static List<ColumnDefinition> parseAdditionalColumns(Map<String, Argument> arguments) {
@@ -138,6 +153,19 @@ public final class JsonFormatSupport {
         }
         if (node.isContainerNode()) {
             return ColumnType.VARCHAR;
+        }
+        return ColumnType.VARCHAR;
+    }
+
+    private static ColumnType mergeColumnTypes(ColumnType existing, ColumnType observed) {
+        if (existing == observed) {
+            return existing;
+        }
+        if (existing == ColumnType.VARCHAR || observed == ColumnType.VARCHAR) {
+            return ColumnType.VARCHAR;
+        }
+        if ((existing == ColumnType.BIGINT && observed == ColumnType.DOUBLE) || (existing == ColumnType.DOUBLE && observed == ColumnType.BIGINT)) {
+            return ColumnType.DOUBLE;
         }
         return ColumnType.VARCHAR;
     }
