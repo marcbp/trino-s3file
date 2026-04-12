@@ -18,7 +18,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.StringReader;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -187,6 +189,36 @@ class TextTableFunctionTest {
         assertEquals(2, produced.getResult().getPositionCount());
         assertEquals("bravo", VarcharType.createUnboundedVarcharType().getObjectValue(produced.getResult().getBlock(0), 0));
         assertEquals("charlie", VarcharType.createUnboundedVarcharType().getObjectValue(produced.getResult().getBlock(0), 1));
+    }
+
+    @Test
+    void processorDecodesIso88591BytesIntoJavaStrings() throws IOException {
+        byte[] data = "Andr\u00e9\nPr\u00e9jean\n".getBytes(StandardCharsets.ISO_8859_1);
+        when(sessionClient.openReader(eq(PATH), eq(StandardCharsets.ISO_8859_1), any(), any())).thenAnswer(invocation ->
+                new BufferedReader(new InputStreamReader(new ByteArrayInputStream(data), StandardCharsets.ISO_8859_1)));
+
+        TextTableFunction.Handle handle = new TextTableFunction.Handle(
+                PATH,
+                "\n",
+                null,
+                data.length,
+                32,
+                StandardCharsets.ISO_8859_1.name(),
+                null,
+                null);
+
+        TableFunctionSplitProcessor processor = function.createSplitProcessor(
+                mock(ConnectorSession.class),
+                handle,
+                handle.toWholeFileSplit());
+
+        TableFunctionProcessorState state = processor.process();
+        TableFunctionProcessorState.Processed produced = assertInstanceOf(TableFunctionProcessorState.Processed.class, state);
+
+        assertEquals(2, produced.getResult().getPositionCount());
+        assertEquals("André", VarcharType.createUnboundedVarcharType().getObjectValue(produced.getResult().getBlock(0), 0));
+        assertEquals("Préjean", VarcharType.createUnboundedVarcharType().getObjectValue(produced.getResult().getBlock(0), 1));
+        verify(sessionClient).openReader(eq(PATH), eq(StandardCharsets.ISO_8859_1), any(), any());
     }
 
     private static TextTableFunction.Handle assertHandle(TableFunctionAnalysis analysis,

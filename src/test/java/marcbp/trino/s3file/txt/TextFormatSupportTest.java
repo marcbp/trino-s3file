@@ -81,6 +81,15 @@ class TextFormatSupportTest {
     }
 
     @Test
+    void calculateLineBytesHonoursCharsetEncoding() {
+        byte[] utf8LineBreak = "\n".getBytes(StandardCharsets.UTF_8);
+        byte[] latin1LineBreak = "\n".getBytes(StandardCharsets.ISO_8859_1);
+
+        assertEquals(3, TextFormatSupport.calculateLineBytes("é", StandardCharsets.UTF_8, utf8LineBreak));
+        assertEquals(2, TextFormatSupport.calculateLineBytes("é", StandardCharsets.ISO_8859_1, latin1LineBreak));
+    }
+
+    @Test
     void writeLineAppendsUtf8Slice() {
         PageBuilderStatus pageBuilderStatus = new PageBuilderStatus(PageBuilderStatus.DEFAULT_MAX_PAGE_SIZE_IN_BYTES);
         BlockBuilderStatus blockBuilderStatus = pageBuilderStatus.createBlockBuilderStatus();
