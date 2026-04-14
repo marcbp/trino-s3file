@@ -79,6 +79,8 @@ Attributes are automatically projected as columns prefixed with `@`, while first
 
 Set `invalid_row_column` to keep malformed rows instead of failing the query. Those rows are emitted with `NULL` for projected fields and the raw XML in the dedicated column, which can then be inspected or reprocessed. Combine it with `empty_as_null => 'true'` to turn empty strings into SQL `NULL` while still capturing the original payload.
 
+`xml.load` currently processes one object as a single split. This is an intentional product limitation: unlike the line-oriented `txt`, `csv`, and `json` readers, XML parsing is not range-splittable here. Large XML objects therefore run on a single worker split, with lower parallelism and a stronger need to size memory and query timeouts accordingly.
+
 **Example input** (`docker/examples/data.xml`)
 
 ```xml
@@ -239,7 +241,7 @@ s3.max-connections-per-worker=10
 s3.connection-acquisition-timeout-s=60
 ```
 
-`split_size_mb` on `txt.load`, `csv.load`, and `json.load` overrides this value per query. `xml.load` still reads whole files.
+`split_size_mb` on `txt.load`, `csv.load`, and `json.load` overrides this value per query. `xml.load` still reads whole files and does not parallelize a single object across workers.
 
 `s3.max-connections-per-worker` controls the S3 client connection pool size per worker. Increase it when concurrent splits start waiting for an available connection. `s3.connection-acquisition-timeout-s` sets how long the client waits for a free connection before failing the request. If omitted, the connector uses `5` connections per worker and a `60` second acquisition timeout.
 
