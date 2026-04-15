@@ -23,8 +23,11 @@ import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
 import marcbp.trino.s3file.file.AbstractTextFilePageSource;
+import marcbp.trino.s3file.file.AnalysisStats;
 import marcbp.trino.s3file.file.BaseTextFileHandle;
 import marcbp.trino.s3file.file.FileSplit;
+import marcbp.trino.s3file.file.S3ObjectRef;
+import marcbp.trino.s3file.file.ScanSettings;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
 
 import javax.xml.stream.XMLStreamException;
@@ -36,7 +39,6 @@ import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static java.util.Objects.requireNonNull;
@@ -132,19 +134,11 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         return TableFunctionAnalysis.builder()
                 .returnedType(descriptor)
                 .handle(new Handle(
-                        s3Path,
-                        rowElement,
-                        schema.columns(),
-                        emptyAsNull,
-                        invalidRowColumn.isEmpty() ? null : invalidRowColumn,
-                        null,
-                        metadata.size(),
-                        charset.name(),
-                        metadata.eTag().orElse(null),
-                        metadata.versionId().orElse(null),
-                        1L,
-                        columnNames.size(),
-                        System.nanoTime() - analyzeStartedAt))
+                        new S3ObjectRef(s3Path, metadata.size(), metadata.eTag().orElse(null), metadata.versionId().orElse(null)),
+                        new ScanSettings(Integer.MAX_VALUE, BaseTextFileHandle.DEFAULT_BATCH_SIZE, charset.name()),
+                        new AnalysisStats(1L, columnNames.size(), System.nanoTime() - analyzeStartedAt),
+                        schema,
+                        new XmlOptions(rowElement, emptyAsNull, invalidRowColumn.isEmpty() ? null : invalidRowColumn)))
                 .build();
     }
 
@@ -218,55 +212,31 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         return new PageSource(session, s3ClientBuilder, handle, split, columns);
     }
 
-    public static final class Handle extends BaseTextFileHandle {
-        private final String rowElement;
-        private final List<XmlFormatSupport.Column> columns;
-        private final boolean emptyAsNull;
-        private final String invalidRowColumn;
-
-        public Handle(
-                String s3Path,
-                String rowElement,
-                List<XmlFormatSupport.Column> columns,
-                boolean emptyAsNull,
-                String invalidRowColumn,
-                Integer batchSize,
-                long fileSize,
-                String charsetName,
-                String eTag,
-                String versionId) {
-            this(s3Path, rowElement, columns, emptyAsNull, invalidRowColumn, batchSize, fileSize, charsetName, eTag, versionId, 0L, 0, 0L);
+    public record XmlOptions(
+            @JsonProperty("rowElement") String rowElement,
+            @JsonProperty("emptyAsNull") boolean emptyAsNull,
+            @JsonProperty("invalidRowColumn") String invalidRowColumn) {
+        @JsonCreator
+        public XmlOptions {
+            rowElement = requireNonNull(rowElement, "rowElement is null");
+            invalidRowColumn = invalidRowColumn == null ? "" : invalidRowColumn;
         }
+    }
+
+    public static final class Handle extends BaseTextFileHandle {
+        private final XmlFormatSupport.Schema schema;
+        private final XmlOptions options;
 
         @JsonCreator
-        public Handle(@JsonProperty("s3Path") String s3Path,
-                      @JsonProperty("rowElement") String rowElement,
-                      @JsonProperty("columns") List<XmlFormatSupport.Column> columns,
-                      @JsonProperty("emptyAsNull") boolean emptyAsNull,
-                      @JsonProperty("invalidRowColumn") String invalidRowColumn,
-                      @JsonProperty("batchSize") Integer batchSize,
-                      @JsonProperty("fileSize") long fileSize,
-                      @JsonProperty("charset") String charsetName,
-                      @JsonProperty("etag") String eTag,
-                      @JsonProperty("versionId") String versionId,
-                      @JsonProperty("analysisRowsSampled") Long analysisRowsSampled,
-                      @JsonProperty("analysisColumnsDetected") Integer analysisColumnsDetected,
-                      @JsonProperty("analysisTimeNanos") Long analysisTimeNanos) {
-            super(
-                    s3Path,
-                    fileSize,
-                    Integer.MAX_VALUE,
-                    charsetName,
-                    batchSize == null ? BaseTextFileHandle.DEFAULT_BATCH_SIZE : batchSize,
-                    Optional.ofNullable(eTag),
-                    Optional.ofNullable(versionId),
-                    analysisRowsSampled == null ? 0 : analysisRowsSampled,
-                    analysisColumnsDetected == null ? 0 : analysisColumnsDetected,
-                    analysisTimeNanos == null ? 0 : analysisTimeNanos);
-            this.rowElement = requireNonNull(rowElement, "rowElement is null");
-            this.columns = List.copyOf(requireNonNull(columns, "columns is null"));
-            this.emptyAsNull = emptyAsNull;
-            this.invalidRowColumn = invalidRowColumn == null ? "" : invalidRowColumn;
+        public Handle(
+                @JsonProperty("object") S3ObjectRef object,
+                @JsonProperty("scan") ScanSettings scan,
+                @JsonProperty("analysis") AnalysisStats analysis,
+                @JsonProperty("schema") XmlFormatSupport.Schema schema,
+                @JsonProperty("options") XmlOptions options) {
+            super(object, scan, analysis);
+            this.schema = requireNonNull(schema, "schema is null");
+            this.options = requireNonNull(options, "options is null");
         }
 
         @Override
@@ -274,43 +244,25 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
             return "xml";
         }
 
-        @JsonProperty
-        public String getRowElement() {
-            return rowElement;
+        @JsonProperty("schema")
+        public XmlFormatSupport.Schema schema() {
+            return schema;
         }
 
-        @JsonProperty
-        public List<XmlFormatSupport.Column> getColumns() {
-            return columns;
-        }
-
-        @JsonProperty("emptyAsNull")
-        public boolean isEmptyAsNull() {
-            return emptyAsNull;
-        }
-
-        @JsonProperty("invalidRowColumn")
-        public String getInvalidRowColumn() {
-            return invalidRowColumn;
-        }
-
-        public boolean hasInvalidRowColumn() {
-            return !invalidRowColumn.isEmpty();
+        @JsonProperty("options")
+        public XmlOptions options() {
+            return options;
         }
 
         @Override
         public List<String> columnNames() {
-            List<String> names = new ArrayList<>(columns.size());
-            for (XmlFormatSupport.Column column : columns) {
-                names.add(column.name());
-            }
-            return names;
+            return schema.columnNames();
         }
 
         @Override
         public List<Type> resolveColumnTypes() {
-            List<Type> types = new ArrayList<>(columns.size());
-            for (int i = 0; i < columns.size(); i++) {
+            List<Type> types = new ArrayList<>(schema.columns().size());
+            for (int i = 0; i < schema.columns().size(); i++) {
                 types.add(VarcharType.createUnboundedVarcharType());
             }
             return List.copyOf(types);
@@ -335,7 +287,7 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
                 this.xmlReader = XmlFormatSupport.newXmlReader(reader);
             }
             catch (XMLStreamException e) {
-                throw new IOException("Failed to initialise XML reader for " + handle.getS3Path(), e);
+                throw new IOException("Failed to initialise XML reader for " + handle.object().path(), e);
             }
         }
 
@@ -345,14 +297,14 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
                 return RecordReadResult.finished();
             }
             try {
-                XmlFormatSupport.RowExtraction row = XmlFormatSupport.readNextRecord(xmlReader, new XmlFormatSupport.Schema(handle.getColumns()), handle.getRowElement(), handle.isEmptyAsNull());
+                XmlFormatSupport.RowExtraction row = XmlFormatSupport.readNextRecord(xmlReader, handle.schema(), handle.options().rowElement(), handle.options().emptyAsNull());
                 if (row.done()) {
                     return RecordReadResult.finished();
                 }
                 return RecordReadResult.produce(row.values(), 0, false);
             }
             catch (XMLStreamException e) {
-                throw new IOException("Failed to read XML record for " + handle.getS3Path(), e);
+                throw new IOException("Failed to read XML record for " + handle.object().path(), e);
             }
         }
 
@@ -381,7 +333,7 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
                     xmlReader.close();
                 }
                 catch (XMLStreamException e) {
-                    logger.warn(e, "Failed to close XML reader for %s", handle.getS3Path());
+                    logger.warn(e, "Failed to close XML reader for %s", handle.object().path());
                 }
                 finally {
                     xmlReader = null;

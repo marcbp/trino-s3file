@@ -19,11 +19,11 @@ public final class TextSplitBoundarySupport {
             return true;
         }
         byte[] preceding = sessionClient.readBytes(
-                handle.getS3Path(),
+                handle.object().path(),
                 split.getStartOffset() - 1,
                 split.getStartOffset(),
-                handle.getVersionId(),
-                handle.getETag());
+                handle.object().versionIdRef(),
+                handle.object().eTagRef());
         return preceding.length == 1 && (preceding[0] == '\n' || preceding[0] == '\r');
     }
 
@@ -41,11 +41,11 @@ public final class TextSplitBoundarySupport {
         }
         long lookbehindStart = split.getStartOffset() - delimiterBytes.length;
         byte[] preceding = sessionClient.readBytes(
-                handle.getS3Path(),
+                handle.object().path(),
                 lookbehindStart,
                 split.getStartOffset(),
-                handle.getVersionId(),
-                handle.getETag());
+                handle.object().versionIdRef(),
+                handle.object().eTagRef());
         if (preceding.length != delimiterBytes.length) {
             return false;
         }

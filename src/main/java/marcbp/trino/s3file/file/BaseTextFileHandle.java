@@ -9,7 +9,6 @@ import marcbp.trino.s3file.util.CharsetUtils;
 
 import java.nio.charset.Charset;
 import java.util.List;
-import java.util.Optional;
 
 import static java.util.Objects.requireNonNull;
 
@@ -19,123 +18,43 @@ import static java.util.Objects.requireNonNull;
 public abstract class BaseTextFileHandle implements ConnectorTableFunctionHandle, ConnectorTableHandle {
     public static final int DEFAULT_BATCH_SIZE = 1024;
 
-    private final String s3Path;
-    private final String charsetName;
-    private final long fileSize;
-    private final int splitSizeBytes;
-    private final int batchSize;
-    private final Optional<String> eTag;
-    private final Optional<String> versionId;
-    private final long analysisRowsSampled;
-    private final int analysisColumnsDetected;
-    private final long analysisTimeNanos;
+    private final S3ObjectRef object;
+    private final ScanSettings scan;
+    private final AnalysisStats analysis;
 
-    protected BaseTextFileHandle(String s3Path, long fileSize, int splitSizeBytes, String charsetName, int batchSize) {
-        this(s3Path, fileSize, splitSizeBytes, charsetName, batchSize, Optional.empty(), Optional.empty(), 0, 0, 0);
+    protected BaseTextFileHandle(S3ObjectRef object, ScanSettings scan) {
+        this(object, scan, AnalysisStats.EMPTY);
     }
 
-    protected BaseTextFileHandle(
-            String s3Path,
-            long fileSize,
-            int splitSizeBytes,
-            String charsetName,
-            int batchSize,
-            Optional<String> eTag,
-            Optional<String> versionId) {
-        this(s3Path, fileSize, splitSizeBytes, charsetName, batchSize, eTag, versionId, 0, 0, 0);
+    protected BaseTextFileHandle(S3ObjectRef object, ScanSettings scan, AnalysisStats analysis) {
+        this.object = requireNonNull(object, "object is null");
+        this.scan = requireNonNull(scan, "scan is null");
+        this.analysis = requireNonNull(analysis, "analysis is null");
     }
 
-    protected BaseTextFileHandle(
-            String s3Path,
-            long fileSize,
-            int splitSizeBytes,
-            String charsetName,
-            int batchSize,
-            Optional<String> eTag,
-            Optional<String> versionId,
-            long analysisRowsSampled,
-            int analysisColumnsDetected,
-            long analysisTimeNanos) {
-        this.s3Path = requireNonNull(s3Path, "s3Path is null");
-        this.charsetName = requireNonNull(charsetName, "charsetName is null");
-        this.fileSize = fileSize;
-        this.splitSizeBytes = splitSizeBytes;
-        this.batchSize = batchSize;
-        this.eTag = eTag;
-        this.versionId = versionId;
-        this.analysisRowsSampled = analysisRowsSampled;
-        this.analysisColumnsDetected = analysisColumnsDetected;
-        this.analysisTimeNanos = analysisTimeNanos;
+    @JsonProperty("object")
+    public S3ObjectRef object() {
+        return object;
     }
 
-    @JsonProperty("s3Path")
-    public String getS3Path() {
-        return s3Path;
+    @JsonProperty("scan")
+    public ScanSettings scan() {
+        return scan;
     }
 
-    @JsonProperty("fileSize")
-    public long getFileSize() {
-        return fileSize;
-    }
-
-    @JsonProperty("splitSizeBytes")
-    public int getSplitSizeBytes() {
-        return splitSizeBytes;
-    }
-
-    @JsonProperty("charset")
-    public String getCharsetName() {
-        return charsetName;
-    }
-
-    @JsonProperty("batchSize")
-    public int getBatchSize() {
-        return batchSize;
-    }
-
-    @JsonIgnore
-    public Optional<String> getETag() {
-        return eTag;
-    }
-
-    @JsonIgnore
-    public Optional<String> getVersionId() {
-        return versionId;
-    }
-
-    @JsonProperty("etag")
-    public String getETagValue() {
-        return eTag.orElse(null);
-    }
-
-    @JsonProperty("versionId")
-    public String getVersionIdValue() {
-        return versionId.orElse(null);
-    }
-
-    @JsonProperty("analysisRowsSampled")
-    public long getAnalysisRowsSampled() {
-        return analysisRowsSampled;
-    }
-
-    @JsonProperty("analysisColumnsDetected")
-    public int getAnalysisColumnsDetected() {
-        return analysisColumnsDetected;
-    }
-
-    @JsonProperty("analysisTimeNanos")
-    public long getAnalysisTimeNanos() {
-        return analysisTimeNanos;
+    @JsonProperty("analysis")
+    public AnalysisStats analysis() {
+        return analysis;
     }
 
     @JsonIgnore
     public Charset charset() {
-        return CharsetUtils.resolve(charsetName);
+        return CharsetUtils.resolve(scan.charsetName());
     }
 
     @JsonIgnore
     public FileSplit toWholeFileSplit() {
-        return FileSplit.forWholeFile(fileSize);
+        return FileSplit.forWholeFile(object.size());
     }
 
     @JsonIgnore

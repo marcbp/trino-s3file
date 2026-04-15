@@ -92,18 +92,18 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
         recordS3Request();
         if (split.isWholeFile()) {
             return sessionClient.openReader(
-                    handle.getS3Path(),
+                    handle.object().path(),
                     charset,
-                    handle.getVersionId(),
-                    handle.getETag());
+                    handle.object().versionIdRef(),
+                    handle.object().eTagRef());
         }
         return sessionClient.openReader(
-                handle.getS3Path(),
+                handle.object().path(),
                 split.getStartOffset(),
                 split.getRangeEndExclusive(),
                 charset,
-                handle.getVersionId(),
-                handle.getETag());
+                handle.object().versionIdRef(),
+                handle.object().eTagRef());
     }
 
     private void ensureReader() throws IOException {
@@ -126,7 +126,7 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
             reader.close();
         }
         catch (IOException e) {
-            logger.warn(e, "Failed to close reader for %s", handle.getS3Path());
+            logger.warn(e, "Failed to close reader for %s", handle.object().path());
         }
         finally {
             reader = null;
@@ -185,7 +185,7 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
                 return null;
             }
 
-            PageBuilder pageBuilder = new PageBuilder(handle.getBatchSize(), projectedTypes);
+            PageBuilder pageBuilder = new PageBuilder(handle.scan().batchSize(), projectedTypes);
             while (!pageBuilder.isFull()) {
                 RecordReadResult<?> result = readNextRecord();
                 if (result.status() == RecordStatus.END) {
@@ -218,7 +218,7 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
         }
         catch (IOException e) {
             closeSession();
-            throw new UncheckedIOException("Failed to process data for " + handle.getS3Path(), e);
+            throw new UncheckedIOException("Failed to process data for " + handle.object().path(), e);
         }
         catch (RuntimeException e) {
             closeSession();

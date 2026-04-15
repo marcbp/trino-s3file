@@ -11,7 +11,10 @@ import io.trino.spi.function.table.ScalarArgument;
 import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
+import marcbp.trino.s3file.file.AnalysisStats;
 import marcbp.trino.s3file.file.FileSplit;
+import marcbp.trino.s3file.file.S3ObjectRef;
+import marcbp.trino.s3file.file.ScanSettings;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
 import marcbp.trino.s3file.s3.S3ClientBuilder.ObjectMetadata;
 import org.junit.jupiter.api.BeforeEach;
@@ -69,15 +72,15 @@ class CsvTableFunctionTest {
                 null);
 
         CsvTableFunction.Handle handle = (CsvTableFunction.Handle) analysis.getHandle();
-        assertEquals(PATH, handle.getS3Path());
-        assertEquals(List.of("first", "second"), handle.getColumns());
-        assertTrue(handle.isHeaderPresent());
-        assertEquals(1024, handle.getBatchSize());
-        assertEquals(64L, handle.getFileSize());
-        assertEquals(Optional.of("etag-1"), handle.getETag());
-        assertEquals(Optional.empty(), handle.getVersionId());
-        assertEquals(DEFAULT_SPLIT_SIZE_BYTES, handle.getSplitSizeBytes());
-        assertEquals(StandardCharsets.UTF_8.name(), handle.getCharsetName());
+        assertEquals(PATH, handle.object().path());
+        assertEquals(List.of("first", "second"), handle.schema().columns());
+        assertTrue(handle.options().headerPresent());
+        assertEquals(1024, handle.scan().batchSize());
+        assertEquals(64L, handle.object().size());
+        assertEquals(Optional.of("etag-1"), handle.object().eTagRef());
+        assertEquals(Optional.empty(), handle.object().versionIdRef());
+        assertEquals(DEFAULT_SPLIT_SIZE_BYTES, handle.scan().splitSizeBytes());
+        assertEquals(StandardCharsets.UTF_8.name(), handle.scan().charsetName());
 
         Descriptor expectedDescriptor = Descriptor.descriptor(
                 List.of("first", "second"),
@@ -107,10 +110,10 @@ class CsvTableFunctionTest {
                 null);
 
         CsvTableFunction.Handle handle = (CsvTableFunction.Handle) analysis.getHandle();
-        assertEquals(List.of("column_1", "column_2", "column_3"), handle.getColumns());
-        assertTrue(handle.getBatchSize() > 0);
-        assertEquals(64L, handle.getFileSize());
-        assertEquals(StandardCharsets.UTF_8.name(), handle.getCharsetName());
+        assertEquals(List.of("column_1", "column_2", "column_3"), handle.schema().columns());
+        assertTrue(handle.scan().batchSize() > 0);
+        assertEquals(64L, handle.object().size());
+        assertEquals(StandardCharsets.UTF_8.name(), handle.scan().charsetName());
 
         Descriptor expectedDescriptor = Descriptor.descriptor(
                 List.of("column_1", "column_2", "column_3"),
@@ -143,22 +146,12 @@ class CsvTableFunctionTest {
                 null);
 
         CsvTableFunction.Handle handle = (CsvTableFunction.Handle) analysis.getHandle();
-        assertEquals(4 * 1024 * 1024, handle.getSplitSizeBytes());
+        assertEquals(4 * 1024 * 1024, handle.scan().splitSizeBytes());
     }
 
     @Test
     void createSplitsGeneratesMultipleRanges() {
-        CsvTableFunction.Handle handle = new CsvTableFunction.Handle(
-                PATH,
-                List.of("c1", "c2"),
-                ';',
-                true,
-                null,
-                25 * 1024 * 1024L,
-                8 * 1024 * 1024,
-                StandardCharsets.UTF_8.name(),
-                null,
-                null);
+        CsvTableFunction.Handle handle = handle(List.of("c1", "c2"), true, 25 * 1024 * 1024L, 8 * 1024 * 1024);
 
         List<FileSplit> splits = function.createSplits(handle);
 
@@ -169,7 +162,7 @@ class CsvTableFunctionTest {
         assertFalse(first.isLast());
         FileSplit last = splits.get(splits.size() - 1);
         assertTrue(last.isLast());
-        assertTrue(last.getStartOffset() < handle.getFileSize());
+        assertTrue(last.getStartOffset() < handle.object().size());
     }
 
     @Test
@@ -178,17 +171,7 @@ class CsvTableFunctionTest {
         when(sessionClient.openReader(eq(PATH), eq(10L), eq(40L), any(Charset.class), any(), any())).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("3;4\n5;6\n")));
 
-        CsvTableFunction.Handle handle = new CsvTableFunction.Handle(
-                PATH,
-                List.of("c1", "c2"),
-                ';',
-                false,
-                null,
-                128,
-                32,
-                StandardCharsets.UTF_8.name(),
-                null,
-                null);
+        CsvTableFunction.Handle handle = handle(List.of("c1", "c2"), false, 128, 32);
         FileSplit split = new FileSplit("split-1", 10, 20, 40, false, false);
 
         ConnectorPageSource pageSource = function.createPageSource(mock(ConnectorSession.class), handle, split, allColumns(handle));
@@ -201,9 +184,18 @@ class CsvTableFunctionTest {
     }
 
     private static List<S3FileColumnHandle> allColumns(CsvTableFunction.Handle handle) {
-        return java.util.stream.IntStream.range(0, handle.getColumns().size())
-                .mapToObj(index -> new S3FileColumnHandle(handle.getColumns().get(index), index))
+        return java.util.stream.IntStream.range(0, handle.schema().columns().size())
+                .mapToObj(index -> new S3FileColumnHandle(handle.schema().columns().get(index), index))
                 .toList();
+    }
+
+    private static CsvTableFunction.Handle handle(List<String> columns, boolean headerPresent, long fileSize, int splitSizeBytes) {
+        return new CsvTableFunction.Handle(
+                new S3ObjectRef(PATH, fileSize, null, null),
+                new ScanSettings(splitSizeBytes, CsvTableFunction.Handle.DEFAULT_BATCH_SIZE, StandardCharsets.UTF_8.name()),
+                AnalysisStats.EMPTY,
+                new CsvTableFunction.CsvSchema(columns),
+                new CsvTableFunction.CsvOptions(';', headerPresent));
     }
 
     private static SourcePage nextPage(ConnectorPageSource pageSource) {

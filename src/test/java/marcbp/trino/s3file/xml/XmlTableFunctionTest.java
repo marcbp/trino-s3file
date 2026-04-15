@@ -88,15 +88,15 @@ class XmlTableFunctionTest {
         assertEquals(expectedDescriptor, descriptor);
 
         XmlTableFunction.Handle handle = (XmlTableFunction.Handle) analysis.getHandle();
-        assertEquals(PATH, handle.getS3Path());
-        assertEquals("book", handle.getRowElement());
+        assertEquals(PATH, handle.object().path());
+        assertEquals("book", handle.options().rowElement());
         assertEquals(List.of("@id", "author", "title", "genre"), handle.columnNames());
-        assertEquals(StandardCharsets.UTF_8.name(), handle.getCharsetName());
-        assertEquals(512L, handle.getFileSize());
-        assertEquals(Optional.of("etag-xml"), handle.getETag());
-        assertEquals(Optional.empty(), handle.getVersionId());
-        assertFalse(handle.isEmptyAsNull());
-        assertFalse(handle.hasInvalidRowColumn());
+        assertEquals(StandardCharsets.UTF_8.name(), handle.scan().charsetName());
+        assertEquals(512L, handle.object().size());
+        assertEquals(Optional.of("etag-xml"), handle.object().eTagRef());
+        assertEquals(Optional.empty(), handle.object().versionIdRef());
+        assertFalse(handle.options().emptyAsNull());
+        assertEquals("", handle.options().invalidRowColumn());
 
         List<FileSplit> splits = function.createSplits(handle);
         assertEquals(1, splits.size());
@@ -141,14 +141,14 @@ class XmlTableFunctionTest {
         assertEquals(expectedDescriptor, descriptor);
 
         XmlTableFunction.Handle handle = (XmlTableFunction.Handle) analysis.getHandle();
-        assertEquals("entry", handle.getRowElement());
-        assertEquals("ISO-8859-1", handle.getCharsetName());
+        assertEquals("entry", handle.options().rowElement());
+        assertEquals("ISO-8859-1", handle.scan().charsetName());
         assertEquals(List.of("@status", "message", "text"), handle.columnNames());
-        assertEquals(1024L, handle.getFileSize());
-        assertEquals(Optional.empty(), handle.getETag());
-        assertEquals(Optional.of("version-text"), handle.getVersionId());
-        assertFalse(handle.isEmptyAsNull());
-        assertFalse(handle.hasInvalidRowColumn());
+        assertEquals(1024L, handle.object().size());
+        assertEquals(Optional.empty(), handle.object().eTagRef());
+        assertEquals(Optional.of("version-text"), handle.object().versionIdRef());
+        assertFalse(handle.options().emptyAsNull());
+        assertEquals("", handle.options().invalidRowColumn());
 
         verify(sessionClient).openReader(eq(PATH), any(Charset.class));
         verify(sessionClient).getObjectMetadata(eq(PATH));
@@ -213,9 +213,9 @@ class XmlTableFunctionTest {
                 null);
 
         XmlTableFunction.Handle handle = (XmlTableFunction.Handle) analysis.getHandle();
-        assertTrue(handle.isEmptyAsNull());
+        assertTrue(handle.options().emptyAsNull());
         assertEquals(List.of("@code", "name"), handle.columnNames());
-        assertFalse(handle.hasInvalidRowColumn());
+        assertEquals("", handle.options().invalidRowColumn());
 
         verify(sessionClient).openReader(eq(PATH), any(Charset.class));
         verify(sessionClient).getObjectMetadata(eq(PATH));
@@ -254,8 +254,7 @@ class XmlTableFunctionTest {
         assertEquals(expected, descriptor);
 
         XmlTableFunction.Handle handle = (XmlTableFunction.Handle) analysis.getHandle();
-        assertTrue(handle.hasInvalidRowColumn());
-        assertEquals("raw_row", handle.getInvalidRowColumn());
+        assertEquals("raw_row", handle.options().invalidRowColumn());
         assertEquals(List.of("@code", "name", "raw_row"), handle.columnNames());
     }
 

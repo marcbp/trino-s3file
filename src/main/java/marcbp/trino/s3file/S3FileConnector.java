@@ -97,22 +97,22 @@ public final class S3FileConnector implements Connector {
         public ConnectorSplitSource getSplits(ConnectorTransactionHandle transactionHandle, ConnectorSession session, io.trino.spi.function.table.ConnectorTableFunctionHandle functionHandle) {
             if (functionHandle instanceof CsvTableFunction.Handle csvHandle) {
                 List<FileSplit> splits = csvTableFunction.createSplits(csvHandle);
-                LOG.info("Providing %s CSV split(s) for path %s", splits.size(), csvHandle.getS3Path());
+                LOG.info("Providing %s CSV split(s) for path %s", splits.size(), csvHandle.object().path());
                 return new FixedSplitSource(splits);
             }
             if (functionHandle instanceof TextTableFunction.Handle textHandle) {
                 List<FileSplit> splits = textTableFunction.createSplits(textHandle);
-                LOG.info("Providing %s text split(s) for path %s", splits.size(), textHandle.getS3Path());
+                LOG.info("Providing %s text split(s) for path %s", splits.size(), textHandle.object().path());
                 return new FixedSplitSource(splits);
             }
             if (functionHandle instanceof JsonTableFunction.Handle jsonHandle) {
                 List<FileSplit> splits = jsonTableFunction.createSplits(jsonHandle);
-                LOG.info("Providing %s JSON split(s) for path %s", splits.size(), jsonHandle.getS3Path());
+                LOG.info("Providing %s JSON split(s) for path %s", splits.size(), jsonHandle.object().path());
                 return new FixedSplitSource(splits);
             }
             if (functionHandle instanceof XmlTableFunction.Handle xmlHandle) {
                 List<FileSplit> splits = xmlTableFunction.createSplits(xmlHandle);
-                LOG.info("Providing %s XML split(s) for path %s", splits.size(), xmlHandle.getS3Path());
+                LOG.info("Providing %s XML split(s) for path %s", splits.size(), xmlHandle.object().path());
                 return new FixedSplitSource(splits);
             }
             throw new IllegalArgumentException("Unexpected handle type: " + functionHandle.getClass().getName());
@@ -122,22 +122,22 @@ public final class S3FileConnector implements Connector {
         public ConnectorSplitSource getSplits(ConnectorTransactionHandle transactionHandle, ConnectorSession session, ConnectorTableHandle table, DynamicFilter dynamicFilter, Constraint constraint) {
             if (table instanceof CsvTableFunction.Handle csvHandle) {
                 List<FileSplit> splits = csvTableFunction.createSplits(csvHandle);
-                LOG.info("Providing %s CSV split(s) for table scan path %s", splits.size(), csvHandle.getS3Path());
+                LOG.info("Providing %s CSV split(s) for table scan path %s", splits.size(), csvHandle.object().path());
                 return new FixedSplitSource(splits);
             }
             if (table instanceof TextTableFunction.Handle textHandle) {
                 List<FileSplit> splits = textTableFunction.createSplits(textHandle);
-                LOG.info("Providing %s text split(s) for table scan path %s", splits.size(), textHandle.getS3Path());
+                LOG.info("Providing %s text split(s) for table scan path %s", splits.size(), textHandle.object().path());
                 return new FixedSplitSource(splits);
             }
             if (table instanceof JsonTableFunction.Handle jsonHandle) {
                 List<FileSplit> splits = jsonTableFunction.createSplits(jsonHandle);
-                LOG.info("Providing %s JSON split(s) for table scan path %s", splits.size(), jsonHandle.getS3Path());
+                LOG.info("Providing %s JSON split(s) for table scan path %s", splits.size(), jsonHandle.object().path());
                 return new FixedSplitSource(splits);
             }
             if (table instanceof XmlTableFunction.Handle xmlHandle) {
                 List<FileSplit> splits = xmlTableFunction.createSplits(xmlHandle);
-                LOG.info("Providing %s XML split(s) for table scan path %s", splits.size(), xmlHandle.getS3Path());
+                LOG.info("Providing %s XML split(s) for table scan path %s", splits.size(), xmlHandle.object().path());
                 return new FixedSplitSource(splits);
             }
             throw new IllegalArgumentException("Unexpected table handle type: " + table.getClass().getName());

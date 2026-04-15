@@ -12,7 +12,10 @@ import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
+import marcbp.trino.s3file.file.AnalysisStats;
 import marcbp.trino.s3file.file.FileSplit;
+import marcbp.trino.s3file.file.S3ObjectRef;
+import marcbp.trino.s3file.file.ScanSettings;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
 import marcbp.trino.s3file.s3.S3ClientBuilder.ObjectMetadata;
 import org.junit.jupiter.api.BeforeEach;
@@ -96,20 +99,12 @@ class TextTableFunctionTest {
                 null);
 
         TextTableFunction.Handle handle = (TextTableFunction.Handle) analysis.getHandle();
-        assertEquals(1024 * 1024, handle.getSplitSizeBytes());
+        assertEquals(1024 * 1024, handle.scan().splitSizeBytes());
     }
 
     @Test
     void createSplitsRespectsLookaheadAndBoundaries() {
-        TextTableFunction.Handle handle = new TextTableFunction.Handle(
-                PATH,
-                "\n",
-                null,
-                10,
-                4,
-                StandardCharsets.UTF_8.name(),
-                null,
-                null);
+        TextTableFunction.Handle handle = handle("\n", 10, 4, StandardCharsets.UTF_8, null, null);
 
         List<FileSplit> splits = function.createSplits(handle);
 
@@ -143,15 +138,7 @@ class TextTableFunctionTest {
         when(sessionClient.openReader(eq(PATH), eq(5L), eq(40L), any(Charset.class), any(), any())).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("a;bravo;charlie;")));
 
-        TextTableFunction.Handle handle = new TextTableFunction.Handle(
-                PATH,
-                ";",
-                null,
-                128,
-                32,
-                StandardCharsets.UTF_8.name(),
-                null,
-                null);
+        TextTableFunction.Handle handle = handle(";", 128, 32, StandardCharsets.UTF_8, null, null);
         FileSplit split = new FileSplit("split-1", 5, 20, 40, false, false);
 
         ConnectorPageSource pageSource = function.createPageSource(mock(ConnectorSession.class), handle, split, allColumns(handle));
@@ -171,15 +158,7 @@ class TextTableFunctionTest {
         when(sessionClient.openReader(eq(PATH), eq(6L), eq(40L), any(Charset.class), any(), any())).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("bravo;charlie;")));
 
-        TextTableFunction.Handle handle = new TextTableFunction.Handle(
-                PATH,
-                ";",
-                null,
-                128,
-                32,
-                StandardCharsets.UTF_8.name(),
-                null,
-                null);
+        TextTableFunction.Handle handle = handle(";", 128, 32, StandardCharsets.UTF_8, null, null);
         FileSplit split = new FileSplit("split-1", 6, 20, 40, false, false);
 
         ConnectorPageSource pageSource = function.createPageSource(mock(ConnectorSession.class), handle, split, allColumns(handle));
@@ -197,15 +176,7 @@ class TextTableFunctionTest {
         when(sessionClient.openReader(eq(PATH), eq(StandardCharsets.ISO_8859_1), any(), any())).thenAnswer(invocation ->
                 new BufferedReader(new InputStreamReader(new ByteArrayInputStream(data), StandardCharsets.ISO_8859_1)));
 
-        TextTableFunction.Handle handle = new TextTableFunction.Handle(
-                PATH,
-                "\n",
-                null,
-                data.length,
-                32,
-                StandardCharsets.ISO_8859_1.name(),
-                null,
-                null);
+        TextTableFunction.Handle handle = handle("\n", data.length, 32, StandardCharsets.ISO_8859_1, null, null);
 
         ConnectorPageSource pageSource = function.createPageSource(
                 mock(ConnectorSession.class),
@@ -238,17 +209,31 @@ class TextTableFunctionTest {
                                                          Optional<String> expectedVersion) {
         assertInstanceOf(TextTableFunction.Handle.class, analysis.getHandle());
         TextTableFunction.Handle handle = (TextTableFunction.Handle) analysis.getHandle();
-        assertEquals(PATH, handle.getS3Path());
-        assertEquals(expectedDelimiter, handle.getLineBreak());
-        assertEquals(expectedSize, handle.getFileSize());
-        assertEquals(DEFAULT_SPLIT_SIZE_BYTES, handle.getSplitSizeBytes());
-        assertEquals(1024, handle.getBatchSize());
-        assertEquals(StandardCharsets.UTF_8.name(), handle.getCharsetName());
-        assertEquals(expectedEtag, handle.getETag());
-        assertEquals(expectedVersion, handle.getVersionId());
+        assertEquals(PATH, handle.object().path());
+        assertEquals(expectedDelimiter, handle.options().lineBreak());
+        assertEquals(expectedSize, handle.object().size());
+        assertEquals(DEFAULT_SPLIT_SIZE_BYTES, handle.scan().splitSizeBytes());
+        assertEquals(1024, handle.scan().batchSize());
+        assertEquals(StandardCharsets.UTF_8.name(), handle.scan().charsetName());
+        assertEquals(expectedEtag, handle.object().eTagRef());
+        assertEquals(expectedVersion, handle.object().versionIdRef());
         List<Type> columnTypes = handle.resolveColumnTypes();
         assertEquals(1, columnTypes.size());
         assertEquals(VarcharType.createUnboundedVarcharType(), columnTypes.get(0));
         return handle;
+    }
+
+    private static TextTableFunction.Handle handle(
+            String lineBreak,
+            long fileSize,
+            int splitSizeBytes,
+            Charset charset,
+            String eTag,
+            String versionId) {
+        return new TextTableFunction.Handle(
+                new S3ObjectRef(PATH, fileSize, eTag, versionId),
+                new ScanSettings(splitSizeBytes, TextTableFunction.Handle.DEFAULT_BATCH_SIZE, charset.name()),
+                AnalysisStats.EMPTY,
+                new TextTableFunction.TextOptions(lineBreak));
     }
 }

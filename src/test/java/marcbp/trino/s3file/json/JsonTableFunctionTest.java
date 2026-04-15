@@ -14,7 +14,10 @@ import io.trino.spi.type.BooleanType;
 import io.trino.spi.type.DoubleType;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
+import marcbp.trino.s3file.file.AnalysisStats;
 import marcbp.trino.s3file.file.FileSplit;
+import marcbp.trino.s3file.file.S3ObjectRef;
+import marcbp.trino.s3file.file.ScanSettings;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
 import marcbp.trino.s3file.s3.S3ClientBuilder.ObjectMetadata;
 import org.junit.jupiter.api.BeforeEach;
@@ -81,13 +84,13 @@ class JsonTableFunctionTest {
         assertEquals(expectedDescriptor, descriptor);
 
         JsonTableFunction.Handle handle = (JsonTableFunction.Handle) analysis.getHandle();
-        assertEquals(PATH, handle.getS3Path());
-        assertEquals(expectedDescriptor, Descriptor.descriptor(handle.getColumns(), handle.resolveColumnTypes()));
-        assertEquals(512L, handle.getFileSize());
-        assertEquals(CONNECTOR_SPLIT_SIZE_BYTES, handle.getSplitSizeBytes());
-        assertEquals(Optional.of("etag-json"), handle.getETag());
-        assertEquals(Optional.empty(), handle.getVersionId());
-        assertEquals(StandardCharsets.UTF_8.name(), handle.getCharsetName());
+        assertEquals(PATH, handle.object().path());
+        assertEquals(expectedDescriptor, Descriptor.descriptor(handle.schema().columns(), handle.resolveColumnTypes()));
+        assertEquals(512L, handle.object().size());
+        assertEquals(CONNECTOR_SPLIT_SIZE_BYTES, handle.scan().splitSizeBytes());
+        assertEquals(Optional.of("etag-json"), handle.object().eTagRef());
+        assertEquals(Optional.empty(), handle.object().versionIdRef());
+        assertEquals(StandardCharsets.UTF_8.name(), handle.scan().charsetName());
 
         verify(sessionClient).openReader(eq(PATH), any(Charset.class));
         verify(sessionClient).getObjectMetadata(eq(PATH));
@@ -144,7 +147,7 @@ class JsonTableFunctionTest {
                 null);
 
         JsonTableFunction.Handle handle = (JsonTableFunction.Handle) analysis.getHandle();
-        assertEquals(2 * 1024 * 1024, handle.getSplitSizeBytes());
+        assertEquals(2 * 1024 * 1024, handle.scan().splitSizeBytes());
     }
 
     @Test
@@ -178,13 +181,13 @@ class JsonTableFunctionTest {
         assertEquals(expectedDescriptor, descriptor);
 
         JsonTableFunction.Handle handle = (JsonTableFunction.Handle) analysis.getHandle();
-        assertEquals(List.of("event_id", "campaign", "score"), handle.getColumns());
+        assertEquals(List.of("event_id", "campaign", "score"), handle.schema().columns());
         assertEquals(
                 List.of(BigintType.BIGINT, VarcharType.createUnboundedVarcharType(), DoubleType.DOUBLE),
                 handle.resolveColumnTypes());
-        assertEquals("ISO-8859-1", handle.getCharsetName());
-        assertEquals(Optional.empty(), handle.getETag());
-        assertEquals(Optional.of("v2"), handle.getVersionId());
+        assertEquals("ISO-8859-1", handle.scan().charsetName());
+        assertEquals(Optional.empty(), handle.object().eTagRef());
+        assertEquals(Optional.of("v2"), handle.object().versionIdRef());
 
         verify(sessionClient).openReader(eq(PATH), any(Charset.class));
         verify(sessionClient).getObjectMetadata(eq(PATH));
@@ -200,16 +203,11 @@ class JsonTableFunctionTest {
                         {"event_id":2,"active":true}
                         """)));
 
-        JsonTableFunction.Handle handle = new JsonTableFunction.Handle(
-                PATH,
+        JsonTableFunction.Handle handle = handle(
                 List.of("event_id", "active"),
                 List.of(JsonFormatSupport.ColumnType.BIGINT, JsonFormatSupport.ColumnType.BOOLEAN),
-                null,
                 256,
-                64,
-                StandardCharsets.UTF_8.name(),
-                null,
-                null);
+                64);
         FileSplit split = new FileSplit("split-1", 12, 32, 64, false, false);
 
         ConnectorPageSource pageSource = function.createPageSource(mock(ConnectorSession.class), handle, split, allColumns(handle));
@@ -232,16 +230,11 @@ class JsonTableFunctionTest {
                         {"event_id":3,"active":false}
                         """)));
 
-        JsonTableFunction.Handle handle = new JsonTableFunction.Handle(
-                PATH,
+        JsonTableFunction.Handle handle = handle(
                 List.of("event_id", "active"),
                 List.of(JsonFormatSupport.ColumnType.BIGINT, JsonFormatSupport.ColumnType.BOOLEAN),
-                null,
                 256,
-                64,
-                StandardCharsets.UTF_8.name(),
-                null,
-                null);
+                64);
         FileSplit split = new FileSplit("split-1", 32, 64, 96, false, false);
 
         ConnectorPageSource pageSource = function.createPageSource(mock(ConnectorSession.class), handle, split, allColumns(handle));
@@ -254,9 +247,17 @@ class JsonTableFunctionTest {
     }
 
     private static List<S3FileColumnHandle> allColumns(JsonTableFunction.Handle handle) {
-        return java.util.stream.IntStream.range(0, handle.getColumns().size())
-                .mapToObj(index -> new S3FileColumnHandle(handle.getColumns().get(index), index))
+        return java.util.stream.IntStream.range(0, handle.schema().columns().size())
+                .mapToObj(index -> new S3FileColumnHandle(handle.schema().columns().get(index), index))
                 .toList();
+    }
+
+    private static JsonTableFunction.Handle handle(List<String> columns, List<JsonFormatSupport.ColumnType> columnTypes, long fileSize, int splitSizeBytes) {
+        return new JsonTableFunction.Handle(
+                new S3ObjectRef(PATH, fileSize, null, null),
+                new ScanSettings(splitSizeBytes, JsonTableFunction.Handle.DEFAULT_BATCH_SIZE, StandardCharsets.UTF_8.name()),
+                AnalysisStats.EMPTY,
+                new JsonTableFunction.JsonSchema(columns, columnTypes));
     }
 
     private static SourcePage nextPage(ConnectorPageSource pageSource) {

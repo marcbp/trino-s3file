@@ -25,8 +25,11 @@ import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
 import marcbp.trino.s3file.file.AbstractTextFilePageSource;
+import marcbp.trino.s3file.file.AnalysisStats;
 import marcbp.trino.s3file.file.BaseTextFileHandle;
 import marcbp.trino.s3file.file.FileSplit;
+import marcbp.trino.s3file.file.S3ObjectRef;
+import marcbp.trino.s3file.file.ScanSettings;
 import marcbp.trino.s3file.file.TextSplitBoundarySupport;
 import marcbp.trino.s3file.file.SplitPlanner;
 import marcbp.trino.s3file.json.JsonFormatSupport.ColumnDefinition;
@@ -41,7 +44,6 @@ import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 import static java.util.Objects.requireNonNull;
 import static marcbp.trino.s3file.util.TableFunctionArguments.encodingArgumentSpecification;
@@ -134,18 +136,10 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
         return TableFunctionAnalysis.builder()
                 .returnedType(descriptor)
                 .handle(new Handle(
-                        s3Path,
-                        columnNames,
-                        detectedTypes,
-                        null,
-                        metadata.size(),
-                        splitSizeBytes,
-                        charset.name(),
-                        metadata.eTag().orElse(null),
-                        metadata.versionId().orElse(null),
-                        (long) sampledRows,
-                        columnNames.size(),
-                        System.nanoTime() - analyzeStartedAt))
+                        new S3ObjectRef(s3Path, metadata.size(), metadata.eTag().orElse(null), metadata.versionId().orElse(null)),
+                        new ScanSettings(splitSizeBytes, BaseTextFileHandle.DEFAULT_BATCH_SIZE, charset.name()),
+                        new AnalysisStats((long) sampledRows, columnNames.size(), System.nanoTime() - analyzeStartedAt),
+                        new JsonSchema(columnNames, detectedTypes)))
                 .build();
     }
 
@@ -171,56 +165,34 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
     }
 
     public List<FileSplit> createSplits(Handle handle) {
-        return SplitPlanner.planSplits(handle.getFileSize(), handle.getSplitSizeBytes(), LOOKAHEAD_BYTES);
+        return SplitPlanner.planSplits(handle.object().size(), handle.scan().splitSizeBytes(), LOOKAHEAD_BYTES);
     }
 
     public ConnectorPageSource createPageSource(ConnectorSession session, Handle handle, FileSplit split, List<S3FileColumnHandle> columns) {
         return new PageSource(session, s3ClientBuilder, handle, split, columns);
     }
 
-    public static final class Handle extends BaseTextFileHandle {
-        private final List<String> columns;
-        private final List<ColumnType> columnTypes;
-
-        public Handle(
-                String s3Path,
-                List<String> columns,
-                List<ColumnType> columnTypes,
-                Integer batchSize,
-                long fileSize,
-                int splitSizeBytes,
-                String charsetName,
-                String eTag,
-                String versionId) {
-            this(s3Path, columns, columnTypes, batchSize, fileSize, splitSizeBytes, charsetName, eTag, versionId, 0L, 0, 0L);
+    public record JsonSchema(
+            @JsonProperty("columns") List<String> columns,
+            @JsonProperty("columnTypes") List<ColumnType> columnTypes) {
+        @JsonCreator
+        public JsonSchema {
+            columns = List.copyOf(requireNonNull(columns, "columns is null"));
+            columnTypes = List.copyOf(requireNonNull(columnTypes, "columnTypes is null"));
         }
+    }
+
+    public static final class Handle extends BaseTextFileHandle {
+        private final JsonSchema schema;
 
         @JsonCreator
-        public Handle(@JsonProperty("s3Path") String s3Path,
-                      @JsonProperty("columns") List<String> columns,
-                      @JsonProperty("columnTypes") List<ColumnType> columnTypes,
-                      @JsonProperty("batchSize") Integer batchSize,
-                      @JsonProperty("fileSize") long fileSize,
-                      @JsonProperty("splitSizeBytes") int splitSizeBytes,
-                      @JsonProperty("charset") String charsetName,
-                      @JsonProperty("etag") String eTag,
-                      @JsonProperty("versionId") String versionId,
-                      @JsonProperty("analysisRowsSampled") Long analysisRowsSampled,
-                      @JsonProperty("analysisColumnsDetected") Integer analysisColumnsDetected,
-                      @JsonProperty("analysisTimeNanos") Long analysisTimeNanos) {
-            super(
-                    s3Path,
-                    fileSize,
-                    splitSizeBytes,
-                    charsetName,
-                    batchSize == null ? BaseTextFileHandle.DEFAULT_BATCH_SIZE : batchSize,
-                    Optional.ofNullable(eTag),
-                    Optional.ofNullable(versionId),
-                    analysisRowsSampled == null ? 0 : analysisRowsSampled,
-                    analysisColumnsDetected == null ? 0 : analysisColumnsDetected,
-                    analysisTimeNanos == null ? 0 : analysisTimeNanos);
-            this.columns = List.copyOf(requireNonNull(columns, "columns is null"));
-            this.columnTypes = List.copyOf(requireNonNull(columnTypes, "columnTypes is null"));
+        public Handle(
+                @JsonProperty("object") S3ObjectRef object,
+                @JsonProperty("scan") ScanSettings scan,
+                @JsonProperty("analysis") AnalysisStats analysis,
+                @JsonProperty("schema") JsonSchema schema) {
+            super(object, scan, analysis);
+            this.schema = requireNonNull(schema, "schema is null");
         }
 
         @Override
@@ -228,25 +200,20 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
             return "json";
         }
 
-        @JsonProperty
-        public List<String> getColumns() {
-            return columns;
-        }
-
-        @JsonProperty
-        public List<ColumnType> getColumnTypes() {
-            return columnTypes;
+        @JsonProperty("schema")
+        public JsonSchema schema() {
+            return schema;
         }
 
         @Override
         public List<String> columnNames() {
-            return columns;
+            return schema.columns();
         }
 
         @Override
         public List<Type> resolveColumnTypes() {
-            List<Type> types = new ArrayList<>(columnTypes.size());
-            for (ColumnType columnType : columnTypes) {
+            List<Type> types = new ArrayList<>(schema.columnTypes().size());
+            for (ColumnType columnType : schema.columnTypes()) {
                 types.add(columnType.trinoType());
             }
             return List.copyOf(types);
@@ -266,8 +233,8 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
                 FileSplit split,
                 List<S3FileColumnHandle> projectedColumns) {
             super(session, s3ClientBuilder, handle, split, projectedColumns);
-            this.columnNames = handle.getColumns();
-            this.columnKinds = handle.getColumnTypes();
+            this.columnNames = handle.schema().columns();
+            this.columnKinds = handle.schema().columnTypes();
             this.lineBreakBytes = "\n".getBytes(charset);
             this.skipFirstLine = split.getStartOffset() > 0;
         }
@@ -300,7 +267,7 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
                 return RecordReadResult.skip(lineBytes);
             }
             boolean finishesSplit = !split.isLast() && bytesWithinPrimary + lineBytes > primaryLength;
-            ObjectNode objectNode = JsonFormatSupport.parseObject(line, handle.getS3Path());
+            ObjectNode objectNode = JsonFormatSupport.parseObject(line, handle.object().path());
             return RecordReadResult.produce(objectNode, lineBytes, finishesSplit);
         }
 

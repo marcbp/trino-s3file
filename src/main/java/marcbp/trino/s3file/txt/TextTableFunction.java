@@ -26,6 +26,9 @@ import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
+import marcbp.trino.s3file.file.AnalysisStats;
+import marcbp.trino.s3file.file.S3ObjectRef;
+import marcbp.trino.s3file.file.ScanSettings;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -112,67 +115,39 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
         return TableFunctionAnalysis.builder()
                 .returnedType(descriptor)
                 .handle(new Handle(
-                        s3Path,
-                        lineBreak,
-                        null,
-                        metadata.size(),
-                        splitSizeBytes,
-                        charset.name(),
-                        metadata.eTag().orElse(null),
-                        metadata.versionId().orElse(null),
-                        0L,
-                        1,
-                        System.nanoTime() - analyzeStartedAt))
+                        new S3ObjectRef(s3Path, metadata.size(), metadata.eTag().orElse(null), metadata.versionId().orElse(null)),
+                        new ScanSettings(splitSizeBytes, BaseTextFileHandle.DEFAULT_BATCH_SIZE, charset.name()),
+                        new AnalysisStats(0L, 1, System.nanoTime() - analyzeStartedAt),
+                        new TextOptions(lineBreak)))
                 .build();
     }
 
     public List<FileSplit> createSplits(Handle handle) {
-        return SplitPlanner.planSplits(handle.getFileSize(), handle.getSplitSizeBytes(), LOOKAHEAD_BYTES);
+        return SplitPlanner.planSplits(handle.object().size(), handle.scan().splitSizeBytes(), LOOKAHEAD_BYTES);
     }
 
     public ConnectorPageSource createPageSource(ConnectorSession session, Handle handle, FileSplit split, List<S3FileColumnHandle> columns) {
         return new PageSource(session, s3ClientBuilder, handle, split, columns);
     }
 
-    public static final class Handle extends BaseTextFileHandle {
-        private final String lineBreak;
-
-        public Handle(
-                String s3Path,
-                String lineBreak,
-                Integer batchSize,
-                long fileSize,
-                int splitSizeBytes,
-                String charsetName,
-                String eTag,
-                String versionId) {
-            this(s3Path, lineBreak, batchSize, fileSize, splitSizeBytes, charsetName, eTag, versionId, 0L, 0, 0L);
+    public record TextOptions(@JsonProperty("lineBreak") String lineBreak) {
+        @JsonCreator
+        public TextOptions {
+            lineBreak = requireNonNull(lineBreak, "lineBreak is null");
         }
+    }
+
+    public static final class Handle extends BaseTextFileHandle {
+        private final TextOptions options;
 
         @JsonCreator
-        public Handle(@JsonProperty("s3Path") String s3Path,
-                      @JsonProperty("lineBreak") String lineBreak,
-                      @JsonProperty("batchSize") Integer batchSize,
-                      @JsonProperty("fileSize") long fileSize,
-                      @JsonProperty("splitSizeBytes") int splitSizeBytes,
-                      @JsonProperty("charset") String charsetName,
-                      @JsonProperty("etag") String eTag,
-                      @JsonProperty("versionId") String versionId,
-                      @JsonProperty("analysisRowsSampled") Long analysisRowsSampled,
-                      @JsonProperty("analysisColumnsDetected") Integer analysisColumnsDetected,
-                      @JsonProperty("analysisTimeNanos") Long analysisTimeNanos) {
-            super(
-                    s3Path,
-                    fileSize,
-                    splitSizeBytes,
-                    charsetName,
-                    batchSize == null ? BaseTextFileHandle.DEFAULT_BATCH_SIZE : batchSize,
-                    Optional.ofNullable(eTag),
-                    Optional.ofNullable(versionId),
-                    analysisRowsSampled == null ? 0 : analysisRowsSampled,
-                    analysisColumnsDetected == null ? 0 : analysisColumnsDetected,
-                    analysisTimeNanos == null ? 0 : analysisTimeNanos);
-            this.lineBreak = requireNonNull(lineBreak, "lineBreak is null");
+        public Handle(
+                @JsonProperty("object") S3ObjectRef object,
+                @JsonProperty("scan") ScanSettings scan,
+                @JsonProperty("analysis") AnalysisStats analysis,
+                @JsonProperty("options") TextOptions options) {
+            super(object, scan, analysis);
+            this.options = requireNonNull(options, "options is null");
         }
 
         @Override
@@ -180,9 +155,9 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
             return "txt";
         }
 
-        @JsonProperty
-        public String getLineBreak() {
-            return lineBreak;
+        @JsonProperty("options")
+        public TextOptions options() {
+            return options;
         }
 
         @Override
@@ -210,7 +185,7 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
                 List<S3FileColumnHandle> projectedColumns) {
             super(session, s3ClientBuilder, handle, split, projectedColumns);
             this.outputType = VarcharType.createUnboundedVarcharType();
-            this.lineBreak = handle.getLineBreak();
+            this.lineBreak = handle.options().lineBreak();
             this.lineBreakBytes = lineBreak.getBytes(charset);
             this.skipFirstRecord = split.getStartOffset() > 0;
         }
