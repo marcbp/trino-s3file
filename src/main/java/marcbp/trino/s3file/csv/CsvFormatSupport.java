@@ -29,7 +29,7 @@ public final class CsvFormatSupport {
             if (header == null) {
                 throw new IllegalArgumentException("CSV file is empty: " + sourceDescription);
             }
-            String[] tokens = parseCsvLine(header, delimiter);
+            String[] tokens = parseCsvLine(header, newParser(delimiter));
             List<String> columns = new ArrayList<>();
             if (headerPresent) {
                 for (String token : tokens) {
@@ -60,10 +60,18 @@ public final class CsvFormatSupport {
         }
     }
 
-    public static String[] parseCsvLine(String line, char delimiter) {
-        CSVParser parser = new CSVParserBuilder()
+    public static CSVParser newParser(char delimiter) {
+        return new CSVParserBuilder()
                 .withSeparator(delimiter)
                 .build();
+    }
+
+    public static String[] parseCsvLine(String line, char delimiter) {
+        return parseCsvLine(line, newParser(delimiter));
+    }
+
+    public static String[] parseCsvLine(String line, CSVParser parser) {
+        requireNonNull(parser, "parser is null");
         try {
             return parser.parseLine(line);
         }

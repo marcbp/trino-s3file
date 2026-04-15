@@ -2,6 +2,7 @@ package marcbp.trino.s3file.csv;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.opencsv.CSVParser;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
 import io.trino.spi.PageBuilder;
@@ -208,6 +209,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
 
     private static final class PageSource extends AbstractTextFilePageSource<Handle> {
         private final byte[] lineBreakBytes;
+        private final CSVParser parser;
         private boolean skipFirstLine;
 
         private PageSource(
@@ -218,6 +220,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                 List<S3FileColumnHandle> projectedColumns) {
             super(session, s3ClientBuilder, handle, split, projectedColumns);
             this.lineBreakBytes = "\n".getBytes(charset);
+            this.parser = CsvFormatSupport.newParser(handle.options().delimiter());
             this.skipFirstLine = split.getStartOffset() > 0;
         }
 
@@ -256,7 +259,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                 return RecordReadResult.skip(lineBytes);
             }
 
-            String[] values = CsvFormatSupport.parseCsvLine(line, handle.options().delimiter());
+            String[] values = CsvFormatSupport.parseCsvLine(line, parser);
             boolean finishesSplit = !split.isLast() && bytesWithinPrimary + lineBytes > primaryLength;
             return RecordReadResult.produce(values, lineBytes, finishesSplit);
         }
