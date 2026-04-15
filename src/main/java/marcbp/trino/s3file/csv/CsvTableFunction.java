@@ -8,6 +8,7 @@ import io.trino.spi.PageBuilder;
 import io.trino.spi.block.BlockBuilder;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorTransactionHandle;
+import io.trino.spi.connector.ConnectorPageSource;
 import io.trino.spi.function.table.AbstractConnectorTableFunction;
 import io.trino.spi.function.table.Argument;
 import io.trino.spi.function.table.Descriptor;
@@ -15,17 +16,13 @@ import io.trino.spi.function.table.ReturnTypeSpecification;
 import io.trino.spi.function.table.ScalarArgument;
 import io.trino.spi.function.table.ScalarArgumentSpecification;
 import io.trino.spi.function.table.TableFunctionAnalysis;
-import io.trino.spi.function.table.TableFunctionDataProcessor;
-import io.trino.spi.function.table.TableFunctionProcessorProvider;
-import io.trino.spi.function.table.TableFunctionSplitProcessor;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 import io.airlift.log.Logger;
-import marcbp.trino.s3file.file.AbstractTextFileProcessor;
+import marcbp.trino.s3file.S3FileColumnHandle;
+import marcbp.trino.s3file.file.AbstractTextFilePageSource;
 import marcbp.trino.s3file.file.BaseTextFileHandle;
-import marcbp.trino.s3file.file.BaseFileProcessorProvider;
 import marcbp.trino.s3file.file.FileSplit;
-import marcbp.trino.s3file.file.FileSplitProcessor;
 import marcbp.trino.s3file.file.TextSplitBoundarySupport;
 import marcbp.trino.s3file.file.SplitPlanner;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
@@ -94,6 +91,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
         String s3Path = requirePath(arguments);
         Charset charset = resolveEncoding(arguments);
         int splitSizeBytes = resolveSplitSizeBytes(arguments, defaultSplitSizeBytes);
+        long analyzeStartedAt = System.nanoTime();
 
         char delimiter = ';';
         ScalarArgument delimiterArg = (ScalarArgument) arguments.get(DELIMITER_ARGUMENT);
@@ -139,26 +137,39 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                         splitSizeBytes,
                         charset.name(),
                         metadata.eTag().orElse(null),
-                        metadata.versionId().orElse(null)))
+                        metadata.versionId().orElse(null),
+                        1L,
+                        columnNames.size(),
+                        System.nanoTime() - analyzeStartedAt))
                 .build();
-    }
-
-    public TableFunctionProcessorProvider createProcessorProvider() {
-        return new ProcessorProvider();
     }
 
     public List<FileSplit> createSplits(Handle handle) {
         return SplitPlanner.planSplits(handle.getFileSize(), handle.getSplitSizeBytes(), LOOKAHEAD_BYTES);
     }
 
-    public TableFunctionSplitProcessor createSplitProcessor(ConnectorSession session, Handle handle, FileSplit split) {
-        return new FileSplitProcessor(new Processor(session, s3ClientBuilder, handle, split));
+    public ConnectorPageSource createPageSource(ConnectorSession session, Handle handle, FileSplit split, List<S3FileColumnHandle> columns) {
+        return new PageSource(session, s3ClientBuilder, handle, split, columns);
     }
 
     public static final class Handle extends BaseTextFileHandle {
         private final List<String> columns;
         private final char delimiter;
         private final boolean headerPresent;
+
+        public Handle(
+                String s3Path,
+                List<String> columns,
+                char delimiter,
+                boolean headerPresent,
+                Integer batchSize,
+                long fileSize,
+                int splitSizeBytes,
+                String charsetName,
+                String eTag,
+                String versionId) {
+            this(s3Path, columns, delimiter, headerPresent, batchSize, fileSize, splitSizeBytes, charsetName, eTag, versionId, 0L, 0, 0L);
+        }
 
         @JsonCreator
         public Handle(@JsonProperty("s3Path") String s3Path,
@@ -170,7 +181,10 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                       @JsonProperty("splitSizeBytes") int splitSizeBytes,
                       @JsonProperty("charset") String charsetName,
                       @JsonProperty("etag") String eTag,
-                      @JsonProperty("versionId") String versionId) {
+                      @JsonProperty("versionId") String versionId,
+                      @JsonProperty("analysisRowsSampled") Long analysisRowsSampled,
+                      @JsonProperty("analysisColumnsDetected") Integer analysisColumnsDetected,
+                      @JsonProperty("analysisTimeNanos") Long analysisTimeNanos) {
             super(
                     s3Path,
                     fileSize,
@@ -178,10 +192,18 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                     charsetName,
                     batchSize == null ? BaseTextFileHandle.DEFAULT_BATCH_SIZE : batchSize,
                     Optional.ofNullable(eTag),
-                    Optional.ofNullable(versionId));
+                    Optional.ofNullable(versionId),
+                    analysisRowsSampled == null ? 0 : analysisRowsSampled,
+                    analysisColumnsDetected == null ? 0 : analysisColumnsDetected,
+                    analysisTimeNanos == null ? 0 : analysisTimeNanos);
             this.columns = List.copyOf(requireNonNull(columns, "columns is null"));
             this.delimiter = delimiter;
             this.headerPresent = headerPresent;
+        }
+
+        @Override
+        public String format() {
+            return "csv";
         }
 
         @JsonProperty
@@ -199,6 +221,12 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
             return headerPresent;
         }
 
+        @Override
+        public List<String> columnNames() {
+            return columns;
+        }
+
+        @Override
         public List<Type> resolveColumnTypes() {
             List<Type> types = new ArrayList<>(columns.size());
             for (int i = 0; i < columns.size(); i++) {
@@ -208,31 +236,17 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
         }
     }
 
-    private final class ProcessorProvider extends BaseFileProcessorProvider<Handle> {
-        private ProcessorProvider() {
-            super(Handle.class);
-        }
-
-        @Override
-        protected TableFunctionDataProcessor createDataProcessor(ConnectorSession session, Handle handle) {
-            logger.info("Creating data processor for path %s", handle.getS3Path());
-            return new Processor(session, s3ClientBuilder, handle, null);
-        }
-
-        @Override
-        protected TableFunctionSplitProcessor createSplitProcessor(ConnectorSession session, Handle handle, FileSplit split) {
-            return CsvTableFunction.this.createSplitProcessor(session, handle, split);
-        }
-    }
-
-    private static final class Processor extends AbstractTextFileProcessor<Handle> {
-        private final List<Type> columnTypes;
+    private static final class PageSource extends AbstractTextFilePageSource<Handle> {
         private final byte[] lineBreakBytes;
         private boolean skipFirstLine;
 
-        private Processor(ConnectorSession session, S3ClientBuilder s3ClientBuilder, Handle handle, FileSplit split) {
-            super(session, s3ClientBuilder, handle, split);
-            this.columnTypes = handle.resolveColumnTypes();
+        private PageSource(
+                ConnectorSession session,
+                S3ClientBuilder s3ClientBuilder,
+                Handle handle,
+                FileSplit split,
+                List<S3FileColumnHandle> projectedColumns) {
+            super(session, s3ClientBuilder, handle, split, projectedColumns);
             this.lineBreakBytes = "\n".getBytes(charset);
             this.skipFirstLine = split.getStartOffset() > 0;
         }
@@ -245,12 +259,12 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
         @Override
         protected void afterReaderOpened(BufferedReader reader) throws IOException {
             if (skipFirstLine) {
+                recordS3Request();
                 skipFirstLine = !TextSplitBoundarySupport.startsAtLineBoundary(sessionClient, handle, split);
             }
             if (handle.isHeaderPresent() && split.isFirst()) {
                 String header = reader.readLine();
                 if (header != null) {
-                    // Keep byte accounting aligned after discarding header row.
                     addBytesWithinPrimary(CsvFormatSupport.calculateLineBytes(header, charset, lineBreakBytes));
                 }
             }
@@ -280,22 +294,19 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
         @Override
         protected void appendRecord(PageBuilder pageBuilder, Object payload) {
             String[] rawValues = (String[]) payload;
-            for (int columnIndex = 0; columnIndex < columnTypes.size(); columnIndex++) {
-                BlockBuilder blockBuilder = pageBuilder.getBlockBuilder(columnIndex);
-                String value = columnIndex < rawValues.length ? rawValues[columnIndex] : null;
+            for (int outputIndex = 0; outputIndex < projectedColumns.size(); outputIndex++) {
+                S3FileColumnHandle columnHandle = projectedColumns.get(outputIndex);
+                int sourceIndex = columnHandle.getOrdinalPosition();
+                BlockBuilder blockBuilder = pageBuilder.getBlockBuilder(outputIndex);
+                String value = sourceIndex < rawValues.length ? rawValues[sourceIndex] : null;
                 if (value == null) {
                     blockBuilder.appendNull();
                 }
                 else {
-                    ((VarcharType) columnTypes.get(columnIndex)).writeSlice(blockBuilder, Slices.utf8Slice(value));
+                    ((VarcharType) projectedTypes().get(outputIndex)).writeSlice(blockBuilder, Slices.utf8Slice(value));
                 }
             }
             pageBuilder.declarePosition();
-        }
-
-        @Override
-        protected List<Type> columnTypes() {
-            return columnTypes;
         }
     }
 

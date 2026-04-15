@@ -65,6 +65,7 @@ public final class XmlFormatSupport {
         Set<String> attributeNames = new LinkedHashSet<>();
         Set<String> elementNames = new LinkedHashSet<>();
         boolean includeText = false;
+        boolean foundRow = false;
 
         while (reader.hasNext()) {
             int event = reader.next();
@@ -74,6 +75,7 @@ public final class XmlFormatSupport {
             if (!rowElement.equals(reader.getLocalName())) {
                 continue;
             }
+            foundRow = true;
 
             for (int i = 0; i < reader.getAttributeCount(); i++) {
                 attributeNames.add(reader.getAttributeLocalName(i));
@@ -90,7 +92,7 @@ public final class XmlFormatSupport {
                 }
                 else if (innerEvent == XMLStreamConstants.END_ELEMENT) {
                     if (depth == 1) {
-                        return buildSchema(attributeNames, elementNames, includeText);
+                        break;
                     }
                     depth--;
                 }
@@ -101,7 +103,10 @@ public final class XmlFormatSupport {
                 }
             }
         }
-        throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "Element <" + rowElement + "> not found in " + sourceDescription);
+        if (!foundRow) {
+            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "Element <" + rowElement + "> not found in " + sourceDescription);
+        }
+        return buildSchema(attributeNames, elementNames, includeText);
     }
 
     private static Schema buildSchema(Set<String> attributeNames, Set<String> elementNames, boolean includeText) {

@@ -66,7 +66,7 @@ public final class JsonFormatSupport {
             throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "No JSON object found in " + path);
         }
 
-        return new ColumnsMetadata(new ArrayList<>(columns.keySet()), new ArrayList<>(columns.values()));
+        return new ColumnsMetadata(new ArrayList<>(columns.keySet()), new ArrayList<>(columns.values()), sampledRows);
     }
 
     public static List<ColumnDefinition> parseAdditionalColumns(Map<String, Argument> arguments) {
@@ -170,12 +170,15 @@ public final class JsonFormatSupport {
         return ColumnType.VARCHAR;
     }
 
-    public record ColumnsMetadata(List<String> names, List<ColumnType> types) {
+    public record ColumnsMetadata(List<String> names, List<ColumnType> types, int sampledRows) {
         public ColumnsMetadata {
             names = List.copyOf(requireNonNull(names, "names is null"));
             types = List.copyOf(requireNonNull(types, "types is null"));
             if (names.size() != types.size()) {
                 throw new IllegalArgumentException("Column names and types must have the same size");
+            }
+            if (sampledRows < 0) {
+                throw new IllegalArgumentException("sampledRows must be >= 0");
             }
         }
     }

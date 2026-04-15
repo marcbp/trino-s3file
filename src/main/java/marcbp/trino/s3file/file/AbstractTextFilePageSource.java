@@ -3,9 +3,11 @@ package marcbp.trino.s3file.file;
 import io.airlift.log.Logger;
 import io.trino.spi.Page;
 import io.trino.spi.PageBuilder;
+import io.trino.spi.connector.ConnectorPageSource;
 import io.trino.spi.connector.ConnectorSession;
-import io.trino.spi.function.table.TableFunctionDataProcessor;
-import io.trino.spi.function.table.TableFunctionProcessorState;
+import io.trino.spi.connector.SourcePage;
+import io.trino.spi.type.Type;
+import marcbp.trino.s3file.S3FileColumnHandle;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
 
 import java.io.BufferedReader;
@@ -14,76 +16,80 @@ import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
+import java.util.OptionalLong;
 
 import static java.util.Objects.requireNonNull;
 
-/**
- * Base data processor wiring shared by the S3-backed text table functions.
- *
- * <p>The template orchestrates processing in three stages:
- * <ol>
- *     <li>Reader management – ensuring a reader is open for the current split.</li>
- *     <li>Row production – repeatedly delegating to the subclass to fetch and append records.</li>
- *     <li>Finalisation – handling empty batches, signalling split completion, and transforming exceptions.</li>
- * </ol>
- */
-public abstract class AbstractTextFileProcessor<H extends BaseTextFileHandle>
-        implements TableFunctionDataProcessor {
+public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> implements ConnectorPageSource {
     protected final Logger logger;
     protected final S3ClientBuilder.SessionClient sessionClient;
     protected final H handle;
     protected final FileSplit split;
     protected final Charset charset;
     protected final long primaryLength;
+    protected final List<S3FileColumnHandle> projectedColumns;
+
+    private final List<Type> projectedTypes;
 
     protected BufferedReader reader;
     protected boolean finished;
     protected boolean sessionClosed;
     protected long bytesWithinPrimary;
+    protected long completedPositions;
+    protected long readTimeNanos;
+    protected long skippedRows;
+    protected long pagesProduced;
+    protected long s3Requests;
 
-    protected AbstractTextFileProcessor(
+    protected AbstractTextFilePageSource(
             ConnectorSession session,
             S3ClientBuilder s3ClientBuilder,
             H handle,
-            FileSplit split) {
+            FileSplit split,
+            List<S3FileColumnHandle> projectedColumns) {
         this.logger = Logger.get(getClass());
         this.sessionClient = requireNonNull(s3ClientBuilder, "s3ClientBuilder is null").forSession(session);
         this.handle = requireNonNull(handle, "handle is null");
-        this.split = (split != null) ? split : handle.toWholeFileSplit();
+        this.split = requireNonNull(split, "split is null");
         this.charset = handle.charset();
-        this.primaryLength = this.split.getPrimaryLength();
+        this.primaryLength = split.getPrimaryLength();
+        this.projectedColumns = List.copyOf(requireNonNull(projectedColumns, "projectedColumns is null"));
+        List<Type> allTypes = handle.resolveColumnTypes();
+        this.projectedTypes = this.projectedColumns.stream()
+                .map(column -> allTypes.get(column.getOrdinalPosition()))
+                .toList();
     }
 
-    protected void addBytesWithinPrimary(long delta) {
+    protected final List<Type> projectedTypes() {
+        return projectedTypes;
+    }
+
+    protected final void addBytesWithinPrimary(long delta) {
         bytesWithinPrimary += delta;
     }
 
-    protected BufferedReader reader() {
+    protected final void recordS3Request() {
+        s3Requests++;
+    }
+
+    protected final BufferedReader reader() {
         return reader;
-    }
-
-    private boolean isFinished() {
-        return finished;
-    }
-
-    private void ensureReader() throws IOException {
-        if (reader != null || finished) {
-            return;
-        }
-        if (finishWhenEmptySplit()) {
-            markFinished();
-            return;
-        }
-        reader = openReader();
-        afterReaderOpened(reader);
     }
 
     protected boolean finishWhenEmptySplit() {
         return primaryLength == 0;
     }
 
+    protected void afterReaderOpened(BufferedReader reader) throws IOException {
+        // Default no-op.
+    }
+
+    protected abstract RecordReadResult<?> readNextRecord() throws IOException;
+
+    protected abstract void appendRecord(PageBuilder pageBuilder, Object payload);
+
     protected final BufferedReader openReader() throws IOException {
+        recordS3Request();
         if (split.isWholeFile()) {
             return sessionClient.openReader(
                     handle.getS3Path(),
@@ -100,27 +106,17 @@ public abstract class AbstractTextFileProcessor<H extends BaseTextFileHandle>
                 handle.getETag());
     }
 
-    protected void afterReaderOpened(BufferedReader reader) throws IOException {
-        // Default no-op.
+    private void ensureReader() throws IOException {
+        if (reader != null || finished) {
+            return;
+        }
+        if (finishWhenEmptySplit()) {
+            markFinished();
+            return;
+        }
+        reader = openReader();
+        afterReaderOpened(reader);
     }
-
-    /**
-     * Column types produced by the processor.
-     */
-    protected abstract List<io.trino.spi.type.Type> columnTypes();
-
-    /**
-     * Fetches the next logical record from the underlying representation.
-     * The returned {@link RecordReadResult} indicates whether data should be appended,
-     * skipped, or whether the split has been exhausted.
-     */
-    protected abstract RecordReadResult<?> readNextRecord() throws IOException;
-
-    /**
-     * Appends the supplied payload to the provided {@link PageBuilder}.
-     * The payload is the object returned via {@link RecordReadResult#payload()}.
-     */
-    protected abstract void appendRecord(PageBuilder pageBuilder, Object payload);
 
     protected void closeReader() {
         if (reader == null) {
@@ -131,7 +127,6 @@ public abstract class AbstractTextFileProcessor<H extends BaseTextFileHandle>
         }
         catch (IOException e) {
             logger.warn(e, "Failed to close reader for %s", handle.getS3Path());
-            throw new UncheckedIOException("Failed to close reader for " + handle.getS3Path(), e);
         }
         finally {
             reader = null;
@@ -157,26 +152,43 @@ public abstract class AbstractTextFileProcessor<H extends BaseTextFileHandle>
     }
 
     @Override
-    public final TableFunctionProcessorState process(List<Optional<Page>> unused) {
+    public final long getCompletedBytes() {
+        return Math.min(bytesWithinPrimary, Math.max(0L, primaryLength));
+    }
+
+    @Override
+    public final OptionalLong getCompletedPositions() {
+        return OptionalLong.of(completedPositions);
+    }
+
+    @Override
+    public final long getReadTimeNanos() {
+        return readTimeNanos;
+    }
+
+    @Override
+    public final boolean isFinished() {
+        return finished;
+    }
+
+    @Override
+    public final SourcePage getNextSourcePage() {
+        long startNanos = System.nanoTime();
         try {
-            if (isFinished()) {
-                logger.debug("Split %s already finished for %s", split.getId(), handle.getS3Path());
+            if (finished) {
                 closeSession();
-                return TableFunctionProcessorState.Finished.FINISHED;
+                return null;
             }
             ensureReader();
-            if (isFinished()) {
-                logger.debug("Nothing to process after reader initialisation for %s", handle.getS3Path());
+            if (finished) {
                 closeSession();
-                return TableFunctionProcessorState.Finished.FINISHED;
+                return null;
             }
 
-            logger.debug("Processing split %s for %s", split.getId(), handle.getS3Path());
-            PageBuilder pageBuilder = new PageBuilder(handle.getBatchSize(), columnTypes());
+            PageBuilder pageBuilder = new PageBuilder(handle.getBatchSize(), projectedTypes);
             while (!pageBuilder.isFull()) {
                 RecordReadResult<?> result = readNextRecord();
                 if (result.status() == RecordStatus.END) {
-                    logger.debug("Reached end of split %s for %s", split.getId(), handle.getS3Path());
                     completeProcessing();
                     break;
                 }
@@ -184,37 +196,53 @@ public abstract class AbstractTextFileProcessor<H extends BaseTextFileHandle>
                     addBytesWithinPrimary(result.bytesConsumed());
                 }
                 if (result.status() == RecordStatus.SKIP) {
-                    logger.debug("Skipping record for %s (split %s)", handle.getS3Path(), split.getId());
+                    skippedRows++;
                     continue;
                 }
 
                 appendRecord(pageBuilder, result.payload());
+                completedPositions++;
                 if (result.finishesSplit()) {
-                    logger.debug("Split %s fully processed for %s", split.getId(), handle.getS3Path());
                     completeProcessing();
                     break;
                 }
             }
 
             if (pageBuilder.isEmpty()) {
-                logger.debug("No rows produced for split %s (%s)", split.getId(), handle.getS3Path());
                 markFinished();
-                return TableFunctionProcessorState.Finished.FINISHED;
+                return null;
             }
             Page page = pageBuilder.build();
-            logger.debug("Produced %s rows for split %s (%s)", page.getPositionCount(), split.getId(), handle.getS3Path());
-            return TableFunctionProcessorState.Processed.produced(page);
+            pagesProduced++;
+            return SourcePage.create(page);
         }
         catch (IOException e) {
-            logger.error(e, "I/O error while processing %s", handle.getS3Path());
             closeSession();
             throw new UncheckedIOException("Failed to process data for " + handle.getS3Path(), e);
         }
         catch (RuntimeException e) {
-            logger.error(e, "Runtime error while processing %s", handle.getS3Path());
             closeSession();
             throw e;
         }
+        finally {
+            readTimeNanos += System.nanoTime() - startNanos;
+        }
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return 0;
+    }
+
+    @Override
+    public void close() {
+        if (finished) {
+            closeSession();
+            return;
+        }
+        finished = true;
+        closeReader();
+        closeSession();
     }
 
     public enum RecordStatus {
@@ -223,9 +251,6 @@ public abstract class AbstractTextFileProcessor<H extends BaseTextFileHandle>
         PRODUCE
     }
 
-    /**
-     * Encapsulates the outcome of reading a logical record from the input stream.
-     */
     public static final class RecordReadResult<T> {
         private final RecordStatus status;
         private final T payload;

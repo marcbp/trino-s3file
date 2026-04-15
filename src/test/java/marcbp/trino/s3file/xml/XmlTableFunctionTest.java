@@ -156,6 +156,39 @@ class XmlTableFunctionTest {
     }
 
     @Test
+    void analyzeMergesColumnsAcrossMultipleRows() {
+        when(sessionClient.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
+                new BufferedReader(new StringReader("""
+                        <employees>
+                          <employee id="1">
+                            <firstname>André</firstname>
+                            <lastname>Merlaux</lastname>
+                          </employee>
+                          <employee id="2">
+                            <firstname>Georges</firstname>
+                            <lastname>Préjean</lastname>
+                            <nickname>Moïse</nickname>
+                          </employee>
+                        </employees>
+                        """)));
+        when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(768L, Optional.empty(), Optional.empty()));
+
+        Map<String, Argument> arguments = Map.of(
+                "PATH", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PATH)),
+                "ROW_ELEMENT", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice("employee"))
+        );
+
+        TableFunctionAnalysis analysis = function.analyze(
+                mock(ConnectorSession.class),
+                new ConnectorTransactionHandle() {},
+                arguments,
+                null);
+
+        XmlTableFunction.Handle handle = (XmlTableFunction.Handle) analysis.getHandle();
+        assertEquals(List.of("@id", "firstname", "lastname", "nickname"), handle.columnNames());
+    }
+
+    @Test
     void analyzeHonoursEmptyAsNullFlag() {
         when(sessionClient.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("""

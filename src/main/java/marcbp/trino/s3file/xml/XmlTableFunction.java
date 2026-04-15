@@ -9,6 +9,7 @@ import io.trino.spi.PageBuilder;
 import io.trino.spi.TrinoException;
 import io.trino.spi.block.BlockBuilder;
 import io.trino.spi.connector.ConnectorAccessControl;
+import io.trino.spi.connector.ConnectorPageSource;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorTransactionHandle;
 import io.trino.spi.function.table.AbstractConnectorTableFunction;
@@ -18,16 +19,12 @@ import io.trino.spi.function.table.ReturnTypeSpecification;
 import io.trino.spi.function.table.ScalarArgument;
 import io.trino.spi.function.table.ScalarArgumentSpecification;
 import io.trino.spi.function.table.TableFunctionAnalysis;
-import io.trino.spi.function.table.TableFunctionDataProcessor;
-import io.trino.spi.function.table.TableFunctionProcessorProvider;
-import io.trino.spi.function.table.TableFunctionSplitProcessor;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
-import marcbp.trino.s3file.file.AbstractTextFileProcessor;
+import marcbp.trino.s3file.S3FileColumnHandle;
+import marcbp.trino.s3file.file.AbstractTextFilePageSource;
 import marcbp.trino.s3file.file.BaseTextFileHandle;
-import marcbp.trino.s3file.file.BaseFileProcessorProvider;
 import marcbp.trino.s3file.file.FileSplit;
-import marcbp.trino.s3file.file.FileSplitProcessor;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
 
 import javax.xml.stream.XMLStreamException;
@@ -103,6 +100,7 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         boolean includeText = resolveIncludeText(arguments);
         boolean emptyAsNull = resolveEmptyAsNull(arguments);
         String invalidRowColumn = resolveInvalidRowColumn(arguments);
+        long analyzeStartedAt = System.nanoTime();
 
         XmlFormatSupport.Schema schema;
         S3ClientBuilder.ObjectMetadata metadata;
@@ -143,7 +141,10 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
                         metadata.size(),
                         charset.name(),
                         metadata.eTag().orElse(null),
-                        metadata.versionId().orElse(null)))
+                        metadata.versionId().orElse(null),
+                        1L,
+                        columnNames.size(),
+                        System.nanoTime() - analyzeStartedAt))
                 .build();
     }
 
@@ -209,16 +210,12 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         return new XmlFormatSupport.Schema(filtered);
     }
 
-    public TableFunctionProcessorProvider createProcessorProvider() {
-        return new ProcessorProvider();
-    }
-
     public List<FileSplit> createSplits(Handle handle) {
         return List.of(handle.toWholeFileSplit());
     }
 
-    public TableFunctionSplitProcessor createSplitProcessor(ConnectorSession session, Handle handle, FileSplit split) {
-        return new FileSplitProcessor(new Processor(session, s3ClientBuilder, handle, split));
+    public ConnectorPageSource createPageSource(ConnectorSession session, Handle handle, FileSplit split, List<S3FileColumnHandle> columns) {
+        return new PageSource(session, s3ClientBuilder, handle, split, columns);
     }
 
     public static final class Handle extends BaseTextFileHandle {
@@ -226,6 +223,20 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         private final List<XmlFormatSupport.Column> columns;
         private final boolean emptyAsNull;
         private final String invalidRowColumn;
+
+        public Handle(
+                String s3Path,
+                String rowElement,
+                List<XmlFormatSupport.Column> columns,
+                boolean emptyAsNull,
+                String invalidRowColumn,
+                Integer batchSize,
+                long fileSize,
+                String charsetName,
+                String eTag,
+                String versionId) {
+            this(s3Path, rowElement, columns, emptyAsNull, invalidRowColumn, batchSize, fileSize, charsetName, eTag, versionId, 0L, 0, 0L);
+        }
 
         @JsonCreator
         public Handle(@JsonProperty("s3Path") String s3Path,
@@ -237,7 +248,10 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
                       @JsonProperty("fileSize") long fileSize,
                       @JsonProperty("charset") String charsetName,
                       @JsonProperty("etag") String eTag,
-                      @JsonProperty("versionId") String versionId) {
+                      @JsonProperty("versionId") String versionId,
+                      @JsonProperty("analysisRowsSampled") Long analysisRowsSampled,
+                      @JsonProperty("analysisColumnsDetected") Integer analysisColumnsDetected,
+                      @JsonProperty("analysisTimeNanos") Long analysisTimeNanos) {
             super(
                     s3Path,
                     fileSize,
@@ -245,11 +259,19 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
                     charsetName,
                     batchSize == null ? BaseTextFileHandle.DEFAULT_BATCH_SIZE : batchSize,
                     Optional.ofNullable(eTag),
-                    Optional.ofNullable(versionId));
+                    Optional.ofNullable(versionId),
+                    analysisRowsSampled == null ? 0 : analysisRowsSampled,
+                    analysisColumnsDetected == null ? 0 : analysisColumnsDetected,
+                    analysisTimeNanos == null ? 0 : analysisTimeNanos);
             this.rowElement = requireNonNull(rowElement, "rowElement is null");
             this.columns = List.copyOf(requireNonNull(columns, "columns is null"));
             this.emptyAsNull = emptyAsNull;
             this.invalidRowColumn = invalidRowColumn == null ? "" : invalidRowColumn;
+        }
+
+        @Override
+        public String format() {
+            return "xml";
         }
 
         @JsonProperty
@@ -276,6 +298,7 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
             return !invalidRowColumn.isEmpty();
         }
 
+        @Override
         public List<String> columnNames() {
             List<String> names = new ArrayList<>(columns.size());
             for (XmlFormatSupport.Column column : columns) {
@@ -284,6 +307,7 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
             return names;
         }
 
+        @Override
         public List<Type> resolveColumnTypes() {
             List<Type> types = new ArrayList<>(columns.size());
             for (int i = 0; i < columns.size(); i++) {
@@ -293,34 +317,16 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         }
     }
 
-    private final class ProcessorProvider extends BaseFileProcessorProvider<Handle> {
-        private ProcessorProvider() {
-            super(Handle.class);
-        }
-
-        @Override
-        protected TableFunctionDataProcessor createDataProcessor(ConnectorSession session, Handle handle) {
-            logger.info("Creating XML data processor for %s", handle.getS3Path());
-            return new Processor(session, s3ClientBuilder, handle, null);
-        }
-
-        @Override
-        protected TableFunctionSplitProcessor createSplitProcessor(ConnectorSession session, Handle handle, FileSplit split) {
-            return XmlTableFunction.this.createSplitProcessor(session, handle, split);
-        }
-    }
-
-    private static final class Processor extends AbstractTextFileProcessor<Handle> {
-        private final List<Type> columnTypes;
-        private final XmlFormatSupport.Schema schema;
-        private final boolean emptyAsNull;
+    private static final class PageSource extends AbstractTextFilePageSource<Handle> {
         private XMLStreamReader xmlReader;
 
-        private Processor(ConnectorSession session, S3ClientBuilder s3ClientBuilder, Handle handle, FileSplit split) {
-            super(session, s3ClientBuilder, handle, split);
-            this.columnTypes = handle.resolveColumnTypes();
-            this.schema = new XmlFormatSupport.Schema(handle.getColumns());
-            this.emptyAsNull = handle.isEmptyAsNull();
+        private PageSource(
+                ConnectorSession session,
+                S3ClientBuilder s3ClientBuilder,
+                Handle handle,
+                FileSplit split,
+                List<S3FileColumnHandle> projectedColumns) {
+            super(session, s3ClientBuilder, handle, split, projectedColumns);
         }
 
         @Override
@@ -334,17 +340,12 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         }
 
         @Override
-        protected List<Type> columnTypes() {
-            return columnTypes;
-        }
-
-        @Override
         protected RecordReadResult<?> readNextRecord() throws IOException {
             if (xmlReader == null) {
                 return RecordReadResult.finished();
             }
             try {
-                XmlFormatSupport.RowExtraction row = XmlFormatSupport.readNextRecord(xmlReader, schema, handle.getRowElement(), emptyAsNull);
+                XmlFormatSupport.RowExtraction row = XmlFormatSupport.readNextRecord(xmlReader, new XmlFormatSupport.Schema(handle.getColumns()), handle.getRowElement(), handle.isEmptyAsNull());
                 if (row.done()) {
                     return RecordReadResult.finished();
                 }
@@ -358,14 +359,16 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         @Override
         protected void appendRecord(PageBuilder pageBuilder, Object payload) {
             String[] values = (String[]) payload;
-            for (int columnIndex = 0; columnIndex < values.length; columnIndex++) {
-                BlockBuilder blockBuilder = pageBuilder.getBlockBuilder(columnIndex);
-                String value = values[columnIndex];
+            for (int outputIndex = 0; outputIndex < projectedColumns.size(); outputIndex++) {
+                S3FileColumnHandle columnHandle = projectedColumns.get(outputIndex);
+                int sourceIndex = columnHandle.getOrdinalPosition();
+                BlockBuilder blockBuilder = pageBuilder.getBlockBuilder(outputIndex);
+                String value = values[sourceIndex];
                 if (value == null) {
                     blockBuilder.appendNull();
                 }
                 else {
-                    ((VarcharType) columnTypes.get(columnIndex)).writeSlice(blockBuilder, Slices.utf8Slice(value));
+                    ((VarcharType) projectedTypes().get(outputIndex)).writeSlice(blockBuilder, Slices.utf8Slice(value));
                 }
             }
             pageBuilder.declarePosition();

@@ -1,15 +1,16 @@
 package marcbp.trino.s3file.csv;
 
 import io.airlift.slice.Slices;
+import io.trino.spi.connector.ConnectorPageSource;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorTransactionHandle;
+import io.trino.spi.connector.SourcePage;
 import io.trino.spi.function.table.Argument;
 import io.trino.spi.function.table.Descriptor;
 import io.trino.spi.function.table.ScalarArgument;
 import io.trino.spi.function.table.TableFunctionAnalysis;
-import io.trino.spi.function.table.TableFunctionProcessorState;
-import io.trino.spi.function.table.TableFunctionSplitProcessor;
 import io.trino.spi.type.VarcharType;
+import marcbp.trino.s3file.S3FileColumnHandle;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
 import marcbp.trino.s3file.s3.S3ClientBuilder.ObjectMetadata;
@@ -172,7 +173,7 @@ class CsvTableFunctionTest {
     }
 
     @Test
-    void processorKeepsBoundaryAlignedFirstRowOnNonInitialSplit() throws IOException {
+    void pageSourceKeepsBoundaryAlignedFirstRowOnNonInitialSplit() throws IOException {
         when(sessionClient.readBytes(eq(PATH), eq(9L), eq(10L), any(), any())).thenReturn(new byte[] {'\n'});
         when(sessionClient.openReader(eq(PATH), eq(10L), eq(40L), any(Charset.class), any(), any())).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("3;4\n5;6\n")));
@@ -190,12 +191,24 @@ class CsvTableFunctionTest {
                 null);
         FileSplit split = new FileSplit("split-1", 10, 20, 40, false, false);
 
-        TableFunctionSplitProcessor processor = function.createSplitProcessor(mock(ConnectorSession.class), handle, split);
-        TableFunctionProcessorState state = processor.process();
+        ConnectorPageSource pageSource = function.createPageSource(mock(ConnectorSession.class), handle, split, allColumns(handle));
+        SourcePage page = nextPage(pageSource);
 
-        TableFunctionProcessorState.Processed produced = assertInstanceOf(TableFunctionProcessorState.Processed.class, state);
-        assertEquals(2, produced.getResult().getPositionCount());
-        assertEquals("3", VarcharType.createUnboundedVarcharType().getObjectValue(produced.getResult().getBlock(0), 0));
-        assertEquals("5", VarcharType.createUnboundedVarcharType().getObjectValue(produced.getResult().getBlock(0), 1));
+        assertEquals(2, page.getPositionCount());
+        assertEquals("3", VarcharType.createUnboundedVarcharType().getObjectValue(page.getBlock(0), 0));
+        assertEquals("5", VarcharType.createUnboundedVarcharType().getObjectValue(page.getBlock(0), 1));
+        assertEquals(null, pageSource.getNextSourcePage());
+    }
+
+    private static List<S3FileColumnHandle> allColumns(CsvTableFunction.Handle handle) {
+        return java.util.stream.IntStream.range(0, handle.getColumns().size())
+                .mapToObj(index -> new S3FileColumnHandle(handle.getColumns().get(index), index))
+                .toList();
+    }
+
+    private static SourcePage nextPage(ConnectorPageSource pageSource) {
+        SourcePage page = pageSource.getNextSourcePage();
+        assertInstanceOf(SourcePage.class, page);
+        return page;
     }
 }
