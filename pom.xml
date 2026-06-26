@@ -11,7 +11,7 @@
     <packaging>trino-plugin</packaging>
 
     <properties>
-        <trino.version>480</trino.version>
+        <trino.version>482</trino.version>
         <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <airlift.log.version>336</airlift.log.version>

@@ -95,52 +95,41 @@ public final class S3FileConnector implements Connector {
     private final class InlineSplitManager implements ConnectorSplitManager {
         @Override
         public ConnectorSplitSource getSplits(ConnectorTransactionHandle transactionHandle, ConnectorSession session, io.trino.spi.function.table.ConnectorTableFunctionHandle functionHandle) {
-            if (functionHandle instanceof CsvTableFunction.Handle csvHandle) {
+            return getSplitsForHandle(functionHandle);
+        }
+
+        @Override
+        public ConnectorSplitSource getSplits(
+                ConnectorTransactionHandle transactionHandle,
+                ConnectorSession session,
+                ConnectorTableHandle table,
+                Set<io.trino.spi.connector.ColumnHandle> columns,
+                Constraint constraint) {
+            return getSplitsForHandle(table);
+        }
+
+        private ConnectorSplitSource getSplitsForHandle(Object handle) {
+            if (handle instanceof CsvTableFunction.Handle csvHandle) {
                 List<FileSplit> splits = csvTableFunction.createSplits(csvHandle);
                 LOG.info("Providing %s CSV split(s) for path %s", splits.size(), csvHandle.object().path());
                 return new FixedSplitSource(splits);
             }
-            if (functionHandle instanceof TextTableFunction.Handle textHandle) {
+            if (handle instanceof TextTableFunction.Handle textHandle) {
                 List<FileSplit> splits = textTableFunction.createSplits(textHandle);
                 LOG.info("Providing %s text split(s) for path %s", splits.size(), textHandle.object().path());
                 return new FixedSplitSource(splits);
             }
-            if (functionHandle instanceof JsonTableFunction.Handle jsonHandle) {
+            if (handle instanceof JsonTableFunction.Handle jsonHandle) {
                 List<FileSplit> splits = jsonTableFunction.createSplits(jsonHandle);
                 LOG.info("Providing %s JSON split(s) for path %s", splits.size(), jsonHandle.object().path());
                 return new FixedSplitSource(splits);
             }
-            if (functionHandle instanceof XmlTableFunction.Handle xmlHandle) {
+            if (handle instanceof XmlTableFunction.Handle xmlHandle) {
                 List<FileSplit> splits = xmlTableFunction.createSplits(xmlHandle);
                 LOG.info("Providing %s XML split(s) for path %s", splits.size(), xmlHandle.object().path());
                 return new FixedSplitSource(splits);
             }
-            throw new IllegalArgumentException("Unexpected handle type: " + functionHandle.getClass().getName());
-        }
-
-        @Override
-        public ConnectorSplitSource getSplits(ConnectorTransactionHandle transactionHandle, ConnectorSession session, ConnectorTableHandle table, DynamicFilter dynamicFilter, Constraint constraint) {
-            if (table instanceof CsvTableFunction.Handle csvHandle) {
-                List<FileSplit> splits = csvTableFunction.createSplits(csvHandle);
-                LOG.info("Providing %s CSV split(s) for table scan path %s", splits.size(), csvHandle.object().path());
-                return new FixedSplitSource(splits);
-            }
-            if (table instanceof TextTableFunction.Handle textHandle) {
-                List<FileSplit> splits = textTableFunction.createSplits(textHandle);
-                LOG.info("Providing %s text split(s) for table scan path %s", splits.size(), textHandle.object().path());
-                return new FixedSplitSource(splits);
-            }
-            if (table instanceof JsonTableFunction.Handle jsonHandle) {
-                List<FileSplit> splits = jsonTableFunction.createSplits(jsonHandle);
-                LOG.info("Providing %s JSON split(s) for table scan path %s", splits.size(), jsonHandle.object().path());
-                return new FixedSplitSource(splits);
-            }
-            if (table instanceof XmlTableFunction.Handle xmlHandle) {
-                List<FileSplit> splits = xmlTableFunction.createSplits(xmlHandle);
-                LOG.info("Providing %s XML split(s) for table scan path %s", splits.size(), xmlHandle.object().path());
-                return new FixedSplitSource(splits);
-            }
-            throw new IllegalArgumentException("Unexpected table handle type: " + table.getClass().getName());
+            throw new IllegalArgumentException("Unexpected handle type: " + handle.getClass().getName());
         }
     }
 }
