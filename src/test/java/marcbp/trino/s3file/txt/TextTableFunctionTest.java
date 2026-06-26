@@ -192,6 +192,29 @@ class TextTableFunctionTest {
         verify(sessionClient).openReader(eq(PATH), eq(StandardCharsets.ISO_8859_1), any(), any());
     }
 
+    @Test
+    void pageSourceFlushesProgressBeforeBatchIsFullForLargeRecords() throws IOException {
+        String largeLine = "x".repeat(8 * 1024 * 1024 + 1);
+        String data = largeLine + "\nsmall\n";
+        when(sessionClient.openReader(eq(PATH), eq(StandardCharsets.UTF_8), any(), any())).thenAnswer(invocation ->
+                new BufferedReader(new StringReader(data)));
+
+        TextTableFunction.Handle handle = handle("\n", data.getBytes(StandardCharsets.UTF_8).length, 32, StandardCharsets.UTF_8, null, null);
+
+        ConnectorPageSource pageSource = function.createPageSource(
+                mock(ConnectorSession.class),
+                handle,
+                handle.toWholeFileSplit(),
+                List.of());
+
+        SourcePage firstPage = nextPage(pageSource);
+        SourcePage secondPage = nextPage(pageSource);
+
+        assertEquals(1, firstPage.getPositionCount());
+        assertEquals(1, secondPage.getPositionCount());
+        assertEquals(null, pageSource.getNextSourcePage());
+    }
+
     private static List<S3FileColumnHandle> allColumns(TextTableFunction.Handle handle) {
         return List.of(new S3FileColumnHandle("line", 0));
     }
