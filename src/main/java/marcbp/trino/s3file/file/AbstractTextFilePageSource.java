@@ -187,6 +187,10 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
 
             PageBuilder pageBuilder = new PageBuilder(handle.scan().batchSize(), projectedTypes);
             while (!pageBuilder.isFull()) {
+                if (!split.isLast() && bytesWithinPrimary >= primaryLength) {
+                    completeProcessing();
+                    break;
+                }
                 RecordReadResult<?> result = readNextRecord();
                 if (result.status() == RecordStatus.END) {
                     completeProcessing();

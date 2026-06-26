@@ -246,6 +246,36 @@ class JsonTableFunctionTest {
         assertEquals(null, pageSource.getNextSourcePage());
     }
 
+    @Test
+    void adjacentSplitsDoNotDuplicateRecordStartingAtPrimaryBoundary() throws IOException {
+        String firstRecord = "{\"event_id\":1,\"active\":true}\n";
+        String secondRecord = "{\"event_id\":2,\"active\":false}\n";
+        String content = firstRecord + secondRecord;
+        long firstRecordBytes = firstRecord.getBytes(StandardCharsets.UTF_8).length;
+        long contentBytes = content.getBytes(StandardCharsets.UTF_8).length;
+
+        when(sessionClient.openReader(eq(PATH), eq(0L), eq(contentBytes), any(Charset.class), any(), any())).thenAnswer(invocation ->
+                new BufferedReader(new StringReader(content)));
+        when(sessionClient.readBytes(eq(PATH), eq(firstRecordBytes - 1), eq(firstRecordBytes), any(), any())).thenReturn(new byte[] {'\n'});
+        when(sessionClient.openReader(eq(PATH), eq(firstRecordBytes), eq(contentBytes), any(Charset.class), any(), any())).thenAnswer(invocation ->
+                new BufferedReader(new StringReader(secondRecord)));
+
+        JsonTableFunction.Handle handle = handle(
+                List.of("event_id", "active"),
+                List.of(JsonFormatSupport.ColumnType.BIGINT, JsonFormatSupport.ColumnType.BOOLEAN),
+                contentBytes,
+                (int) firstRecordBytes);
+        FileSplit firstSplit = new FileSplit("split-0", 0, firstRecordBytes, contentBytes, true, false);
+        FileSplit secondSplit = new FileSplit("split-1", firstRecordBytes, contentBytes, contentBytes, false, true);
+
+        int firstSplitRows = countRows(function.createPageSource(mock(ConnectorSession.class), handle, firstSplit, List.of()));
+        int secondSplitRows = countRows(function.createPageSource(mock(ConnectorSession.class), handle, secondSplit, List.of()));
+
+        assertEquals(1, firstSplitRows);
+        assertEquals(1, secondSplitRows);
+        assertEquals(2, firstSplitRows + secondSplitRows);
+    }
+
     private static List<S3FileColumnHandle> allColumns(JsonTableFunction.Handle handle) {
         return java.util.stream.IntStream.range(0, handle.schema().columns().size())
                 .mapToObj(index -> new S3FileColumnHandle(handle.schema().columns().get(index), index))
@@ -264,5 +294,14 @@ class JsonTableFunctionTest {
         SourcePage page = pageSource.getNextSourcePage();
         assertInstanceOf(SourcePage.class, page);
         return page;
+    }
+
+    private static int countRows(ConnectorPageSource pageSource) {
+        int count = 0;
+        SourcePage page;
+        while ((page = pageSource.getNextSourcePage()) != null) {
+            count += page.getPositionCount();
+        }
+        return count;
     }
 }
