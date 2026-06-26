@@ -4,6 +4,7 @@ import io.airlift.log.Logger;
 import io.trino.spi.connector.ConnectorSession;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.AnonymousCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.core.ResponseInputStream;
@@ -122,16 +123,24 @@ public final class S3ClientBuilder implements Closeable {
             throw new IllegalArgumentException("Both s3.access-key and s3.secret-key must be provided together");
         }
 
-        AwsCredentialsProvider credentialsProvider;
-        if (config.accessKey().isPresent()) {
-            logger.info("Using static AWS credentials from connector configuration");
-            credentialsProvider = StaticCredentialsProvider.create(
-                    AwsBasicCredentials.create(config.accessKey().get(), config.secretKey().get()));
-        }
-        else {
-            logger.info("Using AWS default credentials provider chain");
-            credentialsProvider = DefaultCredentialsProvider.builder().build();
-        }
+        AwsCredentialsProvider credentialsProvider = switch (config.authMode()) {
+            case DEFAULT -> {
+                logger.info("Using AWS default credentials provider chain");
+                yield DefaultCredentialsProvider.builder().build();
+            }
+            case STATIC -> {
+                if (config.accessKey().isEmpty() || config.secretKey().isEmpty()) {
+                    throw new IllegalArgumentException("Both s3.access-key and s3.secret-key must be provided for auth mode static");
+                }
+                logger.info("Using static AWS credentials from connector configuration");
+                yield StaticCredentialsProvider.create(
+                        AwsBasicCredentials.create(config.accessKey().get(), config.secretKey().get()));
+            }
+            case ANONYMOUS -> {
+                logger.info("Using anonymous AWS credentials provider");
+                yield AnonymousCredentialsProvider.create();
+            }
+        };
         builder.credentialsProvider(credentialsProvider);
 
         config.interceptorClass().ifPresent(className -> {

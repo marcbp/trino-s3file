@@ -12,6 +12,7 @@ public record S3ClientConfig(
         Optional<String> endpoint,
         Optional<String> accessKey,
         Optional<String> secretKey,
+        AuthMode authMode,
         boolean pathStyleAccess,
         Optional<String> interceptorClass,
         int splitSizeBytes,
@@ -22,6 +23,7 @@ public record S3ClientConfig(
     public static final String ENDPOINT_KEY = "s3.endpoint";
     public static final String ACCESS_KEY_KEY = "s3.access-key";
     public static final String SECRET_KEY_KEY = "s3.secret-key";
+    public static final String AUTH_MODE_KEY = "s3.auth-mode";
     public static final String PATH_STYLE_KEY = "s3.path-style-access";
     public static final String INTERCEPTOR_CLASS_KEY = "s3.interceptor-class";
     public static final String DEFAULT_SPLIT_SIZE_MB_KEY = "s3.default-split-size-mb";
@@ -29,19 +31,20 @@ public record S3ClientConfig(
     public static final String CONNECTION_ACQUISITION_TIMEOUT_KEY = "s3.connection-acquisition-timeout-s";
     public static final int DEFAULT_SPLIT_SIZE_BYTES = 32 * 1024 * 1024;
     public static final int DEFAULT_MAX_CONNECTIONS = 5;
-    public static final Duration DEFAULT_CONNECTION_ACQUISITION_TIMEOUT = Duration.ofSeconds(60);
+    public static final Duration DEFAULT_CONNECTION_ACQUISITION_TIMEOUT = Duration.ofMinutes(5);
 
     public static S3ClientConfig from(Map<String, String> config) {
         String region = optionalValue(config.get(REGION_KEY)).orElse("us-east-1");
         Optional<String> endpoint = optionalValue(config.get(ENDPOINT_KEY));
         Optional<String> accessKey = optionalValue(config.get(ACCESS_KEY_KEY));
         Optional<String> secretKey = optionalValue(config.get(SECRET_KEY_KEY));
+        AuthMode authMode = optionalValue(config.get(AUTH_MODE_KEY)).map(AuthMode::from).orElse(AuthMode.DEFAULT);
         boolean pathStyleAccess = Boolean.parseBoolean(config.getOrDefault(PATH_STYLE_KEY, "true"));
         Optional<String> interceptorClass = optionalValue(config.get(INTERCEPTOR_CLASS_KEY));
         int splitSizeBytes = parseSplitSizeBytes(config.get(DEFAULT_SPLIT_SIZE_MB_KEY));
         int maxConnections = parseMaxConnections(config.get(MAX_CONNECTIONS_KEY));
         Duration connectionAcquisitionTimeout = parseConnectionAcquisitionTimeout(config.get(CONNECTION_ACQUISITION_TIMEOUT_KEY));
-        return new S3ClientConfig(region, endpoint, accessKey, secretKey, pathStyleAccess, interceptorClass, splitSizeBytes, maxConnections, connectionAcquisitionTimeout);
+        return new S3ClientConfig(region, endpoint, accessKey, secretKey, authMode, pathStyleAccess, interceptorClass, splitSizeBytes, maxConnections, connectionAcquisitionTimeout);
     }
 
     public static S3ClientConfig defaults() {
@@ -50,6 +53,7 @@ public record S3ClientConfig(
                 Optional.empty(),
                 Optional.empty(),
                 Optional.empty(),
+                AuthMode.DEFAULT,
                 true,
                 Optional.empty(),
                 DEFAULT_SPLIT_SIZE_BYTES,
@@ -124,5 +128,20 @@ public record S3ClientConfig(
             return Optional.empty();
         }
         return Optional.of(trimmed);
+    }
+
+    public enum AuthMode {
+        DEFAULT,
+        STATIC,
+        ANONYMOUS;
+
+        public static AuthMode from(String value) {
+            try {
+                return AuthMode.valueOf(value.trim().toUpperCase());
+            }
+            catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException("Connector property " + AUTH_MODE_KEY + " must be one of: default, static, anonymous", e);
+            }
+        }
     }
 }
