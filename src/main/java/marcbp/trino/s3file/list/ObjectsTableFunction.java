@@ -42,8 +42,6 @@ import static java.util.Objects.requireNonNull;
 public final class ObjectsTableFunction extends AbstractConnectorTableFunction {
     public static final String CANONICAL_SCHEMA = "list";
     public static final String CANONICAL_NAME = "objects";
-    public static final String LEGACY_SCHEMA = "objects";
-    public static final String LEGACY_NAME = "list";
     private static final String BUCKET_ARGUMENT = "BUCKET";
     private static final String PREFIX_ARGUMENT = "PREFIX";
     private static final String RECURSIVE_ARGUMENT = "RECURSIVE_LISTING";
@@ -73,13 +71,9 @@ public final class ObjectsTableFunction extends AbstractConnectorTableFunction {
     private final Logger logger = Logger.get(ObjectsTableFunction.class);
 
     public ObjectsTableFunction(S3ClientBuilder s3ClientBuilder) {
-        this(s3ClientBuilder, CANONICAL_SCHEMA, CANONICAL_NAME);
-    }
-
-    public ObjectsTableFunction(S3ClientBuilder s3ClientBuilder, String schema, String name) {
         super(
-                schema,
-                name,
+                CANONICAL_SCHEMA,
+                CANONICAL_NAME,
                 List.of(
                         ScalarArgumentSpecification.builder()
                                 .name(BUCKET_ARGUMENT)

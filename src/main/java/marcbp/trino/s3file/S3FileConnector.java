@@ -42,7 +42,6 @@ public final class S3FileConnector implements Connector {
     private final TextTableFunction textTableFunction;
     private final JsonTableFunction jsonTableFunction;
     private final ObjectsTableFunction objectsTableFunction;
-    private final ObjectsTableFunction legacyObjectsTableFunction;
     private final BucketsTableFunction bucketsTableFunction;
     private final XmlTableFunction xmlTableFunction;
     private final ConnectorMetadata metadata;
@@ -59,7 +58,6 @@ public final class S3FileConnector implements Connector {
         this.textTableFunction = new TextTableFunction(s3ClientBuilder, clientConfig.splitSizeBytes());
         this.jsonTableFunction = new JsonTableFunction(s3ClientBuilder, clientConfig.splitSizeBytes());
         this.objectsTableFunction = new ObjectsTableFunction(s3ClientBuilder);
-        this.legacyObjectsTableFunction = new ObjectsTableFunction(s3ClientBuilder, ObjectsTableFunction.LEGACY_SCHEMA, ObjectsTableFunction.LEGACY_NAME);
         this.bucketsTableFunction = new BucketsTableFunction(s3ClientBuilder);
         this.xmlTableFunction = new XmlTableFunction(s3ClientBuilder);
         this.metadata = new S3FileMetadata();
@@ -79,7 +77,7 @@ public final class S3FileConnector implements Connector {
 
     @Override
     public Set<ConnectorTableFunction> getTableFunctions() {
-        return Set.of(csvTableFunction, textTableFunction, jsonTableFunction, objectsTableFunction, legacyObjectsTableFunction, bucketsTableFunction, xmlTableFunction);
+        return Set.of(csvTableFunction, textTableFunction, jsonTableFunction, objectsTableFunction, bucketsTableFunction, xmlTableFunction);
     }
 
     @Override
