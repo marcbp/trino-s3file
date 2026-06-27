@@ -15,23 +15,25 @@ A Trino connector for ad-hoc exploration, validation, or lightweight ingestion o
 ## List S3 buckets
 
 ```sql
-SELECT bucket, creation_date
+SELECT *
 FROM TABLE(s3file.list.buckets())
-ORDER BY bucket;
 ```
 
 The function returns buckets visible to the configured S3 credentials. `creation_date` may be `NULL` for some S3-compatible backends.
 
+**Example output**
+
+| path | bucket | creation_date |
+|------|--------|---------------|
+| s3://mybucket | mybucket | NULL |
+
 ## List S3 objects
 
 ```sql
-SELECT path, size, last_modified
+SELECT *
 FROM TABLE(
     s3file.list.objects(
-        bucket => 'mybucket',
-        prefix => 'data/',
-        recursive_listing => 'false',
-        include_prefixes => 'true'
+        bucket => 'mybucket'
     )
 );
 ```
@@ -39,10 +41,18 @@ FROM TABLE(
 - `bucket` (required): bucket to inspect.
 - `prefix` (optional, default `''`): key prefix to inspect inside the bucket.
 - `recursive_listing` (optional, default `'true'`): list all objects under the prefix when enabled.
-- `include_prefixes` (optional, default `'false'`): include common prefixes as rows when `recursive_listing => 'false'`.
+- `include_prefixes` (optional, default `'false'`): include common prefixes as rows when `recursive_listing` is `false`.
 
 The function handles S3 pagination internally and returns a row per object or prefix. Use SQL `LIMIT` to cap the result set shown to the user.
-`s3file.objects.list` remains available as a legacy alias.
+
+**Example output**
+
+| path | bucket | key | name | parent | size | last_modified | etag | type |
+|------|--------|-----|------|--------|------|---------------|------|------|
+| s3://mybucket/data.csv | mybucket | data.csv | data.csv |  | 128 | NULL | "csv-etag" | object |
+| s3://mybucket/data.jsonl | mybucket | data.jsonl | data.jsonl |  | 214 | NULL | "jsonl-etag" | object |
+| s3://mybucket/data.txt | mybucket | data.txt | data.txt |  | 176 | NULL | "txt-etag" | object |
+| s3://mybucket/data.xml | mybucket | data.xml | data.xml |  | 302 | NULL | "xml-etag" | object |
 
 ## Load JSON files
 
