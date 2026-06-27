@@ -1,4 +1,4 @@
-package marcbp.trino.s3file.objects;
+package marcbp.trino.s3file.list;
 
 import io.airlift.slice.Slices;
 import io.trino.spi.connector.ConnectorPageSource;
@@ -38,7 +38,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class ObjectsTableFunctionTest {
-    private static final String PATH = "s3://bucket/data/";
+    private static final String BUCKET = "bucket";
+    private static final String PREFIX = "data/";
 
     private final S3ClientBuilder s3ClientBuilder = mock(S3ClientBuilder.class);
     private final S3ClientBuilder.SessionClient sessionClient = mock(S3ClientBuilder.SessionClient.class);
@@ -54,7 +55,8 @@ class ObjectsTableFunctionTest {
     @Test
     void analyzeBuildsObjectListingDescriptor() {
         Map<String, Argument> arguments = Map.of(
-                "PATH", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PATH)),
+                "BUCKET", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(BUCKET)),
+                "PREFIX", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PREFIX)),
                 "RECURSIVE_LISTING", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice("false")),
                 "INCLUDE_PREFIXES", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice("true"))
         );
@@ -80,8 +82,8 @@ class ObjectsTableFunctionTest {
         assertEquals(expectedDescriptor, analysis.getReturnedType().orElseThrow());
 
         ObjectsTableFunction.Handle handle = (ObjectsTableFunction.Handle) analysis.getHandle();
-        assertEquals("bucket", handle.bucket());
-        assertEquals("data/", handle.prefix());
+        assertEquals(BUCKET, handle.bucket());
+        assertEquals(PREFIX, handle.prefix());
         assertFalse(handle.recursive());
         assertTrue(handle.includePrefixes());
         assertEquals(List.of("path", "bucket", "key", "name", "parent", "size", "last_modified", "etag", "type"), handle.columnNames());
@@ -98,8 +100,7 @@ class ObjectsTableFunctionTest {
                                 "data/alpha.txt",
                                 12L,
                                 Optional.of(Instant.parse("2026-01-02T03:04:05Z")),
-                                Optional.of("\"etag-1\""),
-                                Optional.of("STANDARD"))),
+                                Optional.of("\"etag-1\""))),
                         List.of(new ListedPrefix("bucket", "data/nested/")),
                         Optional.of("token-1")))
                 .thenReturn(new ListObjectsPage(
@@ -108,8 +109,7 @@ class ObjectsTableFunctionTest {
                                 "data/beta.txt",
                                 34L,
                                 Optional.empty(),
-                                Optional.of("\"etag-2\""),
-                                Optional.empty())),
+                                Optional.of("\"etag-2\""))),
                         List.of(),
                         Optional.empty()));
 
@@ -117,7 +117,8 @@ class ObjectsTableFunctionTest {
                 mock(ConnectorSession.class),
                 new ConnectorTransactionHandle() {},
                 Map.of(
-                        "PATH", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PATH)),
+                        "BUCKET", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(BUCKET)),
+                        "PREFIX", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PREFIX)),
                         "RECURSIVE_LISTING", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice("false")),
                         "INCLUDE_PREFIXES", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice("true"))
                 ),
@@ -134,7 +135,7 @@ class ObjectsTableFunctionTest {
                 new S3FileColumnHandle("etag", 7),
                 new S3FileColumnHandle("type", 8));
 
-        ConnectorPageSource pageSource = function.createPageSource(mock(ConnectorSession.class), handle, ObjectListSplit.INSTANCE, columns);
+        ConnectorPageSource pageSource = function.createPageSource(mock(ConnectorSession.class), handle, ListingSplit.INSTANCE, columns);
         SourcePage page = nextPage(pageSource);
 
         assertEquals(3, page.getPositionCount());

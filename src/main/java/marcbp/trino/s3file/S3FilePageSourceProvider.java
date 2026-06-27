@@ -12,8 +12,9 @@ import io.trino.spi.connector.ConnectorTransactionHandle;
 import marcbp.trino.s3file.csv.CsvTableFunction;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.json.JsonTableFunction;
-import marcbp.trino.s3file.objects.ObjectListSplit;
-import marcbp.trino.s3file.objects.ObjectsTableFunction;
+import marcbp.trino.s3file.list.BucketsTableFunction;
+import marcbp.trino.s3file.list.ListingSplit;
+import marcbp.trino.s3file.list.ObjectsTableFunction;
 import marcbp.trino.s3file.txt.TextTableFunction;
 import marcbp.trino.s3file.xml.XmlTableFunction;
 
@@ -25,6 +26,7 @@ final class S3FilePageSourceProvider implements ConnectorPageSourceProvider {
     private final TextTableFunction textTableFunction;
     private final JsonTableFunction jsonTableFunction;
     private final ObjectsTableFunction objectsTableFunction;
+    private final BucketsTableFunction bucketsTableFunction;
     private final XmlTableFunction xmlTableFunction;
 
     S3FilePageSourceProvider(
@@ -32,11 +34,13 @@ final class S3FilePageSourceProvider implements ConnectorPageSourceProvider {
             TextTableFunction textTableFunction,
             JsonTableFunction jsonTableFunction,
             ObjectsTableFunction objectsTableFunction,
+            BucketsTableFunction bucketsTableFunction,
             XmlTableFunction xmlTableFunction) {
         this.csvTableFunction = csvTableFunction;
         this.textTableFunction = textTableFunction;
         this.jsonTableFunction = jsonTableFunction;
         this.objectsTableFunction = objectsTableFunction;
+        this.bucketsTableFunction = bucketsTableFunction;
         this.xmlTableFunction = xmlTableFunction;
     }
 
@@ -72,10 +76,16 @@ final class S3FilePageSourceProvider implements ConnectorPageSourceProvider {
             return jsonTableFunction.createPageSource(session, jsonHandle, fileSplit, projectedColumns);
         }
         if (table instanceof ObjectsTableFunction.Handle objectsHandle) {
-            if (!(split instanceof ObjectListSplit objectListSplit)) {
+            if (!(split instanceof ListingSplit listingSplit)) {
                 throw new IllegalArgumentException("Unexpected split type: " + split.getClass().getName());
             }
-            return objectsTableFunction.createPageSource(session, objectsHandle, objectListSplit, projectedColumns);
+            return objectsTableFunction.createPageSource(session, objectsHandle, listingSplit, projectedColumns);
+        }
+        if (table instanceof BucketsTableFunction.Handle bucketsHandle) {
+            if (!(split instanceof ListingSplit listingSplit)) {
+                throw new IllegalArgumentException("Unexpected split type: " + split.getClass().getName());
+            }
+            return bucketsTableFunction.createPageSource(session, bucketsHandle, listingSplit, projectedColumns);
         }
         if (table instanceof XmlTableFunction.Handle xmlHandle) {
             if (!(split instanceof FileSplit fileSplit)) {

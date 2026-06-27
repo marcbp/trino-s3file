@@ -9,11 +9,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class S3FileConnectorTest {
     @Test
-    void exposesObjectsListingTableFunction() {
+    void exposesListingTableFunctions() {
         S3FileConnector connector = new S3FileConnector();
 
         Set<ConnectorTableFunction> functions = connector.getTableFunctions();
-        assertTrue(functions.stream().anyMatch(function -> function instanceof marcbp.trino.s3file.objects.ObjectsTableFunction));
+        assertTrue(functions.stream().anyMatch(function -> function instanceof marcbp.trino.s3file.list.ObjectsTableFunction));
+        assertTrue(functions.stream().anyMatch(function -> function instanceof marcbp.trino.s3file.list.BucketsTableFunction));
         connector.shutdown();
     }
 }

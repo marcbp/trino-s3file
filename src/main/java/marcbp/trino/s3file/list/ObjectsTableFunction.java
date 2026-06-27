@@ -1,12 +1,11 @@
-package marcbp.trino.s3file.objects;
+package marcbp.trino.s3file.list;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import io.airlift.log.Logger;
 import io.airlift.slice.Slices;
-import io.trino.spi.PageBuilder;
-import io.trino.spi.block.BlockBuilder;
+import io.trino.spi.TrinoException;
 import io.trino.spi.connector.ConnectorAccessControl;
 import io.trino.spi.connector.ConnectorPageSource;
 import io.trino.spi.connector.ConnectorSession;
@@ -28,26 +27,27 @@ import marcbp.trino.s3file.S3FileColumnHandle;
 import marcbp.trino.s3file.file.AnalysisStats;
 import marcbp.trino.s3file.file.RuntimeTableHandle;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
-import marcbp.trino.s3file.s3.S3UriUtils;
-import marcbp.trino.s3file.s3.S3UriUtils.S3Location;
 
-import java.time.Instant;
-import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.OptionalLong;
-import java.util.Queue;
 
+import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static java.util.Objects.requireNonNull;
 
 /**
  * Table function that lists objects and common prefixes from an S3 bucket or prefix.
  */
 public final class ObjectsTableFunction extends AbstractConnectorTableFunction {
+    public static final String CANONICAL_SCHEMA = "list";
+    public static final String CANONICAL_NAME = "objects";
+    public static final String LEGACY_SCHEMA = "objects";
+    public static final String LEGACY_NAME = "list";
+    private static final String BUCKET_ARGUMENT = "BUCKET";
+    private static final String PREFIX_ARGUMENT = "PREFIX";
     private static final String RECURSIVE_ARGUMENT = "RECURSIVE_LISTING";
     private static final String INCLUDE_PREFIXES_ARGUMENT = "INCLUDE_PREFIXES";
-    private static final int PAGE_BUILDER_BATCH_SIZE = 1024;
     private static final List<String> COLUMN_NAMES = List.of(
             "path",
             "bucket",
@@ -73,11 +73,23 @@ public final class ObjectsTableFunction extends AbstractConnectorTableFunction {
     private final Logger logger = Logger.get(ObjectsTableFunction.class);
 
     public ObjectsTableFunction(S3ClientBuilder s3ClientBuilder) {
+        this(s3ClientBuilder, CANONICAL_SCHEMA, CANONICAL_NAME);
+    }
+
+    public ObjectsTableFunction(S3ClientBuilder s3ClientBuilder, String schema, String name) {
         super(
-                "objects",
-                "list",
+                schema,
+                name,
                 List.of(
-                        marcbp.trino.s3file.util.TableFunctionArguments.pathArgumentSpecification(),
+                        ScalarArgumentSpecification.builder()
+                                .name(BUCKET_ARGUMENT)
+                                .type(VarcharType.VARCHAR)
+                                .build(),
+                        ScalarArgumentSpecification.builder()
+                                .name(PREFIX_ARGUMENT)
+                                .type(VarcharType.VARCHAR)
+                                .defaultValue(Slices.utf8Slice(""))
+                                .build(),
                         ScalarArgumentSpecification.builder()
                                 .name(RECURSIVE_ARGUMENT)
                                 .type(VarcharType.VARCHAR)
@@ -98,27 +110,81 @@ public final class ObjectsTableFunction extends AbstractConnectorTableFunction {
                                          ConnectorTransactionHandle transactionHandle,
                                          Map<String, Argument> arguments,
                                          ConnectorAccessControl accessControl) {
-        String s3Path = marcbp.trino.s3file.util.TableFunctionArguments.requirePath(arguments);
+        String bucket = requireString(arguments, BUCKET_ARGUMENT);
+        String prefix = optionalString(arguments, PREFIX_ARGUMENT, "");
         boolean recursive = parseBoolean(arguments, RECURSIVE_ARGUMENT, true);
         boolean includePrefixes = parseBoolean(arguments, INCLUDE_PREFIXES_ARGUMENT, false);
-        S3Location location = S3UriUtils.parsePrefix(s3Path);
 
-        logger.info("Analyzing objects.list for path %s (recursive=%s, includePrefixes=%s)", s3Path, recursive, includePrefixes);
+        logger.info("Analyzing list.objects for bucket %s and prefix %s (recursive=%s, includePrefixes=%s)", bucket, prefix, recursive, includePrefixes);
 
         Descriptor descriptor = Descriptor.descriptor(COLUMN_NAMES, COLUMN_TYPES);
         return TableFunctionAnalysis.builder()
                 .returnedType(descriptor)
                 .handle(new Handle(
-                        location.bucket(),
-                        location.key(),
+                        bucket,
+                        prefix,
                         recursive,
                         includePrefixes,
                         new AnalysisStats(0L, COLUMN_NAMES.size(), 0L)))
                 .build();
     }
 
-    public ConnectorPageSource createPageSource(ConnectorSession session, Handle handle, ObjectListSplit split, List<S3FileColumnHandle> columns) {
-        return new PageSource(session, s3ClientBuilder, handle, columns);
+    public ConnectorPageSource createPageSource(ConnectorSession session, Handle handle, ListingSplit split, List<S3FileColumnHandle> columns) {
+        return new ListingPageSource(
+                session,
+                s3ClientBuilder,
+                (sessionClient, continuationToken) -> {
+                    S3ClientBuilder.ListObjectsPage page = sessionClient.listObjects(handle.bucket(), handle.prefix(), handle.recursive(), continuationToken);
+                    List<ListingRow> rows = new ArrayList<>(page.objects().size() + (handle.includePrefixes() ? page.prefixes().size() : 0));
+                    for (S3ClientBuilder.ListedObject object : page.objects()) {
+                        rows.add(Row.object(object));
+                    }
+                    if (handle.includePrefixes()) {
+                        for (S3ClientBuilder.ListedPrefix prefix : page.prefixes()) {
+                            rows.add(Row.prefix(prefix));
+                        }
+                    }
+                    return new ListingPage(rows, page.nextContinuationToken());
+                },
+                columns,
+                handle.resolveColumnTypes());
+    }
+
+    private static String requireString(Map<String, Argument> arguments, String name) {
+        ScalarArgument arg = (ScalarArgument) arguments.get(name);
+        if (arg == null) {
+            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "Argument " + name + " is required");
+        }
+        String value = argumentStringValue(arg, name);
+        if (value.isBlank()) {
+            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, name + " cannot be blank");
+        }
+        if (value.startsWith("s3://")) {
+            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, name + " must not include an s3:// URI");
+        }
+        return value;
+    }
+
+    private static String optionalString(Map<String, Argument> arguments, String name, String defaultValue) {
+        ScalarArgument arg = (ScalarArgument) arguments.get(name);
+        if (arg == null) {
+            return defaultValue;
+        }
+        String value = argumentStringValue(arg, name);
+        if (value.startsWith("s3://")) {
+            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, name + " must not include an s3:// URI");
+        }
+        if (value.startsWith("/")) {
+            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, name + " must not start with /");
+        }
+        return value;
+    }
+
+    private static String argumentStringValue(ScalarArgument arg, String name) {
+        if (!(arg.getValue() instanceof io.airlift.slice.Slice slice)) {
+            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, name + " must be a string");
+        }
+        return slice.toStringUtf8();
     }
 
     private static boolean parseBoolean(Map<String, Argument> arguments, String name, boolean defaultValue) {
@@ -198,173 +264,6 @@ public final class ObjectsTableFunction extends AbstractConnectorTableFunction {
         }
     }
 
-    private static final class PageSource implements ConnectorPageSource {
-        private final S3ClientBuilder.SessionClient sessionClient;
-        private final Handle handle;
-        private final List<S3FileColumnHandle> projectedColumns;
-        private final List<Type> projectedTypes;
-        private final Queue<Row> buffer = new ArrayDeque<>();
-        private String continuationToken;
-        private boolean exhausted;
-        private boolean finished;
-        private boolean closed;
-        private boolean sessionClosed;
-        private long completedPositions;
-        private long readTimeNanos;
-        private long pagesProduced;
-
-        private PageSource(ConnectorSession session, S3ClientBuilder s3ClientBuilder, Handle handle, List<S3FileColumnHandle> projectedColumns) {
-            this.sessionClient = requireNonNull(s3ClientBuilder, "s3ClientBuilder is null").forSession(session);
-            this.handle = requireNonNull(handle, "handle is null");
-            this.projectedColumns = List.copyOf(requireNonNull(projectedColumns, "projectedColumns is null"));
-            List<Type> allTypes = handle.resolveColumnTypes();
-            this.projectedTypes = this.projectedColumns.stream()
-                    .map(column -> allTypes.get(column.getOrdinalPosition()))
-                    .toList();
-        }
-
-        @Override
-        public long getCompletedBytes() {
-            return 0;
-        }
-
-        @Override
-        public OptionalLong getCompletedPositions() {
-            return OptionalLong.of(completedPositions);
-        }
-
-        @Override
-        public long getReadTimeNanos() {
-            return readTimeNanos;
-        }
-
-        @Override
-        public boolean isFinished() {
-            return finished;
-        }
-
-        @Override
-        public io.trino.spi.connector.SourcePage getNextSourcePage() {
-            long startNanos = System.nanoTime();
-            try {
-                if (finished) {
-                    closeSession();
-                    return null;
-                }
-
-                PageBuilder pageBuilder = new PageBuilder(PAGE_BUILDER_BATCH_SIZE, projectedTypes);
-                while (!pageBuilder.isFull()) {
-                if (buffer.isEmpty()) {
-                        if (!fetchNextBatch()) {
-                            break;
-                        }
-                        if (buffer.isEmpty()) {
-                            continue;
-                        }
-                    }
-                    Row row = buffer.poll();
-                    if (row == null) {
-                        continue;
-                    }
-                    appendRow(pageBuilder, row);
-                    completedPositions++;
-                }
-
-                if (pageBuilder.isEmpty()) {
-                    markFinished();
-                    return null;
-                }
-
-                pagesProduced++;
-                return io.trino.spi.connector.SourcePage.create(pageBuilder.build());
-            }
-            catch (RuntimeException e) {
-                closeSession();
-                throw e;
-            }
-            finally {
-                readTimeNanos += System.nanoTime() - startNanos;
-            }
-        }
-
-        @Override
-        public long getMemoryUsage() {
-            return 0;
-        }
-
-        @Override
-        public void close() {
-            if (closed) {
-                return;
-            }
-            closed = true;
-            finished = true;
-            closeSession();
-        }
-
-        private boolean fetchNextBatch() {
-            if (finished || exhausted) {
-                return false;
-            }
-
-            S3ClientBuilder.ListObjectsPage page = sessionClient.listObjects(handle.bucket(), handle.prefix(), handle.recursive(), Optional.ofNullable(continuationToken));
-            for (S3ClientBuilder.ListedObject object : page.objects()) {
-                buffer.add(Row.object(object));
-            }
-            if (handle.includePrefixes()) {
-                for (S3ClientBuilder.ListedPrefix prefix : page.prefixes()) {
-                    buffer.add(Row.prefix(prefix));
-                }
-            }
-            continuationToken = page.nextContinuationToken().orElse(null);
-            if (continuationToken == null) {
-                exhausted = true;
-            }
-            if (buffer.isEmpty() && exhausted) {
-                finished = true;
-                closeSession();
-                return false;
-            }
-            return true;
-        }
-
-        private void appendRow(PageBuilder pageBuilder, Row row) {
-            for (int outputIndex = 0; outputIndex < projectedColumns.size(); outputIndex++) {
-                S3FileColumnHandle columnHandle = projectedColumns.get(outputIndex);
-                BlockBuilder blockBuilder = pageBuilder.getBlockBuilder(outputIndex);
-                Object value = row.valueFor(columnHandle.getName());
-                if (value == null) {
-                    blockBuilder.appendNull();
-                    continue;
-                }
-                Type type = projectedTypes.get(outputIndex);
-                if (type == BigintType.BIGINT) {
-                    BigintType.BIGINT.writeLong(blockBuilder, (Long) value);
-                }
-                else if (type == TimestampWithTimeZoneType.TIMESTAMP_TZ_MILLIS) {
-                    TimestampWithTimeZoneType.TIMESTAMP_TZ_MILLIS.writeLong(blockBuilder, (Long) value);
-                }
-                else {
-                    VarcharType.createUnboundedVarcharType().writeSlice(blockBuilder, Slices.utf8Slice(value.toString()));
-                }
-            }
-            pageBuilder.declarePosition();
-        }
-
-        private void markFinished() {
-            finished = true;
-            closeSession();
-        }
-
-        private void closeSession() {
-            if (sessionClosed) {
-                return;
-            }
-            sessionClosed = true;
-            sessionClient.close();
-        }
-    }
-
     private record Row(
             String path,
             String bucket,
@@ -374,7 +273,8 @@ public final class ObjectsTableFunction extends AbstractConnectorTableFunction {
             Long size,
             Long lastModified,
             String etag,
-            String type) {
+            String type)
+            implements ListingRow {
         static Row object(S3ClientBuilder.ListedObject object) {
             return new Row(
                     object.path(),
@@ -401,7 +301,8 @@ public final class ObjectsTableFunction extends AbstractConnectorTableFunction {
                     "prefix");
         }
 
-        Object valueFor(String columnName) {
+        @Override
+        public Object valueFor(String columnName) {
             return switch (columnName) {
                 case "path" -> path;
                 case "bucket" -> bucket;

@@ -1,23 +1,23 @@
-package marcbp.trino.s3file.objects;
+package marcbp.trino.s3file.list;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import io.trino.spi.connector.ConnectorSplit;
 
 /**
- * Single split used by the S3 object listing table function.
+ * Single split used by S3 listing table functions.
  */
-public final class ObjectListSplit implements ConnectorSplit {
-    public static final ObjectListSplit INSTANCE = new ObjectListSplit();
+public final class ListingSplit implements ConnectorSplit {
+    public static final ListingSplit INSTANCE = new ListingSplit();
 
     private final boolean singleton;
 
     @JsonCreator
-    public ObjectListSplit(@JsonProperty("singleton") boolean singleton) {
+    public ListingSplit(@JsonProperty("singleton") boolean singleton) {
         this.singleton = singleton;
     }
 
-    public ObjectListSplit() {
+    public ListingSplit() {
         this(true);
     }
 

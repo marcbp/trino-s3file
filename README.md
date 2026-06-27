@@ -9,25 +9,39 @@ A Trino connector for ad-hoc exploration, validation, or lightweight ingestion o
 - **Distributed processing**: workers stream byte ranges concurrently so oversized files stay readable.
 - **Request-scoped S3 clients**: each user query gets its own S3 client per worker, with interceptor-based customization and reuse across all splits.
 - **Snapshot safety**: object versions or ETags are pinned to avoid mixing data when objects change mid-scan.
+- **Bucket and object listing**: explore S3 buckets and prefixes directly from SQL.
+
+## List S3 buckets
+
+```sql
+SELECT bucket, creation_date
+FROM TABLE(s3file.list.buckets())
+ORDER BY bucket;
+```
+
+The function returns buckets visible to the configured S3 credentials. `creation_date` may be `NULL` for some S3-compatible backends.
 
 ## List S3 objects
 
 ```sql
 SELECT path, size, last_modified
 FROM TABLE(
-    s3file.objects.list(
-        path => 's3://mybucket/data/',
+    s3file.list.objects(
+        bucket => 'mybucket',
+        prefix => 'data/',
         recursive_listing => 'false',
         include_prefixes => 'true'
     )
 );
 ```
 
-- `path` (required): bucket root or prefix to inspect.
+- `bucket` (required): bucket to inspect.
+- `prefix` (optional, default `''`): key prefix to inspect inside the bucket.
 - `recursive_listing` (optional, default `'true'`): list all objects under the prefix when enabled.
 - `include_prefixes` (optional, default `'false'`): include common prefixes as rows when `recursive_listing => 'false'`.
 
 The function handles S3 pagination internally and returns a row per object or prefix. Use SQL `LIMIT` to cap the result set shown to the user.
+`s3file.objects.list` remains available as a legacy alias.
 
 ## Load JSON files
 

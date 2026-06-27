@@ -21,6 +21,8 @@ import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
+import software.amazon.awssdk.services.s3.model.Bucket;
+import software.amazon.awssdk.services.s3.model.ListBucketsResponse;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.S3Object;
@@ -97,6 +99,12 @@ public final class S3ClientBuilder implements Closeable {
             List<ListedObject> objects,
             List<ListedPrefix> prefixes,
             Optional<String> nextContinuationToken) {}
+
+    public record ListedBucket(String name, Optional<Instant> creationDate) {
+        public String path() {
+            return "s3://" + name;
+        }
+    }
 
     private final Logger logger = Logger.get(S3ClientBuilder.class);
     private final S3ClientConfig config;
@@ -302,6 +310,17 @@ public final class S3ClientBuilder implements Closeable {
 
         public long getObjectSize(String s3Uri) {
             return getObjectMetadata(s3Uri).size();
+        }
+
+        public List<ListedBucket> listBuckets() {
+            ListBucketsResponse response = entry.client.listBuckets();
+            List<ListedBucket> buckets = new ArrayList<>(response.buckets().size());
+            for (Bucket bucket : response.buckets()) {
+                buckets.add(new ListedBucket(
+                        bucket.name(),
+                        Optional.ofNullable(bucket.creationDate())));
+            }
+            return List.copyOf(buckets);
         }
 
         public ListObjectsPage listObjects(String bucket, String prefix, boolean recursive, Optional<String> continuationToken) {
