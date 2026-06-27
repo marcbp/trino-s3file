@@ -4,32 +4,22 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import io.trino.spi.connector.ConnectorSplit;
 
-import java.util.Objects;
+import static java.util.Objects.requireNonNull;
 
 /**
  * Generic file-based split shared by the S3 table functions.
  */
-public final class FileSplit implements ConnectorSplit {
-    private final String id;
-    private final long startOffset;
-    private final long primaryEndOffset;
-    private final long rangeEndExclusive;
-    private final boolean first;
-    private final boolean last;
-
+public record FileSplit(
+        @JsonProperty("id") String id,
+        @JsonProperty("startOffset") long startOffset,
+        @JsonProperty("primaryEndOffset") long primaryEndOffset,
+        @JsonProperty("rangeEndExclusive") long rangeEndExclusive,
+        @JsonProperty("first") boolean first,
+        @JsonProperty("last") boolean last)
+        implements ConnectorSplit {
     @JsonCreator
-    public FileSplit(@JsonProperty("id") String id,
-                     @JsonProperty("startOffset") long startOffset,
-                     @JsonProperty("primaryEndOffset") long primaryEndOffset,
-                     @JsonProperty("rangeEndExclusive") long rangeEndExclusive,
-                     @JsonProperty("first") boolean first,
-                     @JsonProperty("last") boolean last) {
-        this.id = Objects.requireNonNull(id, "id is null");
-        this.startOffset = startOffset;
-        this.primaryEndOffset = primaryEndOffset;
-        this.rangeEndExclusive = rangeEndExclusive;
-        this.first = first;
-        this.last = last;
+    public FileSplit {
+        id = requireNonNull(id, "id is null");
     }
 
     public static FileSplit forWholeFile(long size) {

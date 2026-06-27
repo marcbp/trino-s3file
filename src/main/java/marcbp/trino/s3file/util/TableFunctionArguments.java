@@ -49,19 +49,62 @@ public final class TableFunctionArguments {
     }
 
     public static String requirePath(Map<String, Argument> arguments) {
-        ScalarArgument pathArgument = (ScalarArgument) arguments.get(PATH_ARGUMENT);
-        if (pathArgument == null) {
-            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "Argument PATH is required");
-        }
-        Object rawValue = pathArgument.getValue();
-        if (!(rawValue instanceof Slice slice)) {
-            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "PATH must be a string");
-        }
-        String s3Path = slice.toStringUtf8();
+        String s3Path = requireString(arguments, PATH_ARGUMENT);
         if (s3Path.isBlank()) {
             throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "PATH cannot be blank");
         }
         return s3Path;
+    }
+
+    public static String requireString(Map<String, Argument> arguments, String name) {
+        ScalarArgument argument = scalarArgument(arguments, name);
+        if (argument == null) {
+            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "Argument " + name + " is required");
+        }
+        return stringValue(argument, name);
+    }
+
+    public static String optionalString(Map<String, Argument> arguments, String name, String defaultValue) {
+        ScalarArgument argument = scalarArgument(arguments, name);
+        if (argument == null) {
+            return defaultValue;
+        }
+        return stringValue(argument, name);
+    }
+
+    public static boolean optionalBoolean(Map<String, Argument> arguments, String name, boolean defaultValue) {
+        ScalarArgument argument = scalarArgument(arguments, name);
+        if (argument == null) {
+            return defaultValue;
+        }
+        String text = stringValue(argument, name).trim();
+        if (text.isEmpty()) {
+            return defaultValue;
+        }
+        return switch (text.toLowerCase(java.util.Locale.ROOT)) {
+            case "true" -> true;
+            case "false" -> false;
+            default -> throw new TrinoException(INVALID_FUNCTION_ARGUMENT, name + " must be true or false");
+        };
+    }
+
+    public static ScalarArgument scalarArgument(Map<String, Argument> arguments, String name) {
+        Argument argument = arguments.get(name);
+        if (argument == null) {
+            return null;
+        }
+        if (!(argument instanceof ScalarArgument scalarArgument)) {
+            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, name + " must be a scalar argument");
+        }
+        return scalarArgument;
+    }
+
+    public static String stringValue(ScalarArgument argument, String name) {
+        Object rawValue = argument.getValue();
+        if (!(rawValue instanceof Slice slice)) {
+            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, name + " must be a string");
+        }
+        return slice.toStringUtf8();
     }
 
     public static Charset resolveEncoding(Map<String, Argument> arguments) {

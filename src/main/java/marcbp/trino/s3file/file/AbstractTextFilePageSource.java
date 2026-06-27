@@ -15,7 +15,6 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 import java.util.List;
-import java.util.Objects;
 import java.util.OptionalLong;
 
 import static java.util.Objects.requireNonNull;
@@ -189,29 +188,35 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
 
             PageBuilder pageBuilder = new PageBuilder(handle.scan().batchSize(), projectedTypes);
             long pageStartBytes = bytesWithinPrimary;
+            recordLoop:
             while (!pageBuilder.isFull()) {
                 if (!split.isLast() && bytesWithinPrimary >= primaryLength) {
                     completeProcessing();
                     break;
                 }
-                RecordReadResult<?> result = readNextRecord();
-                if (result.status() == RecordStatus.END) {
-                    completeProcessing();
-                    break;
-                }
-                if (result.bytesConsumed() > 0) {
-                    addBytesWithinPrimary(result.bytesConsumed());
-                }
-                if (result.status() == RecordStatus.SKIP) {
-                    skippedRows++;
-                    continue;
-                }
-
-                appendRecord(pageBuilder, result.payload());
-                completedPositions++;
-                if (result.finishesSplit()) {
-                    completeProcessing();
-                    break;
+                switch (readNextRecord()) {
+                    case RecordReadResult.End<?> ignored -> {
+                        completeProcessing();
+                        break recordLoop;
+                    }
+                    case RecordReadResult.Skip<?> skipped -> {
+                        if (skipped.bytesConsumed() > 0) {
+                            addBytesWithinPrimary(skipped.bytesConsumed());
+                        }
+                        skippedRows++;
+                        continue;
+                    }
+                    case RecordReadResult.Produce<?> produced -> {
+                        if (produced.bytesConsumed() > 0) {
+                            addBytesWithinPrimary(produced.bytesConsumed());
+                        }
+                        appendRecord(pageBuilder, produced.payload());
+                        completedPositions++;
+                        if (produced.finishesSplit()) {
+                            completeProcessing();
+                            break recordLoop;
+                        }
+                    }
                 }
                 if (bytesWithinPrimary - pageStartBytes >= TARGET_PAGE_BYTES) {
                     break;
@@ -255,52 +260,28 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
         closeSession();
     }
 
-    public enum RecordStatus {
-        END,
-        SKIP,
-        PRODUCE
-    }
-
-    public static final class RecordReadResult<T> {
-        private final RecordStatus status;
-        private final T payload;
-        private final long bytesConsumed;
-        private final boolean finishesSplit;
-
-        private RecordReadResult(RecordStatus status, T payload, long bytesConsumed, boolean finishesSplit) {
-            this.status = status;
-            this.payload = payload;
-            this.bytesConsumed = bytesConsumed;
-            this.finishesSplit = finishesSplit;
+    public sealed interface RecordReadResult<T>
+            permits RecordReadResult.End, RecordReadResult.Skip, RecordReadResult.Produce {
+        static RecordReadResult<?> finished() {
+            return new End<>();
         }
 
-        public static RecordReadResult<?> finished() {
-            return new RecordReadResult<>(RecordStatus.END, null, 0, false);
+        static <T> RecordReadResult<T> skip(long bytesConsumed) {
+            return new Skip<>(bytesConsumed);
         }
 
-        public static <T> RecordReadResult<T> skip(long bytesConsumed) {
-            return new RecordReadResult<>(RecordStatus.SKIP, null, bytesConsumed, false);
+        static <T> RecordReadResult<T> produce(T payload, long bytesConsumed, boolean finishesSplit) {
+            return new Produce<>(requireNonNull(payload, "payload is null"), bytesConsumed, finishesSplit);
         }
 
-        public static <T> RecordReadResult<T> produce(T payload, long bytesConsumed, boolean finishesSplit) {
-            Objects.requireNonNull(payload, "payload is null");
-            return new RecordReadResult<>(RecordStatus.PRODUCE, payload, bytesConsumed, finishesSplit);
-        }
+        record End<T>() implements RecordReadResult<T> {}
 
-        public RecordStatus status() {
-            return status;
-        }
+        record Skip<T>(long bytesConsumed) implements RecordReadResult<T> {}
 
-        public T payload() {
-            return payload;
-        }
-
-        public long bytesConsumed() {
-            return bytesConsumed;
-        }
-
-        public boolean finishesSplit() {
-            return finishesSplit;
+        record Produce<T>(T payload, long bytesConsumed, boolean finishesSplit) implements RecordReadResult<T> {
+            public Produce {
+                payload = requireNonNull(payload, "payload is null");
+            }
         }
     }
 }

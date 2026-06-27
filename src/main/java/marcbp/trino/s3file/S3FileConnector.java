@@ -116,35 +116,38 @@ public final class S3FileConnector implements Connector {
         }
 
         private ConnectorSplitSource getSplitsForHandle(Object handle) {
-            if (handle instanceof CsvTableFunction.Handle csvHandle) {
-                List<FileSplit> splits = csvTableFunction.createSplits(csvHandle);
-                LOG.info("Providing %s CSV split(s) for path %s", splits.size(), csvHandle.object().path());
-                return new FixedSplitSource(splits);
-            }
-            if (handle instanceof TextTableFunction.Handle textHandle) {
-                List<FileSplit> splits = textTableFunction.createSplits(textHandle);
-                LOG.info("Providing %s text split(s) for path %s", splits.size(), textHandle.object().path());
-                return new FixedSplitSource(splits);
-            }
-            if (handle instanceof JsonTableFunction.Handle jsonHandle) {
-                List<FileSplit> splits = jsonTableFunction.createSplits(jsonHandle);
-                LOG.info("Providing %s JSON split(s) for path %s", splits.size(), jsonHandle.object().path());
-                return new FixedSplitSource(splits);
-            }
-            if (handle instanceof ObjectsTableFunction.Handle objectsHandle) {
-                LOG.info("Providing 1 objects split for bucket %s and prefix %s", objectsHandle.bucket(), objectsHandle.prefix());
-                return new FixedSplitSource(List.of(ListingSplit.INSTANCE));
-            }
-            if (handle instanceof BucketsTableFunction.Handle) {
-                LOG.info("Providing 1 buckets split");
-                return new FixedSplitSource(List.of(ListingSplit.INSTANCE));
-            }
-            if (handle instanceof XmlTableFunction.Handle xmlHandle) {
-                List<FileSplit> splits = xmlTableFunction.createSplits(xmlHandle);
-                LOG.info("Providing %s XML split(s) for path %s", splits.size(), xmlHandle.object().path());
-                return new FixedSplitSource(splits);
-            }
-            throw new IllegalArgumentException("Unexpected handle type: " + handle.getClass().getName());
+            return switch (handle) {
+                case CsvTableFunction.Handle csvHandle -> fixedFileSplits(
+                        csvTableFunction.createSplits(csvHandle),
+                        "CSV",
+                        csvHandle.object().path());
+                case TextTableFunction.Handle textHandle -> fixedFileSplits(
+                        textTableFunction.createSplits(textHandle),
+                        "text",
+                        textHandle.object().path());
+                case JsonTableFunction.Handle jsonHandle -> fixedFileSplits(
+                        jsonTableFunction.createSplits(jsonHandle),
+                        "JSON",
+                        jsonHandle.object().path());
+                case ObjectsTableFunction.Handle objectsHandle -> {
+                    LOG.info("Providing 1 objects split for bucket %s and prefix %s", objectsHandle.bucket(), objectsHandle.prefix());
+                    yield new FixedSplitSource(List.of(ListingSplit.INSTANCE));
+                }
+                case BucketsTableFunction.Handle ignored -> {
+                    LOG.info("Providing 1 buckets split");
+                    yield new FixedSplitSource(List.of(ListingSplit.INSTANCE));
+                }
+                case XmlTableFunction.Handle xmlHandle -> fixedFileSplits(
+                        xmlTableFunction.createSplits(xmlHandle),
+                        "XML",
+                        xmlHandle.object().path());
+                default -> throw new IllegalArgumentException("Unexpected handle type: " + handle.getClass().getName());
+            };
+        }
+
+        private ConnectorSplitSource fixedFileSplits(List<FileSplit> splits, String format, String path) {
+            LOG.info("Providing %s %s split(s) for path %s", splits.size(), format, path);
+            return new FixedSplitSource(splits);
         }
     }
 }

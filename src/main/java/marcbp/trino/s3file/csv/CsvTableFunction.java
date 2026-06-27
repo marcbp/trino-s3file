@@ -3,7 +3,6 @@ package marcbp.trino.s3file.csv;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.opencsv.CSVParser;
-import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
 import io.trino.spi.PageBuilder;
 import io.trino.spi.block.BlockBuilder;
@@ -14,7 +13,6 @@ import io.trino.spi.function.table.AbstractConnectorTableFunction;
 import io.trino.spi.function.table.Argument;
 import io.trino.spi.function.table.Descriptor;
 import io.trino.spi.function.table.ReturnTypeSpecification;
-import io.trino.spi.function.table.ScalarArgument;
 import io.trino.spi.function.table.ScalarArgumentSpecification;
 import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.type.Type;
@@ -41,6 +39,8 @@ import java.util.Map;
 
 import static java.util.Objects.requireNonNull;
 import static marcbp.trino.s3file.util.TableFunctionArguments.encodingArgumentSpecification;
+import static marcbp.trino.s3file.util.TableFunctionArguments.optionalBoolean;
+import static marcbp.trino.s3file.util.TableFunctionArguments.optionalString;
 import static marcbp.trino.s3file.util.TableFunctionArguments.pathArgumentSpecification;
 import static marcbp.trino.s3file.util.TableFunctionArguments.requirePath;
 import static marcbp.trino.s3file.util.TableFunctionArguments.resolveEncoding;
@@ -96,19 +96,10 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
         int splitSizeBytes = resolveSplitSizeBytes(arguments, defaultSplitSizeBytes);
         long analyzeStartedAt = System.nanoTime();
 
-        char delimiter = ';';
-        ScalarArgument delimiterArg = (ScalarArgument) arguments.get(DELIMITER_ARGUMENT);
-        if (delimiterArg != null && delimiterArg.getValue() instanceof Slice delimiterSlice && delimiterSlice.length() > 0) {
-            delimiter = (char) delimiterSlice.getByte(0);
-        }
+        char delimiter = resolveDelimiter(arguments);
 
         logger.info("Analyzing load table function for path %s with delimiter %s", s3Path, delimiter);
-        boolean headerPresent = true;
-        ScalarArgument headerArg = (ScalarArgument) arguments.get("HEADER");
-        if (headerArg != null && headerArg.getValue() instanceof Slice headerSlice) {
-            String headerText = headerSlice.toStringUtf8();
-            headerPresent = Boolean.parseBoolean(headerText.trim());
-        }
+        boolean headerPresent = optionalBoolean(arguments, "HEADER", true);
         logger.info("Header present: %s", headerPresent);
 
         List<String> columnNames;
@@ -138,6 +129,16 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                         new CsvSchema(columnNames),
                         new CsvOptions(delimiter, headerPresent)))
                 .build();
+    }
+
+    private static char resolveDelimiter(Map<String, Argument> arguments) {
+        String delimiter = optionalString(arguments, DELIMITER_ARGUMENT, ";");
+        if (delimiter.length() != 1) {
+            throw new io.trino.spi.TrinoException(
+                    io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT,
+                    "DELIMITER must be a single character");
+        }
+        return delimiter.charAt(0);
     }
 
     public List<FileSplit> createSplits(Handle handle) {

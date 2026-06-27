@@ -3,7 +3,6 @@ package marcbp.trino.s3file.xml;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import io.airlift.log.Logger;
-import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
 import io.trino.spi.PageBuilder;
 import io.trino.spi.TrinoException;
@@ -16,7 +15,6 @@ import io.trino.spi.function.table.AbstractConnectorTableFunction;
 import io.trino.spi.function.table.Argument;
 import io.trino.spi.function.table.Descriptor;
 import io.trino.spi.function.table.ReturnTypeSpecification;
-import io.trino.spi.function.table.ScalarArgument;
 import io.trino.spi.function.table.ScalarArgumentSpecification;
 import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.type.Type;
@@ -43,6 +41,8 @@ import java.util.Map;
 import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static java.util.Objects.requireNonNull;
 import static marcbp.trino.s3file.util.TableFunctionArguments.encodingArgumentSpecification;
+import static marcbp.trino.s3file.util.TableFunctionArguments.optionalBoolean;
+import static marcbp.trino.s3file.util.TableFunctionArguments.optionalString;
 import static marcbp.trino.s3file.util.TableFunctionArguments.pathArgumentSpecification;
 import static marcbp.trino.s3file.util.TableFunctionArguments.requirePath;
 import static marcbp.trino.s3file.util.TableFunctionArguments.resolveEncoding;
@@ -144,15 +144,7 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
     }
 
     private static String resolveRowElement(Map<String, Argument> arguments) {
-        ScalarArgument argument = (ScalarArgument) arguments.get(ROW_ELEMENT_ARGUMENT);
-        if (argument == null) {
-            return "row";
-        }
-        Object value = argument.getValue();
-        if (!(value instanceof Slice slice)) {
-            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "ROW_ELEMENT must be a string");
-        }
-        String rowElement = slice.toStringUtf8().trim();
+        String rowElement = optionalString(arguments, ROW_ELEMENT_ARGUMENT, "row").trim();
         if (rowElement.isEmpty()) {
             throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "ROW_ELEMENT cannot be empty");
         }
@@ -160,39 +152,15 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
     }
 
     private static boolean resolveIncludeText(Map<String, Argument> arguments) {
-        ScalarArgument argument = (ScalarArgument) arguments.get(INCLUDE_TEXT_ARGUMENT);
-        if (argument == null) {
-            return false;
-        }
-        Object value = argument.getValue();
-        if (!(value instanceof Slice slice)) {
-            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "INCLUDE_TEXT must be a string boolean");
-        }
-        return Boolean.parseBoolean(slice.toStringUtf8().trim());
+        return optionalBoolean(arguments, INCLUDE_TEXT_ARGUMENT, false);
     }
 
     private static boolean resolveEmptyAsNull(Map<String, Argument> arguments) {
-        ScalarArgument argument = (ScalarArgument) arguments.get(EMPTY_AS_NULL_ARGUMENT);
-        if (argument == null) {
-            return false;
-        }
-        Object value = argument.getValue();
-        if (!(value instanceof Slice slice)) {
-            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "EMPTY_AS_NULL must be a string boolean");
-        }
-        return Boolean.parseBoolean(slice.toStringUtf8().trim());
+        return optionalBoolean(arguments, EMPTY_AS_NULL_ARGUMENT, false);
     }
 
     private static String resolveInvalidRowColumn(Map<String, Argument> arguments) {
-        ScalarArgument argument = (ScalarArgument) arguments.get(INVALID_ROW_COLUMN_ARGUMENT);
-        if (argument == null) {
-            return "";
-        }
-        Object value = argument.getValue();
-        if (!(value instanceof Slice slice)) {
-            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "INVALID_ROW_COLUMN must be a string");
-        }
-        return slice.toStringUtf8().trim();
+        return optionalString(arguments, INVALID_ROW_COLUMN_ARGUMENT, "").trim();
     }
 
     private static XmlFormatSupport.Schema filterTextColumn(XmlFormatSupport.Schema schema) {

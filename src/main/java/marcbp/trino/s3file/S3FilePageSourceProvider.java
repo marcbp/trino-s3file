@@ -57,43 +57,35 @@ final class S3FilePageSourceProvider implements ConnectorPageSourceProvider {
                 .map(S3FilePageSourceProvider::requireColumnHandle)
                 .toList();
 
-        if (table instanceof CsvTableFunction.Handle csvHandle) {
-            if (!(split instanceof FileSplit fileSplit)) {
-                throw new IllegalArgumentException("Unexpected split type: " + split.getClass().getName());
-            }
-            return csvTableFunction.createPageSource(session, csvHandle, fileSplit, projectedColumns);
+        return switch (table) {
+            case CsvTableFunction.Handle csvHandle ->
+                    csvTableFunction.createPageSource(session, csvHandle, requireFileSplit(split), projectedColumns);
+            case TextTableFunction.Handle textHandle ->
+                    textTableFunction.createPageSource(session, textHandle, requireFileSplit(split), projectedColumns);
+            case JsonTableFunction.Handle jsonHandle ->
+                    jsonTableFunction.createPageSource(session, jsonHandle, requireFileSplit(split), projectedColumns);
+            case ObjectsTableFunction.Handle objectsHandle ->
+                    objectsTableFunction.createPageSource(session, objectsHandle, requireListingSplit(split), projectedColumns);
+            case BucketsTableFunction.Handle bucketsHandle ->
+                    bucketsTableFunction.createPageSource(session, bucketsHandle, requireListingSplit(split), projectedColumns);
+            case XmlTableFunction.Handle xmlHandle ->
+                    xmlTableFunction.createPageSource(session, xmlHandle, requireFileSplit(split), projectedColumns);
+            default -> throw new IllegalArgumentException("Unexpected table handle type: " + table.getClass().getName());
+        };
+    }
+
+    private static FileSplit requireFileSplit(ConnectorSplit split) {
+        if (split instanceof FileSplit fileSplit) {
+            return fileSplit;
         }
-        if (table instanceof TextTableFunction.Handle textHandle) {
-            if (!(split instanceof FileSplit fileSplit)) {
-                throw new IllegalArgumentException("Unexpected split type: " + split.getClass().getName());
-            }
-            return textTableFunction.createPageSource(session, textHandle, fileSplit, projectedColumns);
+        throw new IllegalArgumentException("Unexpected split type: " + split.getClass().getName());
+    }
+
+    private static ListingSplit requireListingSplit(ConnectorSplit split) {
+        if (split instanceof ListingSplit listingSplit) {
+            return listingSplit;
         }
-        if (table instanceof JsonTableFunction.Handle jsonHandle) {
-            if (!(split instanceof FileSplit fileSplit)) {
-                throw new IllegalArgumentException("Unexpected split type: " + split.getClass().getName());
-            }
-            return jsonTableFunction.createPageSource(session, jsonHandle, fileSplit, projectedColumns);
-        }
-        if (table instanceof ObjectsTableFunction.Handle objectsHandle) {
-            if (!(split instanceof ListingSplit listingSplit)) {
-                throw new IllegalArgumentException("Unexpected split type: " + split.getClass().getName());
-            }
-            return objectsTableFunction.createPageSource(session, objectsHandle, listingSplit, projectedColumns);
-        }
-        if (table instanceof BucketsTableFunction.Handle bucketsHandle) {
-            if (!(split instanceof ListingSplit listingSplit)) {
-                throw new IllegalArgumentException("Unexpected split type: " + split.getClass().getName());
-            }
-            return bucketsTableFunction.createPageSource(session, bucketsHandle, listingSplit, projectedColumns);
-        }
-        if (table instanceof XmlTableFunction.Handle xmlHandle) {
-            if (!(split instanceof FileSplit fileSplit)) {
-                throw new IllegalArgumentException("Unexpected split type: " + split.getClass().getName());
-            }
-            return xmlTableFunction.createPageSource(session, xmlHandle, fileSplit, projectedColumns);
-        }
-        throw new IllegalArgumentException("Unexpected table handle type: " + table.getClass().getName());
+        throw new IllegalArgumentException("Unexpected split type: " + split.getClass().getName());
     }
 
     private static S3FileColumnHandle requireColumnHandle(ColumnHandle columnHandle) {

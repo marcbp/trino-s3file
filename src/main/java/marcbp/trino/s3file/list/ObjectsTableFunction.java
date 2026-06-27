@@ -14,7 +14,6 @@ import io.trino.spi.function.table.AbstractConnectorTableFunction;
 import io.trino.spi.function.table.Argument;
 import io.trino.spi.function.table.Descriptor;
 import io.trino.spi.function.table.ReturnTypeSpecification;
-import io.trino.spi.function.table.ScalarArgument;
 import io.trino.spi.function.table.ScalarArgumentSpecification;
 import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.type.BigintType;
@@ -35,6 +34,9 @@ import java.util.Optional;
 
 import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static java.util.Objects.requireNonNull;
+import static marcbp.trino.s3file.util.TableFunctionArguments.optionalBoolean;
+import static marcbp.trino.s3file.util.TableFunctionArguments.optionalString;
+import static marcbp.trino.s3file.util.TableFunctionArguments.requireString;
 
 /**
  * Table function that lists objects and common prefixes from an S3 bucket or prefix.
@@ -104,10 +106,10 @@ public final class ObjectsTableFunction extends AbstractConnectorTableFunction {
                                          ConnectorTransactionHandle transactionHandle,
                                          Map<String, Argument> arguments,
                                          ConnectorAccessControl accessControl) {
-        String bucket = requireString(arguments, BUCKET_ARGUMENT);
-        String prefix = optionalString(arguments, PREFIX_ARGUMENT, "");
-        boolean recursive = parseBoolean(arguments, RECURSIVE_ARGUMENT, true);
-        boolean includePrefixes = parseBoolean(arguments, INCLUDE_PREFIXES_ARGUMENT, false);
+        String bucket = requireBucket(arguments, BUCKET_ARGUMENT);
+        String prefix = optionalPrefix(arguments, PREFIX_ARGUMENT, "");
+        boolean recursive = optionalBoolean(arguments, RECURSIVE_ARGUMENT, true);
+        boolean includePrefixes = optionalBoolean(arguments, INCLUDE_PREFIXES_ARGUMENT, false);
 
         logger.info("Analyzing list.objects for bucket %s and prefix %s (recursive=%s, includePrefixes=%s)", bucket, prefix, recursive, includePrefixes);
 
@@ -144,12 +146,8 @@ public final class ObjectsTableFunction extends AbstractConnectorTableFunction {
                 handle.resolveColumnTypes());
     }
 
-    private static String requireString(Map<String, Argument> arguments, String name) {
-        ScalarArgument arg = (ScalarArgument) arguments.get(name);
-        if (arg == null) {
-            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "Argument " + name + " is required");
-        }
-        String value = argumentStringValue(arg, name);
+    private static String requireBucket(Map<String, Argument> arguments, String name) {
+        String value = requireString(arguments, name);
         if (value.isBlank()) {
             throw new TrinoException(INVALID_FUNCTION_ARGUMENT, name + " cannot be blank");
         }
@@ -159,12 +157,8 @@ public final class ObjectsTableFunction extends AbstractConnectorTableFunction {
         return value;
     }
 
-    private static String optionalString(Map<String, Argument> arguments, String name, String defaultValue) {
-        ScalarArgument arg = (ScalarArgument) arguments.get(name);
-        if (arg == null) {
-            return defaultValue;
-        }
-        String value = argumentStringValue(arg, name);
+    private static String optionalPrefix(Map<String, Argument> arguments, String name, String defaultValue) {
+        String value = optionalString(arguments, name, defaultValue);
         if (value.startsWith("s3://")) {
             throw new TrinoException(INVALID_FUNCTION_ARGUMENT, name + " must not include an s3:// URI");
         }
@@ -172,25 +166,6 @@ public final class ObjectsTableFunction extends AbstractConnectorTableFunction {
             throw new TrinoException(INVALID_FUNCTION_ARGUMENT, name + " must not start with /");
         }
         return value;
-    }
-
-    private static String argumentStringValue(ScalarArgument arg, String name) {
-        if (!(arg.getValue() instanceof io.airlift.slice.Slice slice)) {
-            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, name + " must be a string");
-        }
-        return slice.toStringUtf8();
-    }
-
-    private static boolean parseBoolean(Map<String, Argument> arguments, String name, boolean defaultValue) {
-        ScalarArgument arg = (ScalarArgument) arguments.get(name);
-        if (arg == null || !(arg.getValue() instanceof io.airlift.slice.Slice slice)) {
-            return defaultValue;
-        }
-        String text = slice.toStringUtf8().trim();
-        if (text.isEmpty()) {
-            return defaultValue;
-        }
-        return Boolean.parseBoolean(text);
     }
 
     public static final class Handle implements RuntimeTableHandle {

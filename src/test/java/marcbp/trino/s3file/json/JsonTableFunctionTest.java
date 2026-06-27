@@ -195,6 +195,32 @@ class JsonTableFunctionTest {
     }
 
     @Test
+    void pageSourceWritesMissingVarcharFieldAsNull() {
+        when(sessionClient.openReader(eq(PATH), any(Charset.class), any(), any())).thenAnswer(invocation ->
+                new BufferedReader(new StringReader("""
+                        {"event_id":1}
+                        {"event_id":2,"note":"bye"}
+                        """)));
+
+        JsonTableFunction.Handle handle = handle(
+                List.of("event_id", "note"),
+                List.of(JsonFormatSupport.ColumnType.BIGINT, JsonFormatSupport.ColumnType.VARCHAR),
+                64,
+                64);
+
+        ConnectorPageSource pageSource = function.createPageSource(
+                mock(ConnectorSession.class),
+                handle,
+                handle.toWholeFileSplit(),
+                allColumns(handle));
+        SourcePage page = nextPage(pageSource);
+
+        assertEquals(2, page.getPositionCount());
+        assertEquals(null, VarcharType.createUnboundedVarcharType().getObjectValue(page.getBlock(1), 0));
+        assertEquals("bye", VarcharType.createUnboundedVarcharType().getObjectValue(page.getBlock(1), 1).toString());
+    }
+
+    @Test
     void pageSourceSkipsPartialFirstLineOnNonInitialSplit() throws IOException {
         when(sessionClient.readBytes(eq(PATH), eq(11L), eq(12L), any(), any())).thenReturn(new byte[] {'x'});
         when(sessionClient.openReader(eq(PATH), eq(12L), eq(64L), any(Charset.class), any(), any())).thenAnswer(invocation ->

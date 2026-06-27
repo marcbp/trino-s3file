@@ -224,6 +224,10 @@ public final class JsonFormatSupport {
         VARCHAR(VarcharType.createUnboundedVarcharType()) {
             @Override
             void write(io.trino.spi.block.BlockBuilder blockBuilder, JsonNode node) {
+                if (node == null || node.isNull()) {
+                    blockBuilder.appendNull();
+                    return;
+                }
                 String text = node.isTextual() ? node.textValue() : node.toString();
                 ((VarcharType) type).writeSlice(blockBuilder, io.airlift.slice.Slices.utf8Slice(text));
             }

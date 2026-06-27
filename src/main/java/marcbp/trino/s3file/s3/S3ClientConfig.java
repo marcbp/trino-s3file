@@ -39,7 +39,7 @@ public record S3ClientConfig(
         Optional<String> accessKey = optionalValue(config.get(ACCESS_KEY_KEY));
         Optional<String> secretKey = optionalValue(config.get(SECRET_KEY_KEY));
         AuthMode authMode = optionalValue(config.get(AUTH_MODE_KEY)).map(AuthMode::from).orElse(AuthMode.DEFAULT);
-        boolean pathStyleAccess = Boolean.parseBoolean(config.getOrDefault(PATH_STYLE_KEY, "true"));
+        boolean pathStyleAccess = parseBoolean(config.get(PATH_STYLE_KEY), PATH_STYLE_KEY, true);
         Optional<String> interceptorClass = optionalValue(config.get(INTERCEPTOR_CLASS_KEY));
         int splitSizeBytes = parseSplitSizeBytes(config.get(DEFAULT_SPLIT_SIZE_MB_KEY));
         int maxConnections = parseMaxConnections(config.get(MAX_CONNECTIONS_KEY));
@@ -117,6 +117,18 @@ public record S3ClientConfig(
         catch (NumberFormatException e) {
             throw new IllegalArgumentException("Connector property " + CONNECTION_ACQUISITION_TIMEOUT_KEY + " must be a positive integer", e);
         }
+    }
+
+    private static boolean parseBoolean(String configuredValue, String key, boolean defaultValue) {
+        Optional<String> value = optionalValue(configuredValue);
+        if (value.isEmpty()) {
+            return defaultValue;
+        }
+        return switch (value.get().toLowerCase(java.util.Locale.ROOT)) {
+            case "true" -> true;
+            case "false" -> false;
+            default -> throw new IllegalArgumentException("Connector property " + key + " must be true or false");
+        };
     }
 
     private static Optional<String> optionalValue(String value) {
