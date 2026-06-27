@@ -49,7 +49,7 @@ class XmlTableFunctionTest {
 
     @Test
     void analyzeInfersAttributesAndElements() {
-        when(sessionClient.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
+        when(sessionClient.openReader(eq(PATH), any(Charset.class), any(), any())).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("""
                         <catalog>
                           <book id="bk101">
@@ -102,14 +102,14 @@ class XmlTableFunctionTest {
         assertEquals(1, splits.size());
         assertTrue(splits.get(0).isWholeFile());
 
-        verify(sessionClient).openReader(eq(PATH), any(Charset.class));
         verify(sessionClient).getObjectMetadata(eq(PATH));
+        verify(sessionClient).openReader(eq(PATH), any(Charset.class), eq(Optional.empty()), eq(Optional.of("etag-xml")));
         verify(sessionClient).close();
     }
 
     @Test
     void analyzeKeepsTextColumnWhenRequested() {
-        when(sessionClient.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
+        when(sessionClient.openReader(eq(PATH), any(Charset.class), any(), any())).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("""
                         <feed>
                           <entry status="new">Note<message>Hello</message></entry>
@@ -150,14 +150,14 @@ class XmlTableFunctionTest {
         assertFalse(handle.options().emptyAsNull());
         assertEquals("", handle.options().invalidRowColumn());
 
-        verify(sessionClient).openReader(eq(PATH), any(Charset.class));
         verify(sessionClient).getObjectMetadata(eq(PATH));
+        verify(sessionClient).openReader(eq(PATH), any(Charset.class), eq(Optional.of("version-text")), eq(Optional.empty()));
         verify(sessionClient).close();
     }
 
     @Test
     void analyzeMergesColumnsAcrossMultipleRows() {
-        when(sessionClient.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
+        when(sessionClient.openReader(eq(PATH), any(Charset.class), any(), any())).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("""
                         <employees>
                           <employee id="1">
@@ -190,7 +190,7 @@ class XmlTableFunctionTest {
 
     @Test
     void analyzeHonoursEmptyAsNullFlag() {
-        when(sessionClient.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
+        when(sessionClient.openReader(eq(PATH), any(Charset.class), any(), any())).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("""
                         <items>
                           <item code="">
@@ -217,14 +217,14 @@ class XmlTableFunctionTest {
         assertEquals(List.of("@code", "name"), handle.columnNames());
         assertEquals("", handle.options().invalidRowColumn());
 
-        verify(sessionClient).openReader(eq(PATH), any(Charset.class));
         verify(sessionClient).getObjectMetadata(eq(PATH));
+        verify(sessionClient).openReader(eq(PATH), any(Charset.class), eq(Optional.empty()), eq(Optional.empty()));
         verify(sessionClient).close();
     }
 
     @Test
     void analyzeAddsInvalidRowColumnWhenRequested() {
-        when(sessionClient.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
+        when(sessionClient.openReader(eq(PATH), any(Charset.class), any(), any())).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("""
                         <items>
                           <item code="1"><name>Valid</name></item>

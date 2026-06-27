@@ -9,6 +9,7 @@ services:
     volumes:
       - ./docker/etc/config.properties:/etc/trino/config.properties:ro
       - ./docker/etc/node.properties:/etc/trino/node.properties:ro
+      - ./docker/etc/exchange-manager.properties:/etc/trino/exchange-manager.properties:ro
     depends_on:
       - minio
     restart: unless-stopped
@@ -17,6 +18,7 @@ services:
     image: trino-s3file:latest
     volumes:
       - ./docker/etc/worker:/etc/trino-worker:ro
+      - ./docker/etc/exchange-manager.properties:/etc/trino/exchange-manager.properties:ro
     entrypoint: ["/etc/trino-worker/entrypoint.sh"]
     depends_on:
       - minio

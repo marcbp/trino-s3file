@@ -107,15 +107,16 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         XmlFormatSupport.Schema schema;
         S3ClientBuilder.ObjectMetadata metadata;
 
-        try (S3ClientBuilder.SessionClient s3 = s3ClientBuilder.forSession(session);
-             BufferedReader reader = s3.openReader(s3Path, charset)) {
+        try (S3ClientBuilder.SessionClient s3 = s3ClientBuilder.forSession(session)) {
             metadata = s3.getObjectMetadata(s3Path);
-            schema = XmlFormatSupport.inferSchema(reader, s3Path, rowElement);
-            if (!includeText) {
-                schema = filterTextColumn(schema);
-            }
-            if (!invalidRowColumn.isEmpty()) {
-                schema = XmlFormatSupport.appendRawColumn(schema, invalidRowColumn);
+            try (BufferedReader reader = s3.openReader(s3Path, charset, metadata.versionId(), metadata.eTag())) {
+                schema = XmlFormatSupport.inferSchema(reader, s3Path, rowElement);
+                if (!includeText) {
+                    schema = filterTextColumn(schema);
+                }
+                if (!invalidRowColumn.isEmpty()) {
+                    schema = XmlFormatSupport.appendRawColumn(schema, invalidRowColumn);
+                }
             }
         }
         catch (IOException e) {

@@ -109,16 +109,17 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
         List<ColumnType> detectedTypes;
         int sampledRows;
         S3ClientBuilder.ObjectMetadata metadata;
-        try (S3ClientBuilder.SessionClient s3 = s3ClientBuilder.forSession(session);
-             BufferedReader reader = s3.openReader(s3Path, charset)) {
+        try (S3ClientBuilder.SessionClient s3 = s3ClientBuilder.forSession(session)) {
             metadata = s3.getObjectMetadata(s3Path);
-            ColumnsMetadata columnsMetadata = JsonFormatSupport.inferColumns(reader, s3Path, schemaSampleRows);
-            columnNames = new ArrayList<>(columnsMetadata.names());
-            detectedTypes = new ArrayList<>(columnsMetadata.types());
-            sampledRows = columnsMetadata.sampledRows();
+            try (BufferedReader reader = s3.openReader(s3Path, charset, metadata.versionId(), metadata.eTag())) {
+                ColumnsMetadata columnsMetadata = JsonFormatSupport.inferColumns(reader, s3Path, schemaSampleRows);
+                columnNames = new ArrayList<>(columnsMetadata.names());
+                detectedTypes = new ArrayList<>(columnsMetadata.types());
+                sampledRows = columnsMetadata.sampledRows();
 
-            List<ColumnDefinition> additionalColumns = JsonFormatSupport.parseAdditionalColumns(arguments);
-            JsonFormatSupport.mergeAdditionalColumns(columnNames, detectedTypes, additionalColumns);
+                List<ColumnDefinition> additionalColumns = JsonFormatSupport.parseAdditionalColumns(arguments);
+                JsonFormatSupport.mergeAdditionalColumns(columnNames, detectedTypes, additionalColumns);
+            }
         }
         catch (IOException e) {
             logger.error(e, "Failed to analyze json for %s", s3Path);

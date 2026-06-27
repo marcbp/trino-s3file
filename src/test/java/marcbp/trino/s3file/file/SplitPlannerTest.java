@@ -72,4 +72,11 @@ class SplitPlannerTest {
     void lookaheadMustBeNonNegative() {
         assertThrows(IllegalArgumentException.class, () -> SplitPlanner.planSplits(100, 10, -1));
     }
+
+    @Test
+    void fileSplitExposesRetainedSizeForFaultTolerantExecution() {
+        FileSplit split = new FileSplit("split-123", 10, 20, 30, false, true);
+        assertTrue(split.getRetainedSizeInBytes() > 0);
+        assertEquals(split.getRetainedSizeInBytes(), new FileSplit("split-123", 10, 20, 30, false, true).getRetainedSizeInBytes());
+    }
 }

@@ -57,7 +57,7 @@ class CsvTableFunctionTest {
 
     @Test
     void analyzeInfersColumnsFromHeader() {
-        when(sessionClient.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
+        when(sessionClient.openReader(eq(PATH), any(Charset.class), any(), any())).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("first;second\n1;2\n")));
         when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(64L, Optional.of("etag-1"), Optional.empty()));
 
@@ -87,14 +87,14 @@ class CsvTableFunctionTest {
                 List.of(VarcharType.createUnboundedVarcharType(), VarcharType.createUnboundedVarcharType()));
         assertEquals(expectedDescriptor, analysis.getReturnedType().orElseThrow());
 
-        verify(sessionClient).openReader(eq(PATH), any(Charset.class));
         verify(sessionClient).getObjectMetadata(eq(PATH));
+        verify(sessionClient).openReader(eq(PATH), any(Charset.class), eq(Optional.empty()), eq(Optional.of("etag-1")));
         verify(sessionClient).close();
     }
 
     @Test
     void analyzeWithoutHeaderGeneratesDefaultColumns() {
-        when(sessionClient.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
+        when(sessionClient.openReader(eq(PATH), any(Charset.class), any(), any())).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("value1;value2;value3\n1;2;3\n")));
         when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(64L, Optional.empty(), Optional.empty()));
 
@@ -123,14 +123,14 @@ class CsvTableFunctionTest {
                         VarcharType.createUnboundedVarcharType()));
         assertEquals(expectedDescriptor, analysis.getReturnedType().orElseThrow());
 
-        verify(sessionClient).openReader(eq(PATH), any(Charset.class));
         verify(sessionClient).getObjectMetadata(eq(PATH));
+        verify(sessionClient).openReader(eq(PATH), any(Charset.class), eq(Optional.empty()), eq(Optional.empty()));
         verify(sessionClient).close();
     }
 
     @Test
     void analyzeAllowsSplitSizeOverridePerRequest() {
-        when(sessionClient.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
+        when(sessionClient.openReader(eq(PATH), any(Charset.class), any(), any())).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("first;second\n1;2\n")));
         when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(64L, Optional.empty(), Optional.empty()));
 

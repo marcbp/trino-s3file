@@ -113,10 +113,11 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
 
         List<String> columnNames;
         S3ClientBuilder.ObjectMetadata metadata;
-        try (S3ClientBuilder.SessionClient s3 = s3ClientBuilder.forSession(session);
-             BufferedReader reader = s3.openReader(s3Path, charset)) {
+        try (S3ClientBuilder.SessionClient s3 = s3ClientBuilder.forSession(session)) {
             metadata = s3.getObjectMetadata(s3Path);
-            columnNames = CsvFormatSupport.inferColumnNames(reader, s3Path, delimiter, headerPresent);
+            try (BufferedReader reader = s3.openReader(s3Path, charset, metadata.versionId(), metadata.eTag())) {
+                columnNames = CsvFormatSupport.inferColumnNames(reader, s3Path, delimiter, headerPresent);
+            }
         }
         catch (IOException e) {
             logger.error(e, "Failed to infer column names for %s", s3Path);

@@ -55,7 +55,7 @@ class JsonTableFunctionTest {
 
     @Test
     void analyzeInfersTypesFromSampleRows() {
-        when(sessionClient.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
+        when(sessionClient.openReader(eq(PATH), any(Charset.class), any(), any())).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("""
                         {"event_id":1,"active":true,"amount":12.5,"meta":{"source":"app"}}
                         {"event_id":2,"active":false,"amount":7.0,"note":"bye"}
@@ -92,14 +92,14 @@ class JsonTableFunctionTest {
         assertEquals(Optional.empty(), handle.object().versionIdRef());
         assertEquals(StandardCharsets.UTF_8.name(), handle.scan().charsetName());
 
-        verify(sessionClient).openReader(eq(PATH), any(Charset.class));
         verify(sessionClient).getObjectMetadata(eq(PATH));
+        verify(sessionClient).openReader(eq(PATH), any(Charset.class), eq(Optional.empty()), eq(Optional.of("etag-json")));
         verify(sessionClient).close();
     }
 
     @Test
     void analyzeHonorsSchemaSampleRowLimit() {
-        when(sessionClient.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
+        when(sessionClient.openReader(eq(PATH), any(Charset.class), any(), any())).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("""
                         {"event_id":1,"active":true}
                         {"event_id":2,"active":false,"note":"later"}
@@ -128,7 +128,7 @@ class JsonTableFunctionTest {
 
     @Test
     void analyzeAllowsSplitSizeOverridePerRequest() {
-        when(sessionClient.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
+        when(sessionClient.openReader(eq(PATH), any(Charset.class), any(), any())).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("""
                         {"event_id":1}
                         {"event_id":2}
@@ -152,7 +152,7 @@ class JsonTableFunctionTest {
 
     @Test
     void analyzeAppliesAdditionalColumns() {
-        when(sessionClient.openReader(eq(PATH), any(Charset.class))).thenAnswer(invocation ->
+        when(sessionClient.openReader(eq(PATH), any(Charset.class), any(), any())).thenAnswer(invocation ->
                 new BufferedReader(new StringReader("""
                         {"event_id":1}
                         {"event_id":2,"campaign":"spring","score":42.5}
@@ -189,8 +189,8 @@ class JsonTableFunctionTest {
         assertEquals(Optional.empty(), handle.object().eTagRef());
         assertEquals(Optional.of("v2"), handle.object().versionIdRef());
 
-        verify(sessionClient).openReader(eq(PATH), any(Charset.class));
         verify(sessionClient).getObjectMetadata(eq(PATH));
+        verify(sessionClient).openReader(eq(PATH), any(Charset.class), eq(Optional.of("v2")), eq(Optional.empty()));
         verify(sessionClient).close();
     }
 

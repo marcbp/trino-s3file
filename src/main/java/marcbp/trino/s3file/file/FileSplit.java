@@ -75,6 +75,11 @@ public final class FileSplit implements ConnectorSplit {
     }
 
     @Override
+    public long getRetainedSizeInBytes() {
+        return 64L + (long) id.length() * Character.BYTES;
+    }
+
+    @Override
     public String toString() {
         return "FileSplit{" +
                 "id='" + id + '\'' +

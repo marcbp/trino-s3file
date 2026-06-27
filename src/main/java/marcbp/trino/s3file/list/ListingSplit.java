@@ -25,4 +25,9 @@ public final class ListingSplit implements ConnectorSplit {
     public boolean singleton() {
         return singleton;
     }
+
+    @Override
+    public long getRetainedSizeInBytes() {
+        return 16L;
+    }
 }

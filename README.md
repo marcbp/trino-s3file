@@ -9,6 +9,7 @@ A Trino connector for ad-hoc exploration, validation, or lightweight ingestion o
 - **Distributed processing**: workers stream byte ranges concurrently so oversized files stay readable.
 - **Request-scoped S3 clients**: each user query gets its own S3 client per worker, with interceptor-based customization and reuse across all splits.
 - **Snapshot safety**: object versions or ETags are pinned to avoid mixing data when objects change mid-scan.
+- **Fault tolerant execution**: compatible with Trino's task-retry mode.
 - **Bucket and object listing**: explore S3 buckets and prefixes directly from SQL.
 
 ## List S3 buckets
