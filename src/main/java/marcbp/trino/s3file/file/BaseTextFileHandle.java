@@ -2,8 +2,6 @@ package marcbp.trino.s3file.file;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import io.trino.spi.connector.ConnectorTableHandle;
-import io.trino.spi.function.table.ConnectorTableFunctionHandle;
 import io.trino.spi.type.Type;
 import marcbp.trino.s3file.util.CharsetUtils;
 
@@ -15,7 +13,7 @@ import static java.util.Objects.requireNonNull;
 /**
  * Common connector table function handle metadata shared by text-backed functions.
  */
-public abstract class BaseTextFileHandle implements ConnectorTableFunctionHandle, ConnectorTableHandle {
+public abstract class BaseTextFileHandle implements RuntimeTableHandle {
     public static final int DEFAULT_BATCH_SIZE = 1024;
 
     private final S3ObjectRef object;
@@ -55,6 +53,11 @@ public abstract class BaseTextFileHandle implements ConnectorTableFunctionHandle
     @JsonIgnore
     public FileSplit toWholeFileSplit() {
         return FileSplit.forWholeFile(object.size());
+    }
+
+    @JsonIgnore
+    public final String runtimeTableName() {
+        return format() + "_load";
     }
 
     @JsonIgnore

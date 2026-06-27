@@ -16,10 +16,14 @@ import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.http.apache.ApacheHttpClient;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3Configuration;
+import software.amazon.awssdk.services.s3.model.CommonPrefix;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
+import software.amazon.awssdk.services.s3.model.S3Object;
 
 import java.io.BufferedReader;
 import java.io.Closeable;
@@ -29,6 +33,9 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -47,6 +54,49 @@ public final class S3ClientBuilder implements Closeable {
     private static final long IDLE_EVICTION_DELAY_SECONDS = 5L * 60L;
 
     public record ObjectMetadata(long size, Optional<String> eTag, Optional<String> versionId) {}
+    public record ListedObject(
+            String bucket,
+            String key,
+            long size,
+            Optional<Instant> lastModified,
+            Optional<String> eTag) {
+        public String path() {
+            return "s3://" + bucket + "/" + key;
+        }
+
+        public String name() {
+            int lastSlash = key.lastIndexOf('/');
+            return lastSlash >= 0 ? key.substring(lastSlash + 1) : key;
+        }
+
+        public String parent() {
+            int lastSlash = key.lastIndexOf('/');
+            return lastSlash >= 0 ? key.substring(0, lastSlash + 1) : "";
+        }
+    }
+
+    public record ListedPrefix(String bucket, String prefix) {
+        public String path() {
+            return "s3://" + bucket + "/" + prefix;
+        }
+
+        public String name() {
+            String normalized = prefix.endsWith("/") ? prefix.substring(0, prefix.length() - 1) : prefix;
+            int lastSlash = normalized.lastIndexOf('/');
+            return lastSlash >= 0 ? normalized.substring(lastSlash + 1) : normalized;
+        }
+
+        public String parent() {
+            String normalized = prefix.endsWith("/") ? prefix.substring(0, prefix.length() - 1) : prefix;
+            int lastSlash = normalized.lastIndexOf('/');
+            return lastSlash >= 0 ? normalized.substring(0, lastSlash + 1) : "";
+        }
+    }
+
+    public record ListObjectsPage(
+            List<ListedObject> objects,
+            List<ListedPrefix> prefixes,
+            Optional<String> nextContinuationToken) {}
 
     private final Logger logger = Logger.get(S3ClientBuilder.class);
     private final S3ClientConfig config;
@@ -252,6 +302,37 @@ public final class S3ClientBuilder implements Closeable {
 
         public long getObjectSize(String s3Uri) {
             return getObjectMetadata(s3Uri).size();
+        }
+
+        public ListObjectsPage listObjects(String bucket, String prefix, boolean recursive, Optional<String> continuationToken) {
+            ListObjectsV2Request.Builder requestBuilder = ListObjectsV2Request.builder()
+                    .bucket(bucket)
+                    .prefix(prefix);
+            if (!recursive) {
+                requestBuilder.delimiter("/");
+            }
+            continuationToken.ifPresent(requestBuilder::continuationToken);
+
+            ListObjectsV2Response response = entry.client.listObjectsV2(requestBuilder.build());
+            List<ListedObject> objects = new ArrayList<>(response.contents().size());
+            for (S3Object object : response.contents()) {
+                objects.add(new ListedObject(
+                        bucket,
+                        object.key(),
+                        object.size(),
+                        Optional.ofNullable(object.lastModified()),
+                        Optional.ofNullable(object.eTag())));
+            }
+
+            List<ListedPrefix> prefixes = new ArrayList<>(response.commonPrefixes().size());
+            for (CommonPrefix commonPrefix : response.commonPrefixes()) {
+                prefixes.add(new ListedPrefix(bucket, commonPrefix.prefix()));
+            }
+
+            return new ListObjectsPage(
+                    List.copyOf(objects),
+                    List.copyOf(prefixes),
+                    Optional.ofNullable(response.nextContinuationToken()));
         }
 
         @Override

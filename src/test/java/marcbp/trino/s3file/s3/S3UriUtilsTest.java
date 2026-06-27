@@ -15,6 +15,17 @@ class S3UriUtilsTest {
     }
 
     @Test
+    void parsePrefixAllowsBucketRootAndTrailingSlash() {
+        S3UriUtils.S3Location root = S3UriUtils.parsePrefix("s3://my-bucket");
+        assertEquals("my-bucket", root.bucket());
+        assertEquals("", root.key());
+
+        S3UriUtils.S3Location prefixed = S3UriUtils.parsePrefix("s3://my-bucket/path/to/");
+        assertEquals("my-bucket", prefixed.bucket());
+        assertEquals("path/to/", prefixed.key());
+    }
+
+    @Test
     void parseThrowsOnInvalidUri() {
         IllegalArgumentException exception = assertThrows(
                 IllegalArgumentException.class,

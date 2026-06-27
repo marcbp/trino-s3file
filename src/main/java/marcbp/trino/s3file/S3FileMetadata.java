@@ -11,7 +11,7 @@ import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.connector.TableFunctionApplicationResult;
 import io.trino.spi.function.table.ConnectorTableFunctionHandle;
 import io.trino.spi.statistics.TableStatistics;
-import marcbp.trino.s3file.file.BaseTextFileHandle;
+import marcbp.trino.s3file.file.RuntimeTableHandle;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -25,7 +25,7 @@ final class S3FileMetadata implements ConnectorMetadata {
     public Optional<TableFunctionApplicationResult<ConnectorTableHandle>> applyTableFunction(
             ConnectorSession session,
             ConnectorTableFunctionHandle functionHandle) {
-        if (!(functionHandle instanceof BaseTextFileHandle handle)) {
+        if (!(functionHandle instanceof RuntimeTableHandle handle)) {
             return Optional.empty();
         }
         List<ColumnHandle> columnHandles = buildColumnHandles(handle).stream()
@@ -36,7 +36,7 @@ final class S3FileMetadata implements ConnectorMetadata {
 
     @Override
     public Map<String, ColumnHandle> getColumnHandles(ConnectorSession session, ConnectorTableHandle tableHandle) {
-        BaseTextFileHandle handle = requireHandle(tableHandle);
+        RuntimeTableHandle handle = requireHandle(tableHandle);
         Map<String, ColumnHandle> result = new LinkedHashMap<>();
         for (S3FileColumnHandle columnHandle : buildColumnHandles(handle)) {
             result.put(columnHandle.getName(), columnHandle);
@@ -46,7 +46,7 @@ final class S3FileMetadata implements ConnectorMetadata {
 
     @Override
     public ColumnMetadata getColumnMetadata(ConnectorSession session, ConnectorTableHandle tableHandle, ColumnHandle columnHandle) {
-        BaseTextFileHandle handle = requireHandle(tableHandle);
+        RuntimeTableHandle handle = requireHandle(tableHandle);
         S3FileColumnHandle s3Column = requireColumnHandle(columnHandle);
         return new ColumnMetadata(
                 s3Column.getName(),
@@ -55,7 +55,7 @@ final class S3FileMetadata implements ConnectorMetadata {
 
     @Override
     public ConnectorTableMetadata getTableMetadata(ConnectorSession session, ConnectorTableHandle tableHandle) {
-        BaseTextFileHandle handle = requireHandle(tableHandle);
+        RuntimeTableHandle handle = requireHandle(tableHandle);
         List<ColumnMetadata> columns = buildColumnHandles(handle).stream()
                 .map(columnHandle -> new ColumnMetadata(
                         columnHandle.getName(),
@@ -71,8 +71,8 @@ final class S3FileMetadata implements ConnectorMetadata {
 
     @Override
     public SchemaTableName getTableName(ConnectorSession session, ConnectorTableHandle tableHandle) {
-        BaseTextFileHandle handle = requireHandle(tableHandle);
-        return new SchemaTableName(RUNTIME_SCHEMA, handle.format() + "_load");
+        RuntimeTableHandle handle = requireHandle(tableHandle);
+        return new SchemaTableName(RUNTIME_SCHEMA, handle.runtimeTableName());
     }
 
     @Override
@@ -80,8 +80,8 @@ final class S3FileMetadata implements ConnectorMetadata {
         return TableStatistics.empty();
     }
 
-    private static BaseTextFileHandle requireHandle(ConnectorTableHandle tableHandle) {
-        if (!(tableHandle instanceof BaseTextFileHandle handle)) {
+    private static RuntimeTableHandle requireHandle(ConnectorTableHandle tableHandle) {
+        if (!(tableHandle instanceof RuntimeTableHandle handle)) {
             throw new IllegalArgumentException("Unexpected table handle type: " + tableHandle.getClass().getName());
         }
         return handle;
@@ -94,7 +94,7 @@ final class S3FileMetadata implements ConnectorMetadata {
         return s3ColumnHandle;
     }
 
-    static List<S3FileColumnHandle> buildColumnHandles(BaseTextFileHandle handle) {
+    static List<S3FileColumnHandle> buildColumnHandles(RuntimeTableHandle handle) {
         List<String> columnNames = handle.columnNames();
         return java.util.stream.IntStream.range(0, columnNames.size())
                 .mapToObj(index -> new S3FileColumnHandle(columnNames.get(index), index))

@@ -16,6 +16,8 @@ import io.trino.spi.function.table.ConnectorTableFunction;
 import io.trino.spi.transaction.IsolationLevel;
 import marcbp.trino.s3file.csv.CsvTableFunction;
 import marcbp.trino.s3file.json.JsonTableFunction;
+import marcbp.trino.s3file.objects.ObjectListSplit;
+import marcbp.trino.s3file.objects.ObjectsTableFunction;
 import marcbp.trino.s3file.txt.TextTableFunction;
 import marcbp.trino.s3file.xml.XmlTableFunction;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
@@ -38,6 +40,7 @@ public final class S3FileConnector implements Connector {
     private final CsvTableFunction csvTableFunction;
     private final TextTableFunction textTableFunction;
     private final JsonTableFunction jsonTableFunction;
+    private final ObjectsTableFunction objectsTableFunction;
     private final XmlTableFunction xmlTableFunction;
     private final ConnectorMetadata metadata;
     private final ConnectorSplitManager splitManager;
@@ -52,10 +55,11 @@ public final class S3FileConnector implements Connector {
         this.csvTableFunction = new CsvTableFunction(s3ClientBuilder, clientConfig.splitSizeBytes());
         this.textTableFunction = new TextTableFunction(s3ClientBuilder, clientConfig.splitSizeBytes());
         this.jsonTableFunction = new JsonTableFunction(s3ClientBuilder, clientConfig.splitSizeBytes());
+        this.objectsTableFunction = new ObjectsTableFunction(s3ClientBuilder);
         this.xmlTableFunction = new XmlTableFunction(s3ClientBuilder);
         this.metadata = new S3FileMetadata();
         this.splitManager = new InlineSplitManager();
-        this.pageSourceProvider = new S3FilePageSourceProvider(csvTableFunction, textTableFunction, jsonTableFunction, xmlTableFunction);
+        this.pageSourceProvider = new S3FilePageSourceProvider(csvTableFunction, textTableFunction, jsonTableFunction, objectsTableFunction, xmlTableFunction);
     }
 
     @Override
@@ -70,7 +74,7 @@ public final class S3FileConnector implements Connector {
 
     @Override
     public Set<ConnectorTableFunction> getTableFunctions() {
-        return Set.of(csvTableFunction, textTableFunction, jsonTableFunction, xmlTableFunction);
+        return Set.of(csvTableFunction, textTableFunction, jsonTableFunction, objectsTableFunction, xmlTableFunction);
     }
 
     @Override
@@ -123,6 +127,10 @@ public final class S3FileConnector implements Connector {
                 List<FileSplit> splits = jsonTableFunction.createSplits(jsonHandle);
                 LOG.info("Providing %s JSON split(s) for path %s", splits.size(), jsonHandle.object().path());
                 return new FixedSplitSource(splits);
+            }
+            if (handle instanceof ObjectsTableFunction.Handle objectsHandle) {
+                LOG.info("Providing 1 objects split for bucket %s and prefix %s", objectsHandle.bucket(), objectsHandle.prefix());
+                return new FixedSplitSource(List.of(ObjectListSplit.INSTANCE));
             }
             if (handle instanceof XmlTableFunction.Handle xmlHandle) {
                 List<FileSplit> splits = xmlTableFunction.createSplits(xmlHandle);

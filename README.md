@@ -10,6 +10,25 @@ A Trino connector for ad-hoc exploration, validation, or lightweight ingestion o
 - **Request-scoped S3 clients**: each user query gets its own S3 client per worker, with interceptor-based customization and reuse across all splits.
 - **Snapshot safety**: object versions or ETags are pinned to avoid mixing data when objects change mid-scan.
 
+## List S3 objects
+
+```sql
+SELECT path, size, last_modified
+FROM TABLE(
+    s3file.objects.list(
+        path => 's3://mybucket/data/',
+        recursive_listing => 'false',
+        include_prefixes => 'true'
+    )
+);
+```
+
+- `path` (required): bucket root or prefix to inspect.
+- `recursive_listing` (optional, default `'true'`): list all objects under the prefix when enabled.
+- `include_prefixes` (optional, default `'false'`): include common prefixes as rows when `recursive_listing => 'false'`.
+
+The function handles S3 pagination internally and returns a row per object or prefix. Use SQL `LIMIT` to cap the result set shown to the user.
+
 ## Load JSON files
 
 ```sql
