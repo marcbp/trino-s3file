@@ -1,6 +1,7 @@
 package marcbp.trino.s3file.json;
 
 import io.airlift.slice.Slices;
+import io.trino.spi.TrinoException;
 import io.trino.spi.connector.ConnectorPageSource;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorTransactionHandle;
@@ -35,6 +36,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
@@ -219,6 +221,53 @@ class JsonTableFunctionTest {
         assertEquals(2, page.getPositionCount());
         assertEquals(null, VarcharType.createUnboundedVarcharType().getObjectValue(page.getBlock(1), 0));
         assertEquals("bye", VarcharType.createUnboundedVarcharType().getObjectValue(page.getBlock(1), 1).toString());
+    }
+
+    @Test
+    void pageSourceWritesProjectedNestedValueAsJsonText() {
+        when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenAnswer(invocation ->
+                stream("""
+                        {"event_id":1,"meta":{"source":"app","tags":["a","b"]}}
+                        """, StandardCharsets.UTF_8));
+
+        JsonTableFunction.Handle handle = handle(
+                List.of("event_id", "meta"),
+                List.of(JsonFormatSupport.ColumnType.BIGINT, JsonFormatSupport.ColumnType.VARCHAR),
+                128,
+                64);
+
+        ConnectorPageSource pageSource = function.createPageSource(
+                mock(ConnectorSession.class),
+                handle,
+                handle.toWholeFileSplit(),
+                List.of(new S3FileColumnHandle("meta", 1)));
+        SourcePage page = nextPage(pageSource);
+
+        assertEquals(1, page.getPositionCount());
+        assertEquals("{\"source\":\"app\",\"tags\":[\"a\",\"b\"]}", VarcharType.createUnboundedVarcharType().getObjectValue(page.getBlock(0), 0).toString());
+    }
+
+    @Test
+    void pageSourceStillValidatesJsonWhenNoColumnsAreProjected() {
+        when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenAnswer(invocation ->
+                stream("""
+                        {"event_id":1}
+                        not-json
+                        """, StandardCharsets.UTF_8));
+
+        JsonTableFunction.Handle handle = handle(
+                List.of("event_id"),
+                List.of(JsonFormatSupport.ColumnType.BIGINT),
+                128,
+                64);
+
+        ConnectorPageSource pageSource = function.createPageSource(
+                mock(ConnectorSession.class),
+                handle,
+                handle.toWholeFileSplit(),
+                List.of());
+
+        assertThrows(TrinoException.class, () -> countRows(pageSource));
     }
 
     @Test

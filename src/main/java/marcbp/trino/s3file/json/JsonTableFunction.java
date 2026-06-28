@@ -2,9 +2,6 @@ package marcbp.trino.s3file.json;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.NullNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.airlift.log.Logger;
 import io.airlift.slice.Slices;
 import io.trino.spi.PageBuilder;
@@ -36,6 +33,7 @@ import marcbp.trino.s3file.file.SplitPlanner;
 import marcbp.trino.s3file.json.JsonFormatSupport.ColumnDefinition;
 import marcbp.trino.s3file.json.JsonFormatSupport.ColumnType;
 import marcbp.trino.s3file.json.JsonFormatSupport.ColumnsMetadata;
+import marcbp.trino.s3file.json.JsonFormatSupport.ProjectedColumn;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
 
 import java.io.BufferedReader;
@@ -44,6 +42,7 @@ import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -226,9 +225,11 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
     private static final class PageSource extends AbstractTextFilePageSource<Handle> {
         private final List<String> columnNames;
         private final List<ColumnType> columnKinds;
+        private final List<ColumnType> projectedColumnKinds;
+        private final Map<String, List<ProjectedColumn>> projectedFields;
         private final byte[] lineBreakBytes;
         private ByteDelimitedRecordReader recordReader;
-        private boolean skipFirstLine;
+        private boolean skipFirstRecord;
 
         private PageSource(
                 ConnectorSession session,
@@ -239,8 +240,23 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
             super(session, s3ClientBuilder, handle, split, projectedColumns);
             this.columnNames = handle.schema().columns();
             this.columnKinds = handle.schema().columnTypes();
+            this.projectedColumnKinds = projectedColumns.stream()
+                    .map(column -> columnKinds.get(column.getOrdinalPosition()))
+                    .toList();
+            this.projectedFields = buildProjectedFields();
             this.lineBreakBytes = "\n".getBytes(charset);
-            this.skipFirstLine = split.getStartOffset() > 0;
+            this.skipFirstRecord = split.getStartOffset() > 0;
+        }
+
+        private Map<String, List<ProjectedColumn>> buildProjectedFields() {
+            Map<String, List<ProjectedColumn>> fields = new HashMap<>();
+            for (int outputIndex = 0; outputIndex < projectedColumns.size(); outputIndex++) {
+                int sourceIndex = projectedColumns.get(outputIndex).getOrdinalPosition();
+                fields.computeIfAbsent(columnNames.get(sourceIndex), ignored -> new ArrayList<>())
+                        .add(new ProjectedColumn(outputIndex, columnKinds.get(sourceIndex)));
+            }
+            fields.replaceAll((ignored, columns) -> List.copyOf(columns));
+            return Map.copyOf(fields);
         }
 
         @Override
@@ -250,9 +266,9 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
 
         @Override
         protected void openSource() throws IOException {
-            if (skipFirstLine) {
+            if (skipFirstRecord) {
                 recordS3Request();
-                skipFirstLine = !TextSplitBoundarySupport.startsAfterDelimiter(sessionClient, handle, split, lineBreakBytes);
+                skipFirstRecord = !TextSplitBoundarySupport.startsAfterDelimiter(sessionClient, handle, split, lineBreakBytes);
             }
             InputStream stream = openStream();
             recordReader = new ByteDelimitedRecordReader(stream, charset, lineBreakBytes, true);
@@ -265,18 +281,26 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
                 return RecordReadResult.finished();
             }
             ByteDelimitedRecordReader.Record lineRecord = record.orElseThrow();
-            String line = lineRecord.value();
             long lineBytes = lineRecord.bytesConsumed();
-            if (skipFirstLine) {
-                skipFirstLine = false;
+            if (skipFirstRecord) {
+                skipFirstRecord = false;
                 return RecordReadResult.skip(lineBytes);
             }
-            if (line.isBlank()) {
+            if (lineRecord.isBlank(charset)) {
                 return RecordReadResult.skip(lineBytes);
             }
             boolean finishesSplit = !split.isLast() && bytesWithinPrimary + lineBytes > primaryLength;
-            ObjectNode objectNode = JsonFormatSupport.parseObject(line, handle.object().path());
-            return RecordReadResult.produce(objectNode, lineBytes, finishesSplit);
+            if (projectedColumns.isEmpty()) {
+                JsonFormatSupport.validateObjectRecord(lineRecord.valueBytes(), charset, handle.object().path());
+                return RecordReadResult.produce(new Object[0], lineBytes, finishesSplit);
+            }
+            Object[] values = JsonFormatSupport.parseProjectedRecord(
+                    lineRecord.valueBytes(),
+                    charset,
+                    handle.object().path(),
+                    projectedFields,
+                    projectedColumns.size());
+            return RecordReadResult.produce(values, lineBytes, finishesSplit);
         }
 
         @Override
@@ -297,14 +321,10 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
 
         @Override
         protected void appendRecord(PageBuilder pageBuilder, Object payload) {
-            ObjectNode objectNode = (ObjectNode) payload;
+            Object[] values = (Object[]) payload;
             for (int outputIndex = 0; outputIndex < projectedColumns.size(); outputIndex++) {
-                S3FileColumnHandle columnHandle = projectedColumns.get(outputIndex);
-                int sourceIndex = columnHandle.getOrdinalPosition();
                 BlockBuilder blockBuilder = pageBuilder.getBlockBuilder(outputIndex);
-                ColumnType columnType = columnKinds.get(sourceIndex);
-                JsonNode value = objectNode.get(columnNames.get(sourceIndex));
-                columnType.write(blockBuilder, value == null ? NullNode.getInstance() : value);
+                projectedColumnKinds.get(outputIndex).writeValue(blockBuilder, values[outputIndex]);
             }
             pageBuilder.declarePosition();
         }

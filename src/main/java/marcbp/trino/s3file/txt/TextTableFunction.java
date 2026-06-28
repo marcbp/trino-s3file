@@ -216,7 +216,7 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
                 return RecordReadResult.skip(textRecord.bytesConsumed());
             }
             boolean finishesSplit = !split.isLast() && bytesWithinPrimary + textRecord.bytesConsumed() > primaryLength;
-            return RecordReadResult.produce(textRecord.value(), textRecord.bytesConsumed(), finishesSplit);
+            return RecordReadResult.produce(textRecord.value(charset), textRecord.bytesConsumed(), finishesSplit);
         }
 
         @Override

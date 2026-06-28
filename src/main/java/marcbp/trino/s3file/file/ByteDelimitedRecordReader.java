@@ -4,6 +4,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Optional;
 
@@ -46,7 +47,7 @@ public final class ByteDelimitedRecordReader implements Closeable {
                 int contentLength = size - delimiter.length;
                 byte[] content = Arrays.copyOf(bytes, contentLength);
                 content = trimCarriageReturnBeforeLineFeed(content);
-                return Optional.of(new Record(new String(content, charset), size, true));
+                return Optional.of(new Record(content, size, true));
             }
         }
 
@@ -54,7 +55,7 @@ public final class ByteDelimitedRecordReader implements Closeable {
             return Optional.empty();
         }
         byte[] remaining = Arrays.copyOf(bytes, size);
-        return Optional.of(new Record(new String(remaining, charset), remaining.length, false));
+        return Optional.of(new Record(remaining, remaining.length, false));
     }
 
     private byte[] trimCarriageReturnBeforeLineFeed(byte[] content) {
@@ -86,5 +87,29 @@ public final class ByteDelimitedRecordReader implements Closeable {
         input.close();
     }
 
-    public record Record(String value, long bytesConsumed, boolean terminated) {}
+    public record Record(byte[] valueBytes, long bytesConsumed, boolean terminated) {
+        public Record {
+            valueBytes = requireNonNull(valueBytes, "valueBytes is null").clone();
+        }
+
+        public String value(Charset charset) {
+            return new String(valueBytes, charset);
+        }
+
+        public boolean isBlank(Charset charset) {
+            if (StandardCharsets.UTF_8.equals(charset)) {
+                for (byte valueByte : valueBytes) {
+                    if (!isJsonWhitespace(valueByte)) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            return value(charset).isBlank();
+        }
+
+        private static boolean isJsonWhitespace(byte value) {
+            return value == ' ' || value == '\t' || value == '\n' || value == '\r';
+        }
+    }
 }

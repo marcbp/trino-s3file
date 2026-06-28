@@ -285,8 +285,9 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
 
                 ByteDelimitedRecordReader.Record line = lineRecord.orElseThrow();
                 bytesConsumed += line.bytesConsumed();
-                blank &= line.value().isBlank();
-                String[] parsedValues = parser.parseLineMulti(line.value());
+                String value = line.value(charset);
+                blank &= value.isBlank();
+                String[] parsedValues = parser.parseLineMulti(value);
                 if (parsedValues != null) {
                     Collections.addAll(values, parsedValues);
                 }
