@@ -302,6 +302,22 @@ docker compose up --build
 docker compose run --rm tests mvn test
 ```
 
+Run the SQL integration suite against the local Trino and MinIO stack:
+
+The integration tests accept these parameters:
+
+| Parameter | Env var | Default |
+| --- | --- | --- |
+| `trino.base-url` | `TRINO_BASE_URL` | `http://trino-coordinator:8080` |
+| `s3.endpoint` | `S3_ENDPOINT` | `http://minio:9000` |
+
+The defaults are tuned for the Docker Compose stack used below. Override them if you run the suite against another environment.
+
+```bash
+docker compose up -d --build minio trino-coordinator trino-worker
+docker compose run --rm tests mvn -B -DskipUnitTests=true -Pintegration-tests verify
+```
+
 ### Connect with CLI
 
 Use the Trino CLI bundled in the container:
