@@ -24,6 +24,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.StringReader;
 import java.nio.charset.Charset;
@@ -196,11 +197,11 @@ class JsonTableFunctionTest {
 
     @Test
     void pageSourceWritesMissingVarcharFieldAsNull() {
-        when(sessionClient.openReader(eq(PATH), any(Charset.class), any(), any())).thenAnswer(invocation ->
-                new BufferedReader(new StringReader("""
+        when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenAnswer(invocation ->
+                stream("""
                         {"event_id":1}
                         {"event_id":2,"note":"bye"}
-                        """)));
+                        """, StandardCharsets.UTF_8));
 
         JsonTableFunction.Handle handle = handle(
                 List.of("event_id", "note"),
@@ -223,11 +224,11 @@ class JsonTableFunctionTest {
     @Test
     void pageSourceSkipsPartialFirstLineOnNonInitialSplit() throws IOException {
         when(sessionClient.readBytes(eq(PATH), eq(11L), eq(12L), any(), any())).thenReturn(new byte[] {'x'});
-        when(sessionClient.openReader(eq(PATH), eq(12L), eq(64L), any(Charset.class), any(), any())).thenAnswer(invocation ->
-                new BufferedReader(new StringReader("""
+        when(sessionClient.openStream(eq(PATH), eq(12L), eq(64L), any(), any())).thenAnswer(invocation ->
+                stream("""
                         ive":false}
                         {"event_id":2,"active":true}
-                        """)));
+                        """, StandardCharsets.UTF_8));
 
         JsonTableFunction.Handle handle = handle(
                 List.of("event_id", "active"),
@@ -244,17 +245,17 @@ class JsonTableFunctionTest {
         assertEquals(true, BooleanType.BOOLEAN.getObjectValue(page.getBlock(1), 0));
         assertEquals(null, pageSource.getNextSourcePage());
 
-        verify(sessionClient).openReader(eq(PATH), eq(12L), eq(64L), any(Charset.class), any(), any());
+        verify(sessionClient).openStream(eq(PATH), eq(12L), eq(64L), any(), any());
     }
 
     @Test
     void pageSourceKeepsFirstLineWhenSplitAlreadyStartsAtBoundary() throws IOException {
         when(sessionClient.readBytes(eq(PATH), eq(31L), eq(32L), any(), any())).thenReturn(new byte[] {'\n'});
-        when(sessionClient.openReader(eq(PATH), eq(32L), eq(96L), any(Charset.class), any(), any())).thenAnswer(invocation ->
-                new BufferedReader(new StringReader("""
+        when(sessionClient.openStream(eq(PATH), eq(32L), eq(96L), any(), any())).thenAnswer(invocation ->
+                stream("""
                         {"event_id":2,"active":true}
                         {"event_id":3,"active":false}
-                        """)));
+                        """, StandardCharsets.UTF_8));
 
         JsonTableFunction.Handle handle = handle(
                 List.of("event_id", "active"),
@@ -280,11 +281,11 @@ class JsonTableFunctionTest {
         long firstRecordBytes = firstRecord.getBytes(StandardCharsets.UTF_8).length;
         long contentBytes = content.getBytes(StandardCharsets.UTF_8).length;
 
-        when(sessionClient.openReader(eq(PATH), eq(0L), eq(contentBytes), any(Charset.class), any(), any())).thenAnswer(invocation ->
-                new BufferedReader(new StringReader(content)));
+        when(sessionClient.openStream(eq(PATH), eq(0L), eq(contentBytes), any(), any())).thenAnswer(invocation ->
+                stream(content, StandardCharsets.UTF_8));
         when(sessionClient.readBytes(eq(PATH), eq(firstRecordBytes - 1), eq(firstRecordBytes), any(), any())).thenReturn(new byte[] {'\n'});
-        when(sessionClient.openReader(eq(PATH), eq(firstRecordBytes), eq(contentBytes), any(Charset.class), any(), any())).thenAnswer(invocation ->
-                new BufferedReader(new StringReader(secondRecord)));
+        when(sessionClient.openStream(eq(PATH), eq(firstRecordBytes), eq(contentBytes), any(), any())).thenAnswer(invocation ->
+                stream(secondRecord, StandardCharsets.UTF_8));
 
         JsonTableFunction.Handle handle = handle(
                 List.of("event_id", "active"),
@@ -302,6 +303,56 @@ class JsonTableFunctionTest {
         assertEquals(2, firstSplitRows + secondSplitRows);
     }
 
+    @Test
+    void pageSourceReportsCompletedBytesForCrLfRecords() {
+        String content = "{\"event_id\":1}\r\n{\"event_id\":2}\r\n";
+        long contentBytes = content.getBytes(StandardCharsets.UTF_8).length;
+        when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenAnswer(invocation ->
+                stream(content, StandardCharsets.UTF_8));
+
+        JsonTableFunction.Handle handle = handle(
+                List.of("event_id"),
+                List.of(JsonFormatSupport.ColumnType.BIGINT),
+                contentBytes,
+                64);
+
+        ConnectorPageSource pageSource = function.createPageSource(
+                mock(ConnectorSession.class),
+                handle,
+                handle.toWholeFileSplit(),
+                List.of());
+
+        assertEquals(2, countRows(pageSource));
+        assertEquals(contentBytes, pageSource.getCompletedBytes());
+    }
+
+    @Test
+    void pageSourceKeepsUtf16RecordWhenSplitStartsAfterLineBreak() throws IOException {
+        String firstRecord = "{\"event_id\":1}\n";
+        String secondRecord = "{\"event_id\":2}\n";
+        String thirdRecord = "{\"event_id\":3}\n";
+        String content = firstRecord + secondRecord + thirdRecord;
+        long firstRecordBytes = firstRecord.getBytes(StandardCharsets.UTF_16LE).length;
+        long contentBytes = content.getBytes(StandardCharsets.UTF_16LE).length;
+
+        when(sessionClient.readBytes(eq(PATH), eq(firstRecordBytes - 2), eq(firstRecordBytes), any(), any()))
+                .thenReturn("\n".getBytes(StandardCharsets.UTF_16LE));
+        when(sessionClient.openStream(eq(PATH), eq(firstRecordBytes), eq(contentBytes), any(), any())).thenAnswer(invocation ->
+                stream(secondRecord + thirdRecord, StandardCharsets.UTF_16LE));
+
+        JsonTableFunction.Handle handle = handle(
+                List.of("event_id"),
+                List.of(JsonFormatSupport.ColumnType.BIGINT),
+                contentBytes,
+                (int) firstRecordBytes,
+                StandardCharsets.UTF_16LE);
+        FileSplit secondSplit = new FileSplit("split-1", firstRecordBytes, contentBytes, contentBytes, false, true);
+
+        int rows = countRows(function.createPageSource(mock(ConnectorSession.class), handle, secondSplit, List.of()));
+
+        assertEquals(2, rows);
+    }
+
     private static List<S3FileColumnHandle> allColumns(JsonTableFunction.Handle handle) {
         return java.util.stream.IntStream.range(0, handle.schema().columns().size())
                 .mapToObj(index -> new S3FileColumnHandle(handle.schema().columns().get(index), index))
@@ -309,9 +360,18 @@ class JsonTableFunctionTest {
     }
 
     private static JsonTableFunction.Handle handle(List<String> columns, List<JsonFormatSupport.ColumnType> columnTypes, long fileSize, int splitSizeBytes) {
+        return handle(columns, columnTypes, fileSize, splitSizeBytes, StandardCharsets.UTF_8);
+    }
+
+    private static JsonTableFunction.Handle handle(
+            List<String> columns,
+            List<JsonFormatSupport.ColumnType> columnTypes,
+            long fileSize,
+            int splitSizeBytes,
+            Charset charset) {
         return new JsonTableFunction.Handle(
                 new S3ObjectRef(PATH, fileSize, null, null),
-                new ScanSettings(splitSizeBytes, JsonTableFunction.Handle.DEFAULT_BATCH_SIZE, StandardCharsets.UTF_8.name()),
+                new ScanSettings(splitSizeBytes, JsonTableFunction.Handle.DEFAULT_BATCH_SIZE, charset.name()),
                 AnalysisStats.EMPTY,
                 new JsonTableFunction.JsonSchema(columns, columnTypes));
     }
@@ -320,6 +380,10 @@ class JsonTableFunctionTest {
         SourcePage page = pageSource.getNextSourcePage();
         assertInstanceOf(SourcePage.class, page);
         return page;
+    }
+
+    private static ByteArrayInputStream stream(String value, Charset charset) {
+        return new ByteArrayInputStream(value.getBytes(charset));
     }
 
     private static int countRows(ConnectorPageSource pageSource) {

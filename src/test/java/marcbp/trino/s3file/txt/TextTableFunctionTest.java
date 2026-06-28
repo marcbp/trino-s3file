@@ -24,7 +24,6 @@ import org.junit.jupiter.api.Test;
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.io.StringReader;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -135,8 +134,8 @@ class TextTableFunctionTest {
     @Test
     void pageSourceSkipsPartialFirstRecordOnNonInitialSplit() throws IOException {
         when(sessionClient.readBytes(eq(PATH), eq(4L), eq(5L), any(), any())).thenReturn(new byte[] {'x'});
-        when(sessionClient.openReader(eq(PATH), eq(5L), eq(40L), any(Charset.class), any(), any())).thenAnswer(invocation ->
-                new BufferedReader(new StringReader("a;bravo;charlie;")));
+        when(sessionClient.openStream(eq(PATH), eq(5L), eq(40L), any(), any())).thenAnswer(invocation ->
+                stream("a;bravo;charlie;", StandardCharsets.UTF_8));
 
         TextTableFunction.Handle handle = handle(";", 128, 32, StandardCharsets.UTF_8, null, null);
         FileSplit split = new FileSplit("split-1", 5, 20, 40, false, false);
@@ -149,14 +148,14 @@ class TextTableFunctionTest {
         assertEquals("charlie", VarcharType.createUnboundedVarcharType().getObjectValue(page.getBlock(0), 1));
         assertEquals(null, pageSource.getNextSourcePage());
 
-        verify(sessionClient).openReader(eq(PATH), eq(5L), eq(40L), any(Charset.class), any(), any());
+        verify(sessionClient).openStream(eq(PATH), eq(5L), eq(40L), any(), any());
     }
 
     @Test
     void pageSourceKeepsFirstRecordWhenSplitStartsAfterDelimiter() throws IOException {
         when(sessionClient.readBytes(eq(PATH), eq(5L), eq(6L), any(), any())).thenReturn(new byte[] {';'});
-        when(sessionClient.openReader(eq(PATH), eq(6L), eq(40L), any(Charset.class), any(), any())).thenAnswer(invocation ->
-                new BufferedReader(new StringReader("bravo;charlie;")));
+        when(sessionClient.openStream(eq(PATH), eq(6L), eq(40L), any(), any())).thenAnswer(invocation ->
+                stream("bravo;charlie;", StandardCharsets.UTF_8));
 
         TextTableFunction.Handle handle = handle(";", 128, 32, StandardCharsets.UTF_8, null, null);
         FileSplit split = new FileSplit("split-1", 6, 20, 40, false, false);
@@ -173,8 +172,8 @@ class TextTableFunctionTest {
     @Test
     void pageSourceDecodesIso88591BytesIntoJavaStrings() throws IOException {
         byte[] data = "Andr\u00e9\nPr\u00e9jean\n".getBytes(StandardCharsets.ISO_8859_1);
-        when(sessionClient.openReader(eq(PATH), eq(StandardCharsets.ISO_8859_1), any(), any())).thenAnswer(invocation ->
-                new BufferedReader(new InputStreamReader(new ByteArrayInputStream(data), StandardCharsets.ISO_8859_1)));
+        when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenAnswer(invocation ->
+                new ByteArrayInputStream(data));
 
         TextTableFunction.Handle handle = handle("\n", data.length, 32, StandardCharsets.ISO_8859_1, null, null);
 
@@ -189,15 +188,15 @@ class TextTableFunctionTest {
         assertEquals(2, page.getPositionCount());
         assertEquals("André", VarcharType.createUnboundedVarcharType().getObjectValue(page.getBlock(0), 0));
         assertEquals("Préjean", VarcharType.createUnboundedVarcharType().getObjectValue(page.getBlock(0), 1));
-        verify(sessionClient).openReader(eq(PATH), eq(StandardCharsets.ISO_8859_1), any(), any());
+        verify(sessionClient).openStream(eq(PATH), eq(0L), any(), any(), any());
     }
 
     @Test
     void pageSourceFlushesProgressBeforeBatchIsFullForLargeRecords() throws IOException {
         String largeLine = "x".repeat(8 * 1024 * 1024 + 1);
         String data = largeLine + "\nsmall\n";
-        when(sessionClient.openReader(eq(PATH), eq(StandardCharsets.UTF_8), any(), any())).thenAnswer(invocation ->
-                new BufferedReader(new StringReader(data)));
+        when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenAnswer(invocation ->
+                stream(data, StandardCharsets.UTF_8));
 
         TextTableFunction.Handle handle = handle("\n", data.getBytes(StandardCharsets.UTF_8).length, 32, StandardCharsets.UTF_8, null, null);
 
@@ -258,5 +257,9 @@ class TextTableFunctionTest {
                 new ScanSettings(splitSizeBytes, TextTableFunction.Handle.DEFAULT_BATCH_SIZE, charset.name()),
                 AnalysisStats.EMPTY,
                 new TextTableFunction.TextOptions(lineBreak));
+    }
+
+    private static ByteArrayInputStream stream(String value, Charset charset) {
+        return new ByteArrayInputStream(value.getBytes(charset));
     }
 }

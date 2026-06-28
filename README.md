@@ -165,13 +165,13 @@ Set `invalid_row_column` to keep malformed rows instead of failing the query. Th
 
 **Query output**
 
-| @id | firstname  | lastname  | nickname | age | status   |
-|-----|------------|-----------|----------|-----|----------|
-| 1   | André      | Merlaux   | NULL     | 25  | active   |
-| 2   | Roger      | Moulinier | NULL     | 46  | active   |
-| 3   | Jacky      | Jacquard  | NULL     | 44  | active   |
-| 4   | Jean-René  | Calot     | NULL     | 47  | active   |
-| 5   | Georges    | Préjean   | Moïse    | 67  | inactive |
+| @id | firstname  | lastname  | age | status   | nickname |
+|-----|------------|-----------|-----|----------|----------|
+| 1   | André      | Merlaux   | 25  | active   | NULL     |
+| 2   | Roger      | Moulinier | 46  | active   | NULL     |
+| 3   | Jacky      | Jacquard  | 44  | active   | NULL     |
+| 4   | Jean-René  | Calot     | 47  | active   | NULL     |
+| 5   | Georges    | Préjean   | 67  | inactive | Moïse    |
 
 ## Load CSV files
 

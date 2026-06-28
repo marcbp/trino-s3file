@@ -3,6 +3,7 @@ package marcbp.trino.s3file.txt;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import io.airlift.log.Logger;
+import marcbp.trino.s3file.file.ByteDelimitedRecordReader;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.file.TextSplitBoundarySupport;
 import marcbp.trino.s3file.file.SplitPlanner;
@@ -30,12 +31,11 @@ import marcbp.trino.s3file.file.AnalysisStats;
 import marcbp.trino.s3file.file.S3ObjectRef;
 import marcbp.trino.s3file.file.ScanSettings;
 
-import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.Charset;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 import marcbp.trino.s3file.file.BaseTextFileHandle;
 import marcbp.trino.s3file.file.AbstractTextFilePageSource;
@@ -173,8 +173,8 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
 
     private static final class PageSource extends AbstractTextFilePageSource<Handle> {
         private final VarcharType outputType;
-        private final String lineBreak;
         private final byte[] lineBreakBytes;
+        private ByteDelimitedRecordReader recordReader;
         private boolean skipFirstRecord;
 
         private PageSource(
@@ -185,8 +185,7 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
                 List<S3FileColumnHandle> projectedColumns) {
             super(session, s3ClientBuilder, handle, split, projectedColumns);
             this.outputType = VarcharType.createUnboundedVarcharType();
-            this.lineBreak = handle.options().lineBreak();
-            this.lineBreakBytes = lineBreak.getBytes(charset);
+            this.lineBreakBytes = handle.options().lineBreak().getBytes(charset);
             this.skipFirstRecord = split.getStartOffset() > 0;
         }
 
@@ -196,32 +195,28 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
         }
 
         @Override
-        protected void afterReaderOpened(BufferedReader reader) throws IOException {
+        protected void openSource() throws IOException {
             if (skipFirstRecord) {
                 recordS3Request();
                 skipFirstRecord = !TextSplitBoundarySupport.startsAfterDelimiter(sessionClient, handle, split, lineBreakBytes);
             }
+            InputStream stream = openStream();
+            recordReader = new ByteDelimitedRecordReader(stream, charset, lineBreakBytes, false);
         }
 
         @Override
         protected RecordReadResult<?> readNextRecord() throws IOException {
-            Optional<TextFormatSupport.TextRecord> record = TextFormatSupport.readNextLine(
-                    reader(),
-                    charset,
-                    lineBreak,
-                    lineBreakBytes,
-                    primaryLength,
-                    bytesWithinPrimary,
-                    split.isLast());
+            java.util.Optional<ByteDelimitedRecordReader.Record> record = recordReader.readNext();
             if (record.isEmpty()) {
                 return RecordReadResult.finished();
             }
-            TextFormatSupport.TextRecord textRecord = record.get();
+            ByteDelimitedRecordReader.Record textRecord = record.orElseThrow();
             if (skipFirstRecord) {
                 skipFirstRecord = false;
-                return RecordReadResult.skip(textRecord.bytes());
+                return RecordReadResult.skip(textRecord.bytesConsumed());
             }
-            return RecordReadResult.produce(textRecord.value(), textRecord.bytes(), textRecord.finishesSplit());
+            boolean finishesSplit = !split.isLast() && bytesWithinPrimary + textRecord.bytesConsumed() > primaryLength;
+            return RecordReadResult.produce(textRecord.value(), textRecord.bytesConsumed(), finishesSplit);
         }
 
         @Override
@@ -231,6 +226,22 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
                 TextFormatSupport.writeLine(blockBuilder, outputType, (String) payload);
             }
             pageBuilder.declarePosition();
+        }
+
+        @Override
+        protected void closeReader() {
+            if (recordReader == null) {
+                return;
+            }
+            try {
+                recordReader.close();
+            }
+            catch (IOException e) {
+                logger.warn(e, "Failed to close reader for %s", handle.object().path());
+            }
+            finally {
+                recordReader = null;
+            }
         }
     }
 }

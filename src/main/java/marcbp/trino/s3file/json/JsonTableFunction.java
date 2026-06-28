@@ -27,6 +27,7 @@ import marcbp.trino.s3file.S3FileColumnHandle;
 import marcbp.trino.s3file.file.AbstractTextFilePageSource;
 import marcbp.trino.s3file.file.AnalysisStats;
 import marcbp.trino.s3file.file.BaseTextFileHandle;
+import marcbp.trino.s3file.file.ByteDelimitedRecordReader;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.file.S3ObjectRef;
 import marcbp.trino.s3file.file.ScanSettings;
@@ -39,6 +40,7 @@ import marcbp.trino.s3file.s3.S3ClientBuilder;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
@@ -225,6 +227,7 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
         private final List<String> columnNames;
         private final List<ColumnType> columnKinds;
         private final byte[] lineBreakBytes;
+        private ByteDelimitedRecordReader recordReader;
         private boolean skipFirstLine;
 
         private PageSource(
@@ -246,20 +249,24 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
         }
 
         @Override
-        protected void afterReaderOpened(BufferedReader reader) throws IOException {
+        protected void openSource() throws IOException {
             if (skipFirstLine) {
                 recordS3Request();
-                skipFirstLine = !TextSplitBoundarySupport.startsAtLineBoundary(sessionClient, handle, split);
+                skipFirstLine = !TextSplitBoundarySupport.startsAfterDelimiter(sessionClient, handle, split, lineBreakBytes);
             }
+            InputStream stream = openStream();
+            recordReader = new ByteDelimitedRecordReader(stream, charset, lineBreakBytes, true);
         }
 
         @Override
         protected RecordReadResult<?> readNextRecord() throws IOException {
-            String line = reader().readLine();
-            if (line == null) {
+            java.util.Optional<ByteDelimitedRecordReader.Record> record = recordReader.readNext();
+            if (record.isEmpty()) {
                 return RecordReadResult.finished();
             }
-            long lineBytes = line.getBytes(charset).length + lineBreakBytes.length;
+            ByteDelimitedRecordReader.Record lineRecord = record.orElseThrow();
+            String line = lineRecord.value();
+            long lineBytes = lineRecord.bytesConsumed();
             if (skipFirstLine) {
                 skipFirstLine = false;
                 return RecordReadResult.skip(lineBytes);
@@ -270,6 +277,22 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
             boolean finishesSplit = !split.isLast() && bytesWithinPrimary + lineBytes > primaryLength;
             ObjectNode objectNode = JsonFormatSupport.parseObject(line, handle.object().path());
             return RecordReadResult.produce(objectNode, lineBytes, finishesSplit);
+        }
+
+        @Override
+        protected void closeReader() {
+            if (recordReader == null) {
+                return;
+            }
+            try {
+                recordReader.close();
+            }
+            catch (IOException e) {
+                logger.warn(e, "Failed to close reader for %s", handle.object().path());
+            }
+            finally {
+                recordReader = null;
+            }
         }
 
         @Override

@@ -21,6 +21,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.StringReader;
 import java.nio.charset.Charset;
@@ -168,8 +169,8 @@ class CsvTableFunctionTest {
     @Test
     void pageSourceKeepsBoundaryAlignedFirstRowOnNonInitialSplit() throws IOException {
         when(sessionClient.readBytes(eq(PATH), eq(9L), eq(10L), any(), any())).thenReturn(new byte[] {'\n'});
-        when(sessionClient.openReader(eq(PATH), eq(10L), eq(40L), any(Charset.class), any(), any())).thenAnswer(invocation ->
-                new BufferedReader(new StringReader("3;4\n5;6\n")));
+        when(sessionClient.openStream(eq(PATH), eq(10L), eq(40L), any(), any())).thenAnswer(invocation ->
+                stream("3;4\n5;6\n", StandardCharsets.UTF_8));
 
         CsvTableFunction.Handle handle = handle(List.of("c1", "c2"), false, 128, 32);
         FileSplit split = new FileSplit("split-1", 10, 20, 40, false, false);
@@ -180,6 +181,27 @@ class CsvTableFunctionTest {
         assertEquals(2, page.getPositionCount());
         assertEquals("3", VarcharType.createUnboundedVarcharType().getObjectValue(page.getBlock(0), 0));
         assertEquals("5", VarcharType.createUnboundedVarcharType().getObjectValue(page.getBlock(0), 1));
+        assertEquals(null, pageSource.getNextSourcePage());
+    }
+
+    @Test
+    void pageSourceReadsQuotedMultilineCsvRecordAsSingleRow() throws IOException {
+        String content = "1;\"hello\nworld\"\n";
+        when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenAnswer(invocation ->
+                stream(content, StandardCharsets.UTF_8));
+
+        CsvTableFunction.Handle handle = handle(List.of("id", "comment"), false, content.getBytes(StandardCharsets.UTF_8).length, 64);
+
+        ConnectorPageSource pageSource = function.createPageSource(
+                mock(ConnectorSession.class),
+                handle,
+                handle.toWholeFileSplit(),
+                allColumns(handle));
+        SourcePage page = nextPage(pageSource);
+
+        assertEquals(1, page.getPositionCount());
+        assertEquals("1", VarcharType.createUnboundedVarcharType().getObjectValue(page.getBlock(0), 0));
+        assertEquals("hello\nworld", VarcharType.createUnboundedVarcharType().getObjectValue(page.getBlock(1), 0));
         assertEquals(null, pageSource.getNextSourcePage());
     }
 
@@ -202,5 +224,9 @@ class CsvTableFunctionTest {
         SourcePage page = pageSource.getNextSourcePage();
         assertInstanceOf(SourcePage.class, page);
         return page;
+    }
+
+    private static ByteArrayInputStream stream(String value, Charset charset) {
+        return new ByteArrayInputStream(value.getBytes(charset));
     }
 }

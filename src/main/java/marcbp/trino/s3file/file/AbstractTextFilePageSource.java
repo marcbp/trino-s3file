@@ -11,6 +11,7 @@ import marcbp.trino.s3file.S3FileColumnHandle;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
 
 import java.io.BufferedReader;
+import java.io.InputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
@@ -35,6 +36,7 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
     protected BufferedReader reader;
     protected boolean finished;
     protected boolean sessionClosed;
+    private boolean sourceOpened;
     protected long bytesWithinPrimary;
     protected long completedPositions;
     protected long readTimeNanos;
@@ -85,6 +87,11 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
         // Default no-op.
     }
 
+    protected void openSource() throws IOException {
+        reader = openReader();
+        afterReaderOpened(reader);
+    }
+
     protected abstract RecordReadResult<?> readNextRecord() throws IOException;
 
     protected abstract void appendRecord(PageBuilder pageBuilder, Object payload);
@@ -107,16 +114,34 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
                 handle.object().eTagRef());
     }
 
+    protected final InputStream openStream() throws IOException {
+        recordS3Request();
+        if (split.isWholeFile()) {
+            return sessionClient.openStream(
+                    handle.object().path(),
+                    0,
+                    null,
+                    handle.object().versionIdRef(),
+                    handle.object().eTagRef());
+        }
+        return sessionClient.openStream(
+                handle.object().path(),
+                split.getStartOffset(),
+                split.getRangeEndExclusive(),
+                handle.object().versionIdRef(),
+                handle.object().eTagRef());
+    }
+
     private void ensureReader() throws IOException {
-        if (reader != null || finished) {
+        if (sourceOpened || finished) {
             return;
         }
         if (finishWhenEmptySplit()) {
             markFinished();
             return;
         }
-        reader = openReader();
-        afterReaderOpened(reader);
+        openSource();
+        sourceOpened = true;
     }
 
     protected void closeReader() {
@@ -131,6 +156,7 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
         }
         finally {
             reader = null;
+            sourceOpened = false;
         }
     }
 

@@ -30,6 +30,7 @@ import software.amazon.awssdk.services.s3.model.S3Object;
 import java.io.BufferedReader;
 import java.io.Closeable;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -279,14 +280,18 @@ public final class S3ClientBuilder implements Closeable {
         }
 
         public BufferedReader openReader(String s3Uri, long start, Long endExclusive, Charset charset, Optional<String> versionId, Optional<String> eTag) {
+            InputStream stream = openStream(s3Uri, start, endExclusive, versionId, eTag);
+            return new ClosingBufferedReader(new InputStreamReader(stream, charset), stream);
+        }
+
+        public InputStream openStream(String s3Uri, long start, Long endExclusive, Optional<String> versionId, Optional<String> eTag) {
             ResponseInputStream<GetObjectResponse> stream = openObjectStream(s3Uri, start, endExclusive, versionId, eTag);
             logger.info("Opened S3 object %s/%s (versionId=%s, etag=%s)",
                     S3UriUtils.parse(s3Uri).bucket(),
                     S3UriUtils.parse(s3Uri).key(),
                     versionId.orElse("n/a"),
                     eTag.orElse("n/a"));
-
-            return new ClosingBufferedReader(new InputStreamReader(stream, charset), stream);
+            return stream;
         }
 
         public byte[] readBytes(String s3Uri, long start, Long endExclusive, Optional<String> versionId, Optional<String> eTag)
@@ -394,10 +399,10 @@ public final class S3ClientBuilder implements Closeable {
         }
 
         private final class ClosingBufferedReader extends BufferedReader {
-            private final ResponseInputStream<GetObjectResponse> stream;
+            private final InputStream stream;
 
             private ClosingBufferedReader(InputStreamReader reader,
-                                          ResponseInputStream<GetObjectResponse> stream) {
+                                          InputStream stream) {
                 super(reader);
                 this.stream = stream;
             }

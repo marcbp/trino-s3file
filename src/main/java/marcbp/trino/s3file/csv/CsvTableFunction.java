@@ -22,6 +22,7 @@ import marcbp.trino.s3file.S3FileColumnHandle;
 import marcbp.trino.s3file.file.AbstractTextFilePageSource;
 import marcbp.trino.s3file.file.AnalysisStats;
 import marcbp.trino.s3file.file.BaseTextFileHandle;
+import marcbp.trino.s3file.file.ByteDelimitedRecordReader;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.file.S3ObjectRef;
 import marcbp.trino.s3file.file.ScanSettings;
@@ -31,9 +32,11 @@ import marcbp.trino.s3file.s3.S3ClientBuilder;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -212,6 +215,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
     private static final class PageSource extends AbstractTextFilePageSource<Handle> {
         private final byte[] lineBreakBytes;
         private final CSVParser parser;
+        private ByteDelimitedRecordReader recordReader;
         private boolean skipFirstLine;
 
         private PageSource(
@@ -232,38 +236,64 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
         }
 
         @Override
-        protected void afterReaderOpened(BufferedReader reader) throws IOException {
+        protected void openSource() throws IOException {
             if (skipFirstLine) {
                 recordS3Request();
-                skipFirstLine = !TextSplitBoundarySupport.startsAtLineBoundary(sessionClient, handle, split);
+                skipFirstLine = !TextSplitBoundarySupport.startsAfterDelimiter(sessionClient, handle, split, lineBreakBytes);
             }
+            InputStream stream = openStream();
+            recordReader = new ByteDelimitedRecordReader(stream, charset, lineBreakBytes, true);
             if (handle.options().headerPresent() && split.isFirst()) {
-                String header = reader.readLine();
+                CsvRecord header = readCsvRecord();
                 if (header != null) {
-                    addBytesWithinPrimary(CsvFormatSupport.calculateLineBytes(header, charset, lineBreakBytes));
+                    addBytesWithinPrimary(header.bytesConsumed());
                 }
             }
         }
 
         @Override
         protected RecordReadResult<?> readNextRecord() throws IOException {
-            String line = reader().readLine();
-            if (line == null) {
+            CsvRecord record = readCsvRecord();
+            if (record == null) {
                 return RecordReadResult.finished();
             }
 
-            long lineBytes = CsvFormatSupport.calculateLineBytes(line, charset, lineBreakBytes);
             if (skipFirstLine) {
                 skipFirstLine = false;
-                return RecordReadResult.skip(lineBytes);
+                return RecordReadResult.skip(record.bytesConsumed());
             }
-            if (line.isBlank()) {
-                return RecordReadResult.skip(lineBytes);
+            if (record.blank()) {
+                return RecordReadResult.skip(record.bytesConsumed());
             }
 
-            String[] values = CsvFormatSupport.parseCsvLine(line, parser);
-            boolean finishesSplit = !split.isLast() && bytesWithinPrimary + lineBytes > primaryLength;
-            return RecordReadResult.produce(values, lineBytes, finishesSplit);
+            boolean finishesSplit = !split.isLast() && bytesWithinPrimary + record.bytesConsumed() > primaryLength;
+            return RecordReadResult.produce(record.values(), record.bytesConsumed(), finishesSplit);
+        }
+
+        private CsvRecord readCsvRecord() throws IOException {
+            long bytesConsumed = 0;
+            boolean blank = true;
+            List<String> values = new ArrayList<>();
+            while (true) {
+                java.util.Optional<ByteDelimitedRecordReader.Record> lineRecord = recordReader.readNext();
+                if (lineRecord.isEmpty()) {
+                    if (parser.isPending()) {
+                        throw new IllegalArgumentException("Unterminated CSV record at end of input");
+                    }
+                    return null;
+                }
+
+                ByteDelimitedRecordReader.Record line = lineRecord.orElseThrow();
+                bytesConsumed += line.bytesConsumed();
+                blank &= line.value().isBlank();
+                String[] parsedValues = parser.parseLineMulti(line.value());
+                if (parsedValues != null) {
+                    Collections.addAll(values, parsedValues);
+                }
+                if (!parser.isPending()) {
+                    return new CsvRecord(values.toArray(String[]::new), bytesConsumed, blank);
+                }
+            }
         }
 
         @Override
@@ -283,6 +313,24 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
             }
             pageBuilder.declarePosition();
         }
+
+        @Override
+        protected void closeReader() {
+            if (recordReader == null) {
+                return;
+            }
+            try {
+                recordReader.close();
+            }
+            catch (IOException e) {
+                logger.warn(e, "Failed to close reader for %s", handle.object().path());
+            }
+            finally {
+                recordReader = null;
+            }
+        }
+
+        private record CsvRecord(String[] values, long bytesConsumed, boolean blank) {}
     }
 
 }
