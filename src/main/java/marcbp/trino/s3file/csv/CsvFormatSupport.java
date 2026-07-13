@@ -23,13 +23,22 @@ public final class CsvFormatSupport {
     }
 
     public static List<String> inferColumnNames(BufferedReader reader, String sourceDescription, char delimiter, boolean headerPresent) {
+        return inferColumnNames(reader, sourceDescription, delimiter, headerPresent, false);
+    }
+
+    public static List<String> inferColumnNames(
+            BufferedReader reader,
+            String sourceDescription,
+            char delimiter,
+            boolean headerPresent,
+            boolean multiline) {
         requireNonNull(reader, "reader is null");
         try {
-            String header = reader.readLine();
-            if (header == null) {
+            CSVParser parser = newParser(delimiter);
+            String[] tokens = readRecord(reader, parser, multiline);
+            if (tokens == null) {
                 throw new IllegalArgumentException("CSV file is empty: " + sourceDescription);
             }
-            String[] tokens = parseCsvLine(header, newParser(delimiter));
             List<String> columns = new ArrayList<>();
             if (headerPresent) {
                 for (String token : tokens) {
@@ -58,6 +67,24 @@ public final class CsvFormatSupport {
         catch (IOException e) {
             throw new UncheckedIOException("Failed to read CSV header: " + sourceDescription, e);
         }
+    }
+
+    private static String[] readRecord(BufferedReader reader, CSVParser parser, boolean multiline) throws IOException {
+        List<String> values = new ArrayList<>();
+        String line;
+        while ((line = reader.readLine()) != null) {
+            String[] parsed = multiline ? parser.parseLineMulti(line) : parser.parseLine(line);
+            if (parsed != null) {
+                java.util.Collections.addAll(values, parsed);
+            }
+            if (!multiline || !parser.isPending()) {
+                return values.toArray(String[]::new);
+            }
+        }
+        if (parser.isPending()) {
+            throw new IllegalArgumentException("Unterminated multiline CSV record");
+        }
+        return values.isEmpty() ? null : values.toArray(String[]::new);
     }
 
     public static CSVParser newParser(char delimiter) {

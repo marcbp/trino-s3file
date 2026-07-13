@@ -102,7 +102,7 @@ class TextTableFunctionTest {
     }
 
     @Test
-    void createSplitsRespectsLookaheadAndBoundaries() {
+    void createSplitsExposeTailRangesToFinishBoundaryRecords() {
         TextTableFunction.Handle handle = handle("\n", 10, 4, StandardCharsets.UTF_8, null, null);
 
         List<FileSplit> splits = function.createSplits(handle);
@@ -167,6 +167,37 @@ class TextTableFunctionTest {
         assertEquals("bravo", VarcharType.createUnboundedVarcharType().getObjectValue(page.getBlock(0), 0));
         assertEquals("charlie", VarcharType.createUnboundedVarcharType().getObjectValue(page.getBlock(0), 1));
         assertEquals(null, pageSource.getNextSourcePage());
+    }
+
+    @Test
+    void adjacentSplitsKeepRecordLargerThanFormerLookaheadExactlyOnce() throws IOException {
+        String largeRecord = "x".repeat(300 * 1024);
+        String content = "first\n" + largeRecord + "\nlast\n";
+        byte[] contentBytes = content.getBytes(StandardCharsets.UTF_8);
+        long boundary = "first\n".getBytes(StandardCharsets.UTF_8).length + 10L;
+
+        when(sessionClient.openStream(eq(PATH), eq(0L), eq((long) contentBytes.length), any(), any())).thenAnswer(invocation ->
+                new ByteArrayInputStream(contentBytes));
+        when(sessionClient.readBytes(eq(PATH), eq(boundary - 1), eq(boundary), any(), any())).thenReturn(new byte[] {'x'});
+        when(sessionClient.openStream(eq(PATH), eq(boundary), eq((long) contentBytes.length), any(), any())).thenAnswer(invocation ->
+                new ByteArrayInputStream(java.util.Arrays.copyOfRange(contentBytes, (int) boundary, contentBytes.length)));
+
+        TextTableFunction.Handle handle = handle("\n", contentBytes.length, (int) boundary, StandardCharsets.UTF_8, null, null);
+        FileSplit first = new FileSplit("split-0", 0, boundary, contentBytes.length, true, false);
+        FileSplit second = new FileSplit("split-1", boundary, contentBytes.length, contentBytes.length, false, true);
+
+        ConnectorPageSource firstSource = function.createPageSource(mock(ConnectorSession.class), handle, first, allColumns(handle));
+        ConnectorPageSource secondSource = function.createPageSource(mock(ConnectorSession.class), handle, second, allColumns(handle));
+
+        SourcePage firstPage = nextPage(firstSource);
+        SourcePage secondPage = nextPage(secondSource);
+        assertEquals(2, firstPage.getPositionCount());
+        assertEquals("first", VarcharType.createUnboundedVarcharType().getObjectValue(firstPage.getBlock(0), 0));
+        assertEquals(largeRecord, VarcharType.createUnboundedVarcharType().getObjectValue(firstPage.getBlock(0), 1));
+        assertEquals(1, secondPage.getPositionCount());
+        assertEquals("last", VarcharType.createUnboundedVarcharType().getObjectValue(secondPage.getBlock(0), 0));
+        assertEquals(null, firstSource.getNextSourcePage());
+        assertEquals(null, secondSource.getNextSourcePage());
     }
 
     @Test

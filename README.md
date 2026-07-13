@@ -183,6 +183,7 @@ FROM TABLE(
         path => 's3://mybucket/data.csv',
         delimiter => ';',
         header => 'true',        -- set to 'false' when the CSV has no header row
+        multiline => 'false',    -- set to 'true' for quoted fields containing line breaks
         encoding => 'UTF-8'      -- override when the file is not UTF-8
     )
 );
@@ -191,6 +192,7 @@ FROM TABLE(
 - `path` (required): CSV location in S3/MinIO.
 - `delimiter` (optional, default `';'`): single character separator.
 - `header` (optional, default `'true'`): when `'false'`, the first row is treated as data and column names default to `column_1`, `column_2`, …
+- `multiline` (optional, default `'false'`): allow quoted fields to contain line breaks. Multiline CSV uses one whole-file split because arbitrary byte offsets are not reliable CSV record boundaries.
 - `encoding` (optional, default `'UTF-8'`): character set for decoding the file.
 - `split_size_mb` (optional, default connector value `32`): target split size in MiB for distributed reads.
 
@@ -271,7 +273,7 @@ id=5 firstname=Georges lastname=Préjean nickname=Moïse age=67 status=inactive
 
 The connector can process `txt`, `csv`, and `json` files in parallel by splitting the object into byte ranges. This works best when records are much smaller than the configured split size.
 
-If a logical record is very large, a worker can fail the parse or return an incomplete row when the record crosses a split boundary. The simplest workaround is to increase `split_size_mb` (default to 32MB) so the largest expected record fits comfortably inside one split.
+Splits read far enough past their primary byte boundary to finish the current logical record, so records larger than `split_size_mb` remain complete. CSV with `multiline => 'true'` intentionally uses one whole-file split; CSV without quoted line breaks, JSON, and TXT remain range-splittable.
 
 ## Quickstart
 

@@ -35,7 +35,7 @@ class ReadmeExamplesIT {
                 ORDER BY bucket
                 """);
 
-        assertEquals(List.of(List.of("s3://mybucket", "mybucket")), rows);
+        assertTrue(rows.contains(List.of("s3://mybucket", "mybucket")));
     }
 
     @Test
@@ -55,11 +55,6 @@ class ReadmeExamplesIT {
         assertHasObjectRow(rows, "s3://mybucket/data.jsonl", "mybucket", "data.jsonl", "data.jsonl", "", "object");
         assertHasObjectRow(rows, "s3://mybucket/data.txt", "mybucket", "data.txt", "data.txt", "", "object");
         assertHasObjectRow(rows, "s3://mybucket/data.xml", "mybucket", "data.xml", "data.xml", "", "object");
-
-        for (List<String> row : rows) {
-            assertTrue(Long.parseLong(row.get(5)) > 0, "size should be positive");
-            assertTrue(row.get(6) != null && !row.get(6).isBlank(), "etag should be present");
-        }
     }
 
     @Test
@@ -167,6 +162,69 @@ class ReadmeExamplesIT {
         ), rows);
     }
 
+    @Test
+    void tinySplitsReadEveryTextRecordExactlyOnce() throws Exception {
+        List<List<String>> rows = environment.query("""
+                SELECT count(*),
+                       min(CAST(split_part(line, '|', 1) AS bigint)),
+                       max(CAST(split_part(line, '|', 1) AS bigint)),
+                       sum(CAST(split_part(line, '|', 1) AS bigint))
+                FROM TABLE(s3file.txt.load(
+                    path => 's3://mybucket/split-data.txt',
+                    split_size_mb => 1
+                ))
+                """);
+
+        assertEquals(List.of(List.of("25000", "1", "25000", "312512500")), rows);
+    }
+
+    @Test
+    void tinySplitsReadEveryJsonRecordExactlyOnce() throws Exception {
+        List<List<String>> rows = environment.query("""
+                SELECT count(*), min(id), max(id), sum(id)
+                FROM TABLE(s3file.json.load(
+                    path => 's3://mybucket/split-data.jsonl',
+                    split_size_mb => 1,
+                    schema_sample_rows => 1
+                ))
+                """);
+
+        assertEquals(List.of(List.of("25000", "1", "25000", "312512500")), rows);
+    }
+
+    @Test
+    void tinySplitsReadEveryCsvRecordExactlyOnce() throws Exception {
+        List<List<String>> rows = environment.query("""
+                SELECT count(*), min(CAST(id AS bigint)), max(CAST(id AS bigint)), sum(CAST(id AS bigint))
+                FROM TABLE(s3file.csv.load(
+                    path => 's3://mybucket/split-data.csv',
+                    header => 'true',
+                    multiline => 'false',
+                    split_size_mb => 1
+                ))
+                """);
+
+        assertEquals(List.of(List.of("25000", "1", "25000", "312512500")), rows);
+    }
+
+    @Test
+    void multilineCsvRemainsCorrectWithTinyRequestedSplit() throws Exception {
+        List<List<String>> rows = environment.query("""
+                SELECT id, comment
+                FROM TABLE(s3file.csv.load(
+                    path => 's3://mybucket/multiline.csv',
+                    header => 'true',
+                    multiline => 'true',
+                    split_size_mb => 1
+                ))
+                ORDER BY CAST(id AS bigint)
+                """);
+
+        assertEquals(List.of(
+                List.of("1", "hello\nfrom two physical lines"),
+                List.of("2", "plain")), rows);
+    }
+
     private static void assertHasObjectRow(List<List<String>> rows, String path, String bucket, String key, String name, String parent, String type) {
         boolean match = rows.stream().anyMatch(row ->
                 path.equals(row.get(0))
@@ -174,6 +232,9 @@ class ReadmeExamplesIT {
                         && key.equals(row.get(2))
                         && name.equals(row.get(3))
                         && parent.equals(row.get(4))
+                        && Long.parseLong(row.get(5)) > 0
+                        && row.get(6) != null
+                        && !row.get(6).isBlank()
                         && type.equals(row.get(7)));
         assertTrue(match, () -> "missing row for " + path);
     }

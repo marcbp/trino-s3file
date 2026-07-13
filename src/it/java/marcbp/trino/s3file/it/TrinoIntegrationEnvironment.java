@@ -128,6 +128,10 @@ final class TrinoIntegrationEnvironment implements AutoCloseable {
         putObject("data.jsonl", JSON_DATA);
         putObject("data.txt", TXT_DATA);
         putObject("data.xml", XML_DATA);
+        putObject("split-data.txt", largeTextData());
+        putObject("split-data.jsonl", largeJsonData());
+        putObject("split-data.csv", largeCsvData());
+        putObject("multiline.csv", "id;comment\n1;\"hello\nfrom two physical lines\"\n2;plain\n");
     }
 
     List<List<String>> query(String sql) throws IOException, InterruptedException {
@@ -252,6 +256,35 @@ final class TrinoIntegrationEnvironment implements AutoCloseable {
         s3Client.putObject(
                 PutObjectRequest.builder().bucket(BUCKET).key(key).build(),
                 RequestBody.fromString(body, StandardCharsets.UTF_8));
+    }
+
+    private static String largeTextData() {
+        String payload = "t".repeat(96);
+        StringBuilder data = new StringBuilder(3 * 1024 * 1024);
+        for (int id = 1; id <= 25_000; id++) {
+            data.append(id).append('|').append(payload).append('\n');
+        }
+        return data.toString();
+    }
+
+    private static String largeJsonData() {
+        String payload = "j".repeat(96);
+        StringBuilder data = new StringBuilder(4 * 1024 * 1024);
+        for (int id = 1; id <= 25_000; id++) {
+            data.append("{\"id\":").append(id)
+                    .append(",\"payload\":\"").append(payload)
+                    .append("\"}\n");
+        }
+        return data.toString();
+    }
+
+    private static String largeCsvData() {
+        String payload = "c".repeat(96);
+        StringBuilder data = new StringBuilder(3 * 1024 * 1024).append("id;payload\n");
+        for (int id = 1; id <= 25_000; id++) {
+            data.append(id).append(';').append(payload).append('\n');
+        }
+        return data.toString();
     }
 
     private static String setting(String propertyName, String envName, String fallback) {

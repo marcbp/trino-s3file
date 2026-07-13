@@ -55,7 +55,7 @@ import static marcbp.trino.s3file.util.TableFunctionArguments.splitSizeMbArgumen
  */
 public final class CsvTableFunction extends AbstractConnectorTableFunction {    
     private static final String DELIMITER_ARGUMENT = "DELIMITER";
-    private static final int LOOKAHEAD_BYTES = 256 * 1024;
+    private static final String MULTILINE_ARGUMENT = "MULTILINE";
 
     private final S3ClientBuilder s3ClientBuilder;
     private final int defaultSplitSizeBytes;
@@ -81,6 +81,11 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                                 .type(VarcharType.VARCHAR)
                                 .defaultValue(Slices.utf8Slice("true"))
                                 .build(),
+                        ScalarArgumentSpecification.builder()
+                                .name(MULTILINE_ARGUMENT)
+                                .type(VarcharType.VARCHAR)
+                                .defaultValue(Slices.utf8Slice("false"))
+                                .build(),
                         encodingArgumentSpecification(),
                         splitSizeMbArgumentSpecification()
                 ),
@@ -103,6 +108,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
 
         logger.info("Analyzing load table function for path %s with delimiter %s", s3Path, delimiter);
         boolean headerPresent = optionalBoolean(arguments, "HEADER", true);
+        boolean multiline = optionalBoolean(arguments, MULTILINE_ARGUMENT, false);
         logger.info("Header present: %s", headerPresent);
 
         List<String> columnNames;
@@ -110,7 +116,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
         try (S3ClientBuilder.SessionClient s3 = s3ClientBuilder.forSession(session)) {
             metadata = s3.getObjectMetadata(s3Path);
             try (BufferedReader reader = s3.openReader(s3Path, charset, metadata.versionId(), metadata.eTag())) {
-                columnNames = CsvFormatSupport.inferColumnNames(reader, s3Path, delimiter, headerPresent);
+                columnNames = CsvFormatSupport.inferColumnNames(reader, s3Path, delimiter, headerPresent, multiline);
             }
         }
         catch (IOException e) {
@@ -130,7 +136,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                         new ScanSettings(splitSizeBytes, BaseTextFileHandle.DEFAULT_BATCH_SIZE, charset.name()),
                         new AnalysisStats(1L, columnNames.size(), System.nanoTime() - analyzeStartedAt),
                         new CsvSchema(columnNames),
-                        new CsvOptions(delimiter, headerPresent)))
+                        new CsvOptions(delimiter, headerPresent, multiline)))
                 .build();
     }
 
@@ -145,7 +151,10 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
     }
 
     public List<FileSplit> createSplits(Handle handle) {
-        return SplitPlanner.planSplits(handle.object().size(), handle.scan().splitSizeBytes(), LOOKAHEAD_BYTES);
+        if (handle.options().multiline()) {
+            return List.of(handle.toWholeFileSplit());
+        }
+        return SplitPlanner.planSplits(handle.object().size(), handle.scan().splitSizeBytes());
     }
 
     public ConnectorPageSource createPageSource(ConnectorSession session, Handle handle, FileSplit split, List<S3FileColumnHandle> columns) {
@@ -161,7 +170,8 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
 
     public record CsvOptions(
             @JsonProperty("delimiter") char delimiter,
-            @JsonProperty("header") boolean headerPresent) {
+            @JsonProperty("header") boolean headerPresent,
+            @JsonProperty("multiline") boolean multiline) {
         @JsonCreator
         public CsvOptions {}
     }
@@ -287,7 +297,9 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                 bytesConsumed += line.bytesConsumed();
                 String value = line.value(charset);
                 blank &= value.isBlank();
-                String[] parsedValues = parser.parseLineMulti(value);
+                String[] parsedValues = handle.options().multiline()
+                        ? parser.parseLineMulti(value)
+                        : parser.parseLine(value);
                 if (parsedValues != null) {
                     Collections.addAll(values, parsedValues);
                 }

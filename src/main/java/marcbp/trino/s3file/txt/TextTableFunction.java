@@ -53,8 +53,6 @@ import static marcbp.trino.s3file.util.TableFunctionArguments.splitSizeMbArgumen
  */
 public final class TextTableFunction extends AbstractConnectorTableFunction {
     private static final String LINE_BREAK_ARGUMENT = "LINE_BREAK";
-    private static final int LOOKAHEAD_BYTES = 256 * 1024;
-
     private final S3ClientBuilder s3ClientBuilder;
     private final int defaultSplitSizeBytes;
     private final Logger logger = Logger.get(TextTableFunction.class);
@@ -123,7 +121,7 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
     }
 
     public List<FileSplit> createSplits(Handle handle) {
-        return SplitPlanner.planSplits(handle.object().size(), handle.scan().splitSizeBytes(), LOOKAHEAD_BYTES);
+        return SplitPlanner.planSplits(handle.object().size(), handle.scan().splitSizeBytes());
     }
 
     public ConnectorPageSource createPageSource(ConnectorSession session, Handle handle, FileSplit split, List<S3FileColumnHandle> columns) {

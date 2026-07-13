@@ -76,6 +76,7 @@ class CsvTableFunctionTest {
         assertEquals(PATH, handle.object().path());
         assertEquals(List.of("first", "second"), handle.schema().columns());
         assertTrue(handle.options().headerPresent());
+        assertFalse(handle.options().multiline());
         assertEquals(1024, handle.scan().batchSize());
         assertEquals(64L, handle.object().size());
         assertEquals(Optional.of("etag-1"), handle.object().eTagRef());
@@ -152,7 +153,7 @@ class CsvTableFunctionTest {
 
     @Test
     void createSplitsGeneratesMultipleRanges() {
-        CsvTableFunction.Handle handle = handle(List.of("c1", "c2"), true, 25 * 1024 * 1024L, 8 * 1024 * 1024);
+        CsvTableFunction.Handle handle = handle(List.of("c1", "c2"), true, false, 25 * 1024 * 1024L, 8 * 1024 * 1024);
 
         List<FileSplit> splits = function.createSplits(handle);
 
@@ -167,12 +168,43 @@ class CsvTableFunctionTest {
     }
 
     @Test
+    void multilineCsvUsesOneWholeFileSplit() {
+        CsvTableFunction.Handle handle = handle(List.of("c1", "c2"), true, true, 25 * 1024 * 1024L, 8 * 1024 * 1024);
+
+        List<FileSplit> splits = function.createSplits(handle);
+
+        assertEquals(1, splits.size());
+        assertTrue(splits.get(0).isWholeFile());
+    }
+
+    @Test
+    void analyzeInfersMultilineHeaderWhenEnabled() {
+        when(sessionClient.openReader(eq(PATH), any(Charset.class), any(), any())).thenAnswer(invocation ->
+                new BufferedReader(new StringReader("\"first\nname\";second\n1;2\n")));
+        when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(64L, Optional.empty(), Optional.empty()));
+
+        Map<String, Argument> arguments = Map.of(
+                "PATH", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PATH)),
+                "MULTILINE", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice("true")));
+
+        CsvTableFunction.Handle handle = (CsvTableFunction.Handle) function.analyze(
+                mock(ConnectorSession.class),
+                new ConnectorTransactionHandle() {},
+                arguments,
+                null).getHandle();
+
+        assertTrue(handle.options().multiline());
+        assertEquals(List.of("first\nname", "second"), handle.schema().columns());
+        assertTrue(function.createSplits(handle).get(0).isWholeFile());
+    }
+
+    @Test
     void pageSourceKeepsBoundaryAlignedFirstRowOnNonInitialSplit() throws IOException {
         when(sessionClient.readBytes(eq(PATH), eq(9L), eq(10L), any(), any())).thenReturn(new byte[] {'\n'});
         when(sessionClient.openStream(eq(PATH), eq(10L), eq(40L), any(), any())).thenAnswer(invocation ->
                 stream("3;4\n5;6\n", StandardCharsets.UTF_8));
 
-        CsvTableFunction.Handle handle = handle(List.of("c1", "c2"), false, 128, 32);
+        CsvTableFunction.Handle handle = handle(List.of("c1", "c2"), false, false, 128, 32);
         FileSplit split = new FileSplit("split-1", 10, 20, 40, false, false);
 
         ConnectorPageSource pageSource = function.createPageSource(mock(ConnectorSession.class), handle, split, allColumns(handle));
@@ -190,7 +222,7 @@ class CsvTableFunctionTest {
         when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenAnswer(invocation ->
                 stream(content, StandardCharsets.UTF_8));
 
-        CsvTableFunction.Handle handle = handle(List.of("id", "comment"), false, content.getBytes(StandardCharsets.UTF_8).length, 64);
+        CsvTableFunction.Handle handle = handle(List.of("id", "comment"), false, true, content.getBytes(StandardCharsets.UTF_8).length, 64);
 
         ConnectorPageSource pageSource = function.createPageSource(
                 mock(ConnectorSession.class),
@@ -211,13 +243,18 @@ class CsvTableFunctionTest {
                 .toList();
     }
 
-    private static CsvTableFunction.Handle handle(List<String> columns, boolean headerPresent, long fileSize, int splitSizeBytes) {
+    private static CsvTableFunction.Handle handle(
+            List<String> columns,
+            boolean headerPresent,
+            boolean multiline,
+            long fileSize,
+            int splitSizeBytes) {
         return new CsvTableFunction.Handle(
                 new S3ObjectRef(PATH, fileSize, null, null),
                 new ScanSettings(splitSizeBytes, CsvTableFunction.Handle.DEFAULT_BATCH_SIZE, StandardCharsets.UTF_8.name()),
                 AnalysisStats.EMPTY,
                 new CsvTableFunction.CsvSchema(columns),
-                new CsvTableFunction.CsvOptions(';', headerPresent));
+                new CsvTableFunction.CsvOptions(';', headerPresent, multiline));
     }
 
     private static SourcePage nextPage(ConnectorPageSource pageSource) {
