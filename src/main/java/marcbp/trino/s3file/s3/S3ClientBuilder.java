@@ -291,7 +291,7 @@ public final class S3ClientBuilder implements Closeable {
                     S3UriUtils.parse(s3Uri).key(),
                     versionId.orElse("n/a"),
                     eTag.orElse("n/a"));
-            return stream;
+            return new AbortOnCloseInputStream(stream);
         }
 
         public byte[] readBytes(String s3Uri, long start, Long endExclusive, Optional<String> versionId, Optional<String> eTag)
