@@ -40,8 +40,11 @@ jobs:
           java-version: "25"
           cache: maven
 
+      - name: Build Trino image
+        run: docker compose build trino-coordinator
+
       - name: Start Trino and MinIO
-        run: docker compose up -d --build minio trino-coordinator trino-worker
+        run: docker compose up -d --no-build minio trino-coordinator trino-worker
 
       - name: Wait for Trino
         run: |
