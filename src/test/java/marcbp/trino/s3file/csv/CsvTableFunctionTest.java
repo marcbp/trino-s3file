@@ -77,7 +77,7 @@ class CsvTableFunctionTest {
         assertEquals(List.of("first", "second"), handle.schema().columns());
         assertTrue(handle.options().headerPresent());
         assertFalse(handle.options().multiline());
-        assertEquals(1024, handle.scan().batchSize());
+        assertEquals(1024, handle.scan().page().batchSize());
         assertEquals(64L, handle.object().size());
         assertEquals(Optional.of("etag-1"), handle.object().eTagRef());
         assertEquals(Optional.empty(), handle.object().versionIdRef());
@@ -113,7 +113,7 @@ class CsvTableFunctionTest {
 
         CsvTableFunction.Handle handle = (CsvTableFunction.Handle) analysis.getHandle();
         assertEquals(List.of("column_1", "column_2", "column_3"), handle.schema().columns());
-        assertTrue(handle.scan().batchSize() > 0);
+        assertTrue(handle.scan().page().batchSize() > 0);
         assertEquals(64L, handle.object().size());
         assertEquals(StandardCharsets.UTF_8.name(), handle.scan().charsetName());
 
@@ -251,7 +251,7 @@ class CsvTableFunctionTest {
             int splitSizeBytes) {
         return new CsvTableFunction.Handle(
                 new S3ObjectRef(PATH, fileSize, null, null),
-                new ScanSettings(splitSizeBytes, CsvTableFunction.Handle.DEFAULT_BATCH_SIZE, StandardCharsets.UTF_8.name()),
+                new ScanSettings(splitSizeBytes, new marcbp.trino.s3file.file.PageSettings(CsvTableFunction.Handle.DEFAULT_BATCH_SIZE, 8L * 1024L * 1024L), StandardCharsets.UTF_8.name()),
                 AnalysisStats.EMPTY,
                 new CsvTableFunction.CsvSchema(columns),
                 new CsvTableFunction.CsvOptions(';', headerPresent, multiline));

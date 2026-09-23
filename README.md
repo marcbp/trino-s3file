@@ -284,13 +284,15 @@ Set the connector-wide split size default in the catalog properties:
 ```properties
 connector.name=s3file
 s3.default-split-size-mb=32
+s3.page-batch-size=1024
+s3.page-target-size-mb=8
 s3.max-connections-per-worker=10
 s3.connection-acquisition-timeout-s=60
 ```
 
 `split_size_mb` on `txt.load`, `csv.load`, and `json.load` overrides this value per query. `xml.load` still reads whole files and does not parallelize a single object across workers.
 
-`s3.max-connections-per-worker` controls the S3 client connection pool size per worker. Increase it when concurrent splits start waiting for an available connection. `s3.connection-acquisition-timeout-s` sets how long the client waits for a free connection before failing the request. If omitted, the connector uses `5` connections per worker and a `5` minute acquisition timeout.
+`s3.page-batch-size` controls the maximum initial row capacity of output pages. `s3.page-target-size-mb` limits the bytes scanned before returning a page; larger values reduce page overhead but increase per-driver memory and cancellation latency. If omitted, they default to `1024` rows and `8` MiB. `s3.max-connections-per-worker` controls the S3 client connection pool size per worker. Increase it when concurrent splits start waiting for an available connection. `s3.connection-acquisition-timeout-s` sets how long the client waits for a free connection before failing the request. If omitted, the connector uses `5` connections per worker and a `5` minute acquisition timeout.
 
 ### Build and Run
 

@@ -10,6 +10,7 @@ import io.trino.spi.type.TimestampWithTimeZoneType;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
+import marcbp.trino.s3file.file.PageSettings;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
 
 import java.util.ArrayDeque;
@@ -21,12 +22,11 @@ import java.util.Queue;
 import static java.util.Objects.requireNonNull;
 
 public final class ListingPageSource implements ConnectorPageSource {
-    private static final int PAGE_BUILDER_BATCH_SIZE = 1024;
-
     private final S3ClientBuilder.SessionClient sessionClient;
     private final ListingFetcher fetcher;
     private final List<S3FileColumnHandle> projectedColumns;
     private final List<Type> projectedTypes;
+    private final PageSettings pageSettings;
     private final Queue<ListingRow> buffer = new ArrayDeque<>();
     private String continuationToken;
     private boolean exhausted;
@@ -41,7 +41,8 @@ public final class ListingPageSource implements ConnectorPageSource {
             S3ClientBuilder s3ClientBuilder,
             ListingFetcher fetcher,
             List<S3FileColumnHandle> projectedColumns,
-            List<Type> allTypes) {
+            List<Type> allTypes,
+            PageSettings pageSettings) {
         this.sessionClient = requireNonNull(s3ClientBuilder, "s3ClientBuilder is null").forSession(session);
         this.fetcher = requireNonNull(fetcher, "fetcher is null");
         this.projectedColumns = List.copyOf(requireNonNull(projectedColumns, "projectedColumns is null"));
@@ -49,6 +50,7 @@ public final class ListingPageSource implements ConnectorPageSource {
         this.projectedTypes = this.projectedColumns.stream()
                 .map(column -> availableTypes.get(column.getOrdinalPosition()))
                 .toList();
+        this.pageSettings = requireNonNull(pageSettings, "pageSettings is null");
     }
 
     @Override
@@ -80,7 +82,7 @@ public final class ListingPageSource implements ConnectorPageSource {
                 return null;
             }
 
-            PageBuilder pageBuilder = new PageBuilder(PAGE_BUILDER_BATCH_SIZE, projectedTypes);
+            PageBuilder pageBuilder = new PageBuilder(pageSettings.batchSize(), projectedTypes);
             while (!pageBuilder.isFull()) {
                 if (buffer.isEmpty()) {
                     if (!fetchNextBatch()) {

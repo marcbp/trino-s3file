@@ -22,6 +22,7 @@ import marcbp.trino.s3file.S3FileColumnHandle;
 import marcbp.trino.s3file.file.AbstractTextFilePageSource;
 import marcbp.trino.s3file.file.AnalysisStats;
 import marcbp.trino.s3file.file.BaseTextFileHandle;
+import marcbp.trino.s3file.file.PageSettings;
 import marcbp.trino.s3file.file.ByteDelimitedRecordReader;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.file.S3ObjectRef;
@@ -59,13 +60,18 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
 
     private final S3ClientBuilder s3ClientBuilder;
     private final int defaultSplitSizeBytes;
+    private final PageSettings pageSettings;
     private final Logger logger = Logger.get(CsvTableFunction.class);
 
     public CsvTableFunction(S3ClientBuilder s3ClientBuilder) {
-        this(s3ClientBuilder, marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_SPLIT_SIZE_BYTES);
+        this(s3ClientBuilder, marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_SPLIT_SIZE_BYTES, new PageSettings(marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_PAGE_BATCH_SIZE, marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_PAGE_TARGET_SIZE_BYTES));
     }
 
     public CsvTableFunction(S3ClientBuilder s3ClientBuilder, int defaultSplitSizeBytes) {
+        this(s3ClientBuilder, defaultSplitSizeBytes, new PageSettings(marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_PAGE_BATCH_SIZE, marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_PAGE_TARGET_SIZE_BYTES));
+    }
+
+    public CsvTableFunction(S3ClientBuilder s3ClientBuilder, int defaultSplitSizeBytes, PageSettings pageSettings) {
         super(
                 "csv",
                 "load",
@@ -92,6 +98,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                 ReturnTypeSpecification.GenericTable.GENERIC_TABLE);
         this.s3ClientBuilder = requireNonNull(s3ClientBuilder, "s3ClientBuilder is null");
         this.defaultSplitSizeBytes = defaultSplitSizeBytes;
+        this.pageSettings = requireNonNull(pageSettings, "pageSettings is null");
     }
 
     @Override
@@ -133,7 +140,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                 .returnedType(descriptor)
                 .handle(new Handle(
                         new S3ObjectRef(s3Path, metadata.size(), metadata.eTag().orElse(null), metadata.versionId().orElse(null)),
-                        new ScanSettings(splitSizeBytes, BaseTextFileHandle.DEFAULT_BATCH_SIZE, charset.name()),
+                        new ScanSettings(splitSizeBytes, pageSettings, charset.name()),
                         new AnalysisStats(1L, columnNames.size(), System.nanoTime() - analyzeStartedAt),
                         new CsvSchema(columnNames),
                         new CsvOptions(delimiter, headerPresent, multiline)))

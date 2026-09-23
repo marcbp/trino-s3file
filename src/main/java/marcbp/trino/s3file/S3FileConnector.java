@@ -54,12 +54,12 @@ public final class S3FileConnector implements Connector {
 
     public S3FileConnector(S3ClientConfig clientConfig) {
         this.s3ClientBuilder = new S3ClientBuilder(requireNonNull(clientConfig, "clientConfig is null"));
-        this.csvTableFunction = new CsvTableFunction(s3ClientBuilder, clientConfig.splitSizeBytes());
-        this.textTableFunction = new TextTableFunction(s3ClientBuilder, clientConfig.splitSizeBytes());
-        this.jsonTableFunction = new JsonTableFunction(s3ClientBuilder, clientConfig.splitSizeBytes());
-        this.objectsTableFunction = new ObjectsTableFunction(s3ClientBuilder);
-        this.bucketsTableFunction = new BucketsTableFunction(s3ClientBuilder);
-        this.xmlTableFunction = new XmlTableFunction(s3ClientBuilder);
+        this.csvTableFunction = new CsvTableFunction(s3ClientBuilder, clientConfig.splitSizeBytes(), clientConfig.pageSettings());
+        this.textTableFunction = new TextTableFunction(s3ClientBuilder, clientConfig.splitSizeBytes(), clientConfig.pageSettings());
+        this.jsonTableFunction = new JsonTableFunction(s3ClientBuilder, clientConfig.splitSizeBytes(), clientConfig.pageSettings());
+        this.objectsTableFunction = new ObjectsTableFunction(s3ClientBuilder, clientConfig.pageSettings());
+        this.bucketsTableFunction = new BucketsTableFunction(s3ClientBuilder, clientConfig.pageSettings());
+        this.xmlTableFunction = new XmlTableFunction(s3ClientBuilder, clientConfig.pageSettings());
         this.metadata = new S3FileMetadata();
         this.splitManager = new InlineSplitManager();
         this.pageSourceProvider = new S3FilePageSourceProvider(csvTableFunction, textTableFunction, jsonTableFunction, objectsTableFunction, bucketsTableFunction, xmlTableFunction);

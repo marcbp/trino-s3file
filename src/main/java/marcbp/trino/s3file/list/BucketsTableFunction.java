@@ -19,6 +19,7 @@ import io.trino.spi.type.Type;
 import io.trino.spi.type.TimeZoneKey;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
+import marcbp.trino.s3file.file.PageSettings;
 import marcbp.trino.s3file.file.AnalysisStats;
 import marcbp.trino.s3file.file.RuntimeTableHandle;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
@@ -43,15 +44,21 @@ public final class BucketsTableFunction extends AbstractConnectorTableFunction {
             TimestampWithTimeZoneType.TIMESTAMP_TZ_MILLIS);
 
     private final S3ClientBuilder s3ClientBuilder;
+    private final PageSettings pageSettings;
     private final Logger logger = Logger.get(BucketsTableFunction.class);
 
     public BucketsTableFunction(S3ClientBuilder s3ClientBuilder) {
+        this(s3ClientBuilder, new PageSettings(marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_PAGE_BATCH_SIZE, marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_PAGE_TARGET_SIZE_BYTES));
+    }
+
+    public BucketsTableFunction(S3ClientBuilder s3ClientBuilder, PageSettings pageSettings) {
         super(
                 "list",
                 "buckets",
                 List.of(),
                 ReturnTypeSpecification.GenericTable.GENERIC_TABLE);
         this.s3ClientBuilder = requireNonNull(s3ClientBuilder, "s3ClientBuilder is null");
+        this.pageSettings = requireNonNull(pageSettings, "pageSettings is null");
     }
 
     @Override
@@ -79,7 +86,8 @@ public final class BucketsTableFunction extends AbstractConnectorTableFunction {
                                 .toList(),
                         Optional.empty()),
                 columns,
-                handle.resolveColumnTypes());
+                handle.resolveColumnTypes(),
+                pageSettings);
     }
 
     public static final class Handle implements RuntimeTableHandle {

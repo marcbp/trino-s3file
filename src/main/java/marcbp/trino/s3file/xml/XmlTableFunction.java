@@ -23,6 +23,7 @@ import marcbp.trino.s3file.S3FileColumnHandle;
 import marcbp.trino.s3file.file.AbstractTextFilePageSource;
 import marcbp.trino.s3file.file.AnalysisStats;
 import marcbp.trino.s3file.file.BaseTextFileHandle;
+import marcbp.trino.s3file.file.PageSettings;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.file.S3ObjectRef;
 import marcbp.trino.s3file.file.ScanSettings;
@@ -58,8 +59,13 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
 
     private static final Logger logger = Logger.get(XmlTableFunction.class);
     private final S3ClientBuilder s3ClientBuilder;
+    private final PageSettings pageSettings;
 
     public XmlTableFunction(S3ClientBuilder s3ClientBuilder) {
+        this(s3ClientBuilder, new PageSettings(marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_PAGE_BATCH_SIZE, marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_PAGE_TARGET_SIZE_BYTES));
+    }
+
+    public XmlTableFunction(S3ClientBuilder s3ClientBuilder, PageSettings pageSettings) {
         super(
                 "xml",
                 "load",
@@ -89,6 +95,7 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
                 ),
                 ReturnTypeSpecification.GenericTable.GENERIC_TABLE);
         this.s3ClientBuilder = requireNonNull(s3ClientBuilder, "s3ClientBuilder is null");
+        this.pageSettings = requireNonNull(pageSettings, "pageSettings is null");
     }
 
     @Override
@@ -136,7 +143,7 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
                 .returnedType(descriptor)
                 .handle(new Handle(
                         new S3ObjectRef(s3Path, metadata.size(), metadata.eTag().orElse(null), metadata.versionId().orElse(null)),
-                        new ScanSettings(Integer.MAX_VALUE, BaseTextFileHandle.DEFAULT_BATCH_SIZE, charset.name()),
+                        new ScanSettings(Integer.MAX_VALUE, pageSettings, charset.name()),
                         new AnalysisStats(1L, columnNames.size(), System.nanoTime() - analyzeStartedAt),
                         schema,
                         new XmlOptions(rowElement, emptyAsNull, invalidRowColumn.isEmpty() ? null : invalidRowColumn)))

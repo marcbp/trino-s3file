@@ -7,10 +7,11 @@ import static java.util.Objects.requireNonNull;
 
 public record ScanSettings(
         @JsonProperty("splitSizeBytes") int splitSizeBytes,
-        @JsonProperty("batchSize") int batchSize,
+        @JsonProperty("page") PageSettings page,
         @JsonProperty("charset") String charsetName) {
     @JsonCreator
     public ScanSettings {
+        page = requireNonNull(page, "page is null");
         charsetName = requireNonNull(charsetName, "charsetName is null");
     }
 }

@@ -21,8 +21,6 @@ import java.util.OptionalLong;
 import static java.util.Objects.requireNonNull;
 
 public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> implements ConnectorPageSource {
-    private static final long TARGET_PAGE_BYTES = 8L * 1024L * 1024L;
-
     protected final Logger logger;
     protected final S3ClientBuilder.SessionClient sessionClient;
     protected final H handle;
@@ -212,7 +210,7 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
                 return null;
             }
 
-            PageBuilder pageBuilder = new PageBuilder(handle.scan().batchSize(), projectedTypes);
+            PageBuilder pageBuilder = new PageBuilder(handle.scan().page().batchSize(), projectedTypes);
             long pageStartBytes = bytesWithinPrimary;
             recordLoop:
             while (!pageBuilder.isFull()) {
@@ -244,7 +242,7 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
                         }
                     }
                 }
-                if (bytesWithinPrimary - pageStartBytes >= TARGET_PAGE_BYTES) {
+                if (bytesWithinPrimary - pageStartBytes >= handle.scan().page().targetSizeBytes()) {
                     break;
                 }
             }

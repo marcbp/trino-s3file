@@ -266,7 +266,7 @@ class TextTableFunctionTest {
         assertEquals(expectedDelimiter, handle.options().lineBreak());
         assertEquals(expectedSize, handle.object().size());
         assertEquals(DEFAULT_SPLIT_SIZE_BYTES, handle.scan().splitSizeBytes());
-        assertEquals(1024, handle.scan().batchSize());
+        assertEquals(1024, handle.scan().page().batchSize());
         assertEquals(StandardCharsets.UTF_8.name(), handle.scan().charsetName());
         assertEquals(expectedEtag, handle.object().eTagRef());
         assertEquals(expectedVersion, handle.object().versionIdRef());
@@ -285,7 +285,7 @@ class TextTableFunctionTest {
             String versionId) {
         return new TextTableFunction.Handle(
                 new S3ObjectRef(PATH, fileSize, eTag, versionId),
-                new ScanSettings(splitSizeBytes, TextTableFunction.Handle.DEFAULT_BATCH_SIZE, charset.name()),
+                new ScanSettings(splitSizeBytes, new marcbp.trino.s3file.file.PageSettings(TextTableFunction.Handle.DEFAULT_BATCH_SIZE, 8L * 1024L * 1024L), charset.name()),
                 AnalysisStats.EMPTY,
                 new TextTableFunction.TextOptions(lineBreak));
     }

@@ -91,6 +91,8 @@ class JsonTableFunctionTest {
         assertEquals(expectedDescriptor, Descriptor.descriptor(handle.schema().columns(), handle.resolveColumnTypes()));
         assertEquals(512L, handle.object().size());
         assertEquals(CONNECTOR_SPLIT_SIZE_BYTES, handle.scan().splitSizeBytes());
+        assertEquals(1024, handle.scan().page().batchSize());
+        assertEquals(8L * 1024L * 1024L, handle.scan().page().targetSizeBytes());
         assertEquals(Optional.of("etag-json"), handle.object().eTagRef());
         assertEquals(Optional.empty(), handle.object().versionIdRef());
         assertEquals(StandardCharsets.UTF_8.name(), handle.scan().charsetName());
@@ -420,7 +422,7 @@ class JsonTableFunctionTest {
             Charset charset) {
         return new JsonTableFunction.Handle(
                 new S3ObjectRef(PATH, fileSize, null, null),
-                new ScanSettings(splitSizeBytes, JsonTableFunction.Handle.DEFAULT_BATCH_SIZE, charset.name()),
+                new ScanSettings(splitSizeBytes, new marcbp.trino.s3file.file.PageSettings(JsonTableFunction.Handle.DEFAULT_BATCH_SIZE, 8L * 1024L * 1024L), charset.name()),
                 AnalysisStats.EMPTY,
                 new JsonTableFunction.JsonSchema(columns, columnTypes));
     }

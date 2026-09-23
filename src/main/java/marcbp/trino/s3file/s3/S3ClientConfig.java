@@ -4,6 +4,8 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
 
+import marcbp.trino.s3file.file.PageSettings;
+
 /**
  * Configuration holder for building the S3 client.
  */
@@ -16,6 +18,7 @@ public record S3ClientConfig(
         boolean pathStyleAccess,
         Optional<String> interceptorClass,
         int splitSizeBytes,
+        PageSettings pageSettings,
         int maxConnections,
         Duration connectionAcquisitionTimeout) {
 
@@ -27,9 +30,13 @@ public record S3ClientConfig(
     public static final String PATH_STYLE_KEY = "s3.path-style-access";
     public static final String INTERCEPTOR_CLASS_KEY = "s3.interceptor-class";
     public static final String DEFAULT_SPLIT_SIZE_MB_KEY = "s3.default-split-size-mb";
+    public static final String PAGE_BATCH_SIZE_KEY = "s3.page-batch-size";
+    public static final String PAGE_TARGET_SIZE_MB_KEY = "s3.page-target-size-mb";
     public static final String MAX_CONNECTIONS_KEY = "s3.max-connections-per-worker";
     public static final String CONNECTION_ACQUISITION_TIMEOUT_KEY = "s3.connection-acquisition-timeout-s";
     public static final int DEFAULT_SPLIT_SIZE_BYTES = 32 * 1024 * 1024;
+    public static final int DEFAULT_PAGE_BATCH_SIZE = 1024;
+    public static final long DEFAULT_PAGE_TARGET_SIZE_BYTES = 8L * 1024L * 1024L;
     public static final int DEFAULT_MAX_CONNECTIONS = 5;
     public static final Duration DEFAULT_CONNECTION_ACQUISITION_TIMEOUT = Duration.ofMinutes(5);
 
@@ -42,9 +49,12 @@ public record S3ClientConfig(
         boolean pathStyleAccess = parseBoolean(config.get(PATH_STYLE_KEY), PATH_STYLE_KEY, true);
         Optional<String> interceptorClass = optionalValue(config.get(INTERCEPTOR_CLASS_KEY));
         int splitSizeBytes = parseSplitSizeBytes(config.get(DEFAULT_SPLIT_SIZE_MB_KEY));
+        PageSettings pageSettings = new PageSettings(
+                parsePageBatchSize(config.get(PAGE_BATCH_SIZE_KEY)),
+                parsePageTargetSizeBytes(config.get(PAGE_TARGET_SIZE_MB_KEY)));
         int maxConnections = parseMaxConnections(config.get(MAX_CONNECTIONS_KEY));
         Duration connectionAcquisitionTimeout = parseConnectionAcquisitionTimeout(config.get(CONNECTION_ACQUISITION_TIMEOUT_KEY));
-        return new S3ClientConfig(region, endpoint, accessKey, secretKey, authMode, pathStyleAccess, interceptorClass, splitSizeBytes, maxConnections, connectionAcquisitionTimeout);
+        return new S3ClientConfig(region, endpoint, accessKey, secretKey, authMode, pathStyleAccess, interceptorClass, splitSizeBytes, pageSettings, maxConnections, connectionAcquisitionTimeout);
     }
 
     public static S3ClientConfig defaults() {
@@ -57,6 +67,7 @@ public record S3ClientConfig(
                 true,
                 Optional.empty(),
                 DEFAULT_SPLIT_SIZE_BYTES,
+                new PageSettings(DEFAULT_PAGE_BATCH_SIZE, DEFAULT_PAGE_TARGET_SIZE_BYTES),
                 DEFAULT_MAX_CONNECTIONS,
                 DEFAULT_CONNECTION_ACQUISITION_TIMEOUT);
     }
@@ -98,6 +109,40 @@ public record S3ClientConfig(
         }
         catch (NumberFormatException e) {
             throw new IllegalArgumentException("Connector property " + MAX_CONNECTIONS_KEY + " must be a positive integer", e);
+        }
+    }
+
+    private static int parsePageBatchSize(String configuredPageBatchSize) {
+        Optional<String> pageBatchSize = optionalValue(configuredPageBatchSize);
+        if (pageBatchSize.isEmpty()) {
+            return DEFAULT_PAGE_BATCH_SIZE;
+        }
+        try {
+            int rows = Integer.parseInt(pageBatchSize.get());
+            if (rows <= 0) {
+                throw new IllegalArgumentException("Connector property " + PAGE_BATCH_SIZE_KEY + " must be a positive integer");
+            }
+            return rows;
+        }
+        catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Connector property " + PAGE_BATCH_SIZE_KEY + " must be a positive integer", e);
+        }
+    }
+
+    private static long parsePageTargetSizeBytes(String configuredPageTargetSizeMb) {
+        Optional<String> pageTargetSizeMb = optionalValue(configuredPageTargetSizeMb);
+        if (pageTargetSizeMb.isEmpty()) {
+            return DEFAULT_PAGE_TARGET_SIZE_BYTES;
+        }
+        try {
+            long megabytes = Long.parseLong(pageTargetSizeMb.get());
+            if (megabytes <= 0) {
+                throw new IllegalArgumentException("Connector property " + PAGE_TARGET_SIZE_MB_KEY + " must be a positive integer");
+            }
+            return Math.multiplyExact(megabytes, 1024L * 1024L);
+        }
+        catch (NumberFormatException | ArithmeticException e) {
+            throw new IllegalArgumentException("Connector property " + PAGE_TARGET_SIZE_MB_KEY + " must be a positive integer", e);
         }
     }
 

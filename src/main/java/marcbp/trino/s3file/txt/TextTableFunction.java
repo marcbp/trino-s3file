@@ -38,6 +38,7 @@ import java.util.List;
 import java.util.Map;
 
 import marcbp.trino.s3file.file.BaseTextFileHandle;
+import marcbp.trino.s3file.file.PageSettings;
 import marcbp.trino.s3file.file.AbstractTextFilePageSource;
 import static java.util.Objects.requireNonNull;
 import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
@@ -55,13 +56,18 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
     private static final String LINE_BREAK_ARGUMENT = "LINE_BREAK";
     private final S3ClientBuilder s3ClientBuilder;
     private final int defaultSplitSizeBytes;
+    private final PageSettings pageSettings;
     private final Logger logger = Logger.get(TextTableFunction.class);
 
     public TextTableFunction(S3ClientBuilder s3ClientBuilder) {
-        this(s3ClientBuilder, marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_SPLIT_SIZE_BYTES);
+        this(s3ClientBuilder, marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_SPLIT_SIZE_BYTES, new PageSettings(marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_PAGE_BATCH_SIZE, marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_PAGE_TARGET_SIZE_BYTES));
     }
 
     public TextTableFunction(S3ClientBuilder s3ClientBuilder, int defaultSplitSizeBytes) {
+        this(s3ClientBuilder, defaultSplitSizeBytes, new PageSettings(marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_PAGE_BATCH_SIZE, marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_PAGE_TARGET_SIZE_BYTES));
+    }
+
+    public TextTableFunction(S3ClientBuilder s3ClientBuilder, int defaultSplitSizeBytes, PageSettings pageSettings) {
         super(
                 "txt",
                 "load",
@@ -78,6 +84,7 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
                 ReturnTypeSpecification.GenericTable.GENERIC_TABLE);
         this.s3ClientBuilder = requireNonNull(s3ClientBuilder, "s3ClientBuilder is null");
         this.defaultSplitSizeBytes = defaultSplitSizeBytes;
+        this.pageSettings = requireNonNull(pageSettings, "pageSettings is null");
     }
 
     @Override
@@ -114,7 +121,7 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
                 .returnedType(descriptor)
                 .handle(new Handle(
                         new S3ObjectRef(s3Path, metadata.size(), metadata.eTag().orElse(null), metadata.versionId().orElse(null)),
-                        new ScanSettings(splitSizeBytes, BaseTextFileHandle.DEFAULT_BATCH_SIZE, charset.name()),
+                        new ScanSettings(splitSizeBytes, pageSettings, charset.name()),
                         new AnalysisStats(0L, 1, System.nanoTime() - analyzeStartedAt),
                         new TextOptions(lineBreak)))
                 .build();
