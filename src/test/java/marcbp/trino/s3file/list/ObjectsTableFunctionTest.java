@@ -88,7 +88,6 @@ class ObjectsTableFunctionTest {
         assertTrue(handle.includePrefixes());
         assertEquals(List.of("path", "bucket", "key", "name", "parent", "size", "last_modified", "etag", "type"), handle.columnNames());
         assertEquals(9, handle.resolveColumnTypes().size());
-        assertEquals(0L, handle.analysis().rowsSampled());
     }
 
     @Test

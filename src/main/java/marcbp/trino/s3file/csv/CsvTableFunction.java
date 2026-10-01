@@ -20,7 +20,6 @@ import io.trino.spi.type.VarcharType;
 import io.airlift.log.Logger;
 import marcbp.trino.s3file.S3FileColumnHandle;
 import marcbp.trino.s3file.file.AbstractTextFilePageSource;
-import marcbp.trino.s3file.file.AnalysisStats;
 import marcbp.trino.s3file.file.BaseTextFileHandle;
 import marcbp.trino.s3file.file.PageSettings;
 import marcbp.trino.s3file.file.ByteDelimitedRecordReader;
@@ -109,7 +108,6 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
         String s3Path = requirePath(arguments);
         Charset charset = resolveEncoding(arguments);
         int splitSizeBytes = resolveSplitSizeBytes(arguments, defaultSplitSizeBytes);
-        long analyzeStartedAt = System.nanoTime();
 
         char delimiter = resolveDelimiter(arguments);
 
@@ -141,7 +139,6 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                 .handle(new Handle(
                         new S3ObjectRef(s3Path, metadata.size(), metadata.eTag().orElse(null), metadata.versionId().orElse(null)),
                         new ScanSettings(splitSizeBytes, pageSettings, charset.name()),
-                        new AnalysisStats(1L, columnNames.size(), System.nanoTime() - analyzeStartedAt),
                         new CsvSchema(columnNames),
                         new CsvOptions(delimiter, headerPresent, multiline)))
                 .build();
@@ -191,10 +188,9 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
         public Handle(
                 @JsonProperty("object") S3ObjectRef object,
                 @JsonProperty("scan") ScanSettings scan,
-                @JsonProperty("analysis") AnalysisStats analysis,
                 @JsonProperty("schema") CsvSchema schema,
                 @JsonProperty("options") CsvOptions options) {
-            super(object, scan, analysis);
+            super(object, scan);
             this.schema = requireNonNull(schema, "schema is null");
             this.options = requireNonNull(options, "options is null");
         }

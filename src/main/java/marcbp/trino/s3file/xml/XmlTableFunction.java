@@ -21,7 +21,6 @@ import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
 import marcbp.trino.s3file.file.AbstractTextFilePageSource;
-import marcbp.trino.s3file.file.AnalysisStats;
 import marcbp.trino.s3file.file.BaseTextFileHandle;
 import marcbp.trino.s3file.file.PageSettings;
 import marcbp.trino.s3file.file.FileSplit;
@@ -109,7 +108,6 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         boolean includeText = resolveIncludeText(arguments);
         boolean emptyAsNull = resolveEmptyAsNull(arguments);
         String invalidRowColumn = resolveInvalidRowColumn(arguments);
-        long analyzeStartedAt = System.nanoTime();
 
         XmlFormatSupport.Schema schema;
         S3ClientBuilder.ObjectMetadata metadata;
@@ -144,7 +142,6 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
                 .handle(new Handle(
                         new S3ObjectRef(s3Path, metadata.size(), metadata.eTag().orElse(null), metadata.versionId().orElse(null)),
                         new ScanSettings(Integer.MAX_VALUE, pageSettings, charset.name()),
-                        new AnalysisStats(1L, columnNames.size(), System.nanoTime() - analyzeStartedAt),
                         schema,
                         new XmlOptions(rowElement, emptyAsNull, invalidRowColumn.isEmpty() ? null : invalidRowColumn)))
                 .build();
@@ -207,10 +204,9 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         public Handle(
                 @JsonProperty("object") S3ObjectRef object,
                 @JsonProperty("scan") ScanSettings scan,
-                @JsonProperty("analysis") AnalysisStats analysis,
                 @JsonProperty("schema") XmlFormatSupport.Schema schema,
                 @JsonProperty("options") XmlOptions options) {
-            super(object, scan, analysis);
+            super(object, scan);
             this.schema = requireNonNull(schema, "schema is null");
             this.options = requireNonNull(options, "options is null");
         }

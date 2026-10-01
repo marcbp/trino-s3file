@@ -24,7 +24,6 @@ import io.trino.spi.type.TimeZoneKey;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
 import marcbp.trino.s3file.file.PageSettings;
-import marcbp.trino.s3file.file.AnalysisStats;
 import marcbp.trino.s3file.file.RuntimeTableHandle;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
 
@@ -127,8 +126,7 @@ public final class ObjectsTableFunction extends AbstractConnectorTableFunction {
                         bucket,
                         prefix,
                         recursive,
-                        includePrefixes,
-                        new AnalysisStats(0L, COLUMN_NAMES.size(), 0L)))
+                        includePrefixes))
                 .build();
     }
 
@@ -181,20 +179,17 @@ public final class ObjectsTableFunction extends AbstractConnectorTableFunction {
         private final String prefix;
         private final boolean recursive;
         private final boolean includePrefixes;
-        private final AnalysisStats analysis;
 
         @JsonCreator
         public Handle(
                 @JsonProperty("bucket") String bucket,
                 @JsonProperty("prefix") String prefix,
                 @JsonProperty("recursive") boolean recursive,
-                @JsonProperty("includePrefixes") boolean includePrefixes,
-                @JsonProperty("analysis") AnalysisStats analysis) {
+                @JsonProperty("includePrefixes") boolean includePrefixes) {
             this.bucket = requireNonNull(bucket, "bucket is null");
             this.prefix = prefix == null ? "" : prefix;
             this.recursive = recursive;
             this.includePrefixes = includePrefixes;
-            this.analysis = requireNonNull(analysis, "analysis is null");
         }
 
         @JsonProperty
@@ -215,11 +210,6 @@ public final class ObjectsTableFunction extends AbstractConnectorTableFunction {
         @JsonProperty
         public boolean includePrefixes() {
             return includePrefixes;
-        }
-
-        @JsonProperty
-        public AnalysisStats analysis() {
-            return analysis;
         }
 
         @JsonIgnore

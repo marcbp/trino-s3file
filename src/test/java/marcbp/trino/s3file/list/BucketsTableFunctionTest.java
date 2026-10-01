@@ -61,7 +61,6 @@ class BucketsTableFunctionTest {
         assertEquals("buckets_list", handle.runtimeTableName());
         assertEquals(List.of("path", "bucket", "creation_date"), handle.columnNames());
         assertEquals(3, handle.resolveColumnTypes().size());
-        assertEquals(0L, handle.analysis().rowsSampled());
     }
 
     @Test

@@ -18,16 +18,10 @@ public abstract class BaseTextFileHandle implements RuntimeTableHandle {
 
     private final S3ObjectRef object;
     private final ScanSettings scan;
-    private final AnalysisStats analysis;
 
     protected BaseTextFileHandle(S3ObjectRef object, ScanSettings scan) {
-        this(object, scan, AnalysisStats.EMPTY);
-    }
-
-    protected BaseTextFileHandle(S3ObjectRef object, ScanSettings scan, AnalysisStats analysis) {
         this.object = requireNonNull(object, "object is null");
         this.scan = requireNonNull(scan, "scan is null");
-        this.analysis = requireNonNull(analysis, "analysis is null");
     }
 
     @JsonProperty("object")
@@ -38,11 +32,6 @@ public abstract class BaseTextFileHandle implements RuntimeTableHandle {
     @JsonProperty("scan")
     public ScanSettings scan() {
         return scan;
-    }
-
-    @JsonProperty("analysis")
-    public AnalysisStats analysis() {
-        return analysis;
     }
 
     @JsonIgnore

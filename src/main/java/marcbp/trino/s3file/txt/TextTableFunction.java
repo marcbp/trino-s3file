@@ -27,7 +27,6 @@ import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
-import marcbp.trino.s3file.file.AnalysisStats;
 import marcbp.trino.s3file.file.S3ObjectRef;
 import marcbp.trino.s3file.file.ScanSettings;
 
@@ -95,7 +94,6 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
         String s3Path = requirePath(arguments);
         Charset charset = resolveEncoding(arguments);
         int splitSizeBytes = resolveSplitSizeBytes(arguments, defaultSplitSizeBytes);
-        long analyzeStartedAt = System.nanoTime();
         
         String lineBreak = "\n";
         ScalarArgument lineBreakArg = (ScalarArgument) arguments.get(LINE_BREAK_ARGUMENT);
@@ -122,7 +120,6 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
                 .handle(new Handle(
                         new S3ObjectRef(s3Path, metadata.size(), metadata.eTag().orElse(null), metadata.versionId().orElse(null)),
                         new ScanSettings(splitSizeBytes, pageSettings, charset.name()),
-                        new AnalysisStats(0L, 1, System.nanoTime() - analyzeStartedAt),
                         new TextOptions(lineBreak)))
                 .build();
     }
@@ -149,9 +146,8 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
         public Handle(
                 @JsonProperty("object") S3ObjectRef object,
                 @JsonProperty("scan") ScanSettings scan,
-                @JsonProperty("analysis") AnalysisStats analysis,
                 @JsonProperty("options") TextOptions options) {
-            super(object, scan, analysis);
+            super(object, scan);
             this.options = requireNonNull(options, "options is null");
         }
 

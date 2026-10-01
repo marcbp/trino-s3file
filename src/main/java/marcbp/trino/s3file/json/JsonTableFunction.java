@@ -22,7 +22,6 @@ import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
 import marcbp.trino.s3file.file.AbstractTextFilePageSource;
-import marcbp.trino.s3file.file.AnalysisStats;
 import marcbp.trino.s3file.file.BaseTextFileHandle;
 import marcbp.trino.s3file.file.PageSettings;
 import marcbp.trino.s3file.file.ByteDelimitedRecordReader;
@@ -109,7 +108,6 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
         Charset charset = resolveEncoding(arguments);
         int splitSizeBytes = resolveSplitSizeBytes(arguments, defaultSplitSizeBytes);
         int schemaSampleRows = resolveSchemaSampleRows(arguments);
-        long analyzeStartedAt = System.nanoTime();
 
         List<String> columnNames;
         List<ColumnType> detectedTypes;
@@ -145,7 +143,6 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
                 .handle(new Handle(
                         new S3ObjectRef(s3Path, metadata.size(), metadata.eTag().orElse(null), metadata.versionId().orElse(null)),
                         new ScanSettings(splitSizeBytes, pageSettings, charset.name()),
-                        new AnalysisStats((long) sampledRows, columnNames.size(), System.nanoTime() - analyzeStartedAt),
                         new JsonSchema(columnNames, detectedTypes)))
                 .build();
     }
@@ -196,9 +193,8 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
         public Handle(
                 @JsonProperty("object") S3ObjectRef object,
                 @JsonProperty("scan") ScanSettings scan,
-                @JsonProperty("analysis") AnalysisStats analysis,
                 @JsonProperty("schema") JsonSchema schema) {
-            super(object, scan, analysis);
+            super(object, scan);
             this.schema = requireNonNull(schema, "schema is null");
         }
 

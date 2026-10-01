@@ -20,7 +20,6 @@ import io.trino.spi.type.TimeZoneKey;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
 import marcbp.trino.s3file.file.PageSettings;
-import marcbp.trino.s3file.file.AnalysisStats;
 import marcbp.trino.s3file.file.RuntimeTableHandle;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
 
@@ -71,7 +70,7 @@ public final class BucketsTableFunction extends AbstractConnectorTableFunction {
 
         return TableFunctionAnalysis.builder()
                 .returnedType(Descriptor.descriptor(COLUMN_NAMES, COLUMN_TYPES))
-                .handle(new Handle(new AnalysisStats(0L, COLUMN_NAMES.size(), 0L)))
+                .handle(new Handle())
                 .build();
     }
 
@@ -91,17 +90,8 @@ public final class BucketsTableFunction extends AbstractConnectorTableFunction {
     }
 
     public static final class Handle implements RuntimeTableHandle {
-        private final AnalysisStats analysis;
-
         @JsonCreator
-        public Handle(@JsonProperty("analysis") AnalysisStats analysis) {
-            this.analysis = requireNonNull(analysis, "analysis is null");
-        }
-
-        @JsonProperty
-        public AnalysisStats analysis() {
-            return analysis;
-        }
+        public Handle() {}
 
         @JsonIgnore
         @Override

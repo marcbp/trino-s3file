@@ -12,7 +12,6 @@ import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
-import marcbp.trino.s3file.file.AnalysisStats;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.file.S3ObjectRef;
 import marcbp.trino.s3file.file.ScanSettings;
@@ -286,7 +285,6 @@ class TextTableFunctionTest {
         return new TextTableFunction.Handle(
                 new S3ObjectRef(PATH, fileSize, eTag, versionId),
                 new ScanSettings(splitSizeBytes, new marcbp.trino.s3file.file.PageSettings(TextTableFunction.Handle.DEFAULT_BATCH_SIZE, 8L * 1024L * 1024L), charset.name()),
-                AnalysisStats.EMPTY,
                 new TextTableFunction.TextOptions(lineBreak));
     }
 

@@ -15,7 +15,6 @@ import io.trino.spi.type.BooleanType;
 import io.trino.spi.type.DoubleType;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
-import marcbp.trino.s3file.file.AnalysisStats;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.file.S3ObjectRef;
 import marcbp.trino.s3file.file.ScanSettings;
@@ -423,7 +422,6 @@ class JsonTableFunctionTest {
         return new JsonTableFunction.Handle(
                 new S3ObjectRef(PATH, fileSize, null, null),
                 new ScanSettings(splitSizeBytes, new marcbp.trino.s3file.file.PageSettings(JsonTableFunction.Handle.DEFAULT_BATCH_SIZE, 8L * 1024L * 1024L), charset.name()),
-                AnalysisStats.EMPTY,
                 new JsonTableFunction.JsonSchema(columns, columnTypes));
     }
 
