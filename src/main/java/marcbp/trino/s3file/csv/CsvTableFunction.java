@@ -137,7 +137,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
         return TableFunctionAnalysis.builder()
                 .returnedType(descriptor)
                 .handle(new Handle(
-                        new S3ObjectRef(s3Path, metadata.size(), metadata.eTag().orElse(null), metadata.versionId().orElse(null)),
+                        S3ObjectRef.from(s3Path, metadata),
                         new ScanSettings(splitSizeBytes, pageSettings, charset.name()),
                         new CsvSchema(columnNames),
                         new CsvOptions(delimiter, headerPresent, multiline)))

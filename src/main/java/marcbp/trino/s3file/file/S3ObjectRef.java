@@ -3,12 +3,17 @@ package marcbp.trino.s3file.file;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import marcbp.trino.s3file.s3.S3ClientBuilder;
 
 import java.util.Optional;
 
 import static java.util.Objects.requireNonNull;
 
 public record S3ObjectRef(String path, long size, String eTag, String versionId) {
+    public static S3ObjectRef from(String path, S3ClientBuilder.ObjectMetadata metadata) {
+        return new S3ObjectRef(path, metadata.size(), metadata.eTag().orElse(null), metadata.versionId().orElse(null));
+    }
+
     @JsonCreator
     public S3ObjectRef(
             @JsonProperty("path") String path,
