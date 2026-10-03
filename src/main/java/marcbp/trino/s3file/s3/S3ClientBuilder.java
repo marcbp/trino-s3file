@@ -13,7 +13,7 @@ import software.amazon.awssdk.core.interceptor.ExecutionAttribute;
 import software.amazon.awssdk.core.interceptor.ExecutionAttributes;
 import software.amazon.awssdk.core.interceptor.ExecutionInterceptor;
 import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.http.apache.ApacheHttpClient;
+import software.amazon.awssdk.http.apache5.Apache5HttpClient;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.model.CommonPrefix;
@@ -213,7 +213,7 @@ public final class S3ClientBuilder implements Closeable {
         builder.serviceConfiguration(S3Configuration.builder()
                 .pathStyleAccessEnabled(config.pathStyleAccess())
                 .build());
-        builder.httpClientBuilder(ApacheHttpClient.builder()
+        builder.httpClientBuilder(Apache5HttpClient.builder()
                 .maxConnections(config.maxConnections())
                 .connectionAcquisitionTimeout(config.connectionAcquisitionTimeout()));
 
