@@ -1,8 +1,6 @@
 package marcbp.trino.s3file.list;
 
-import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.annotation.JsonProperty;
 import io.airlift.log.Logger;
 import io.trino.spi.connector.ConnectorAccessControl;
 import io.trino.spi.connector.ConnectorPageSource;
@@ -89,10 +87,7 @@ public final class BucketsTableFunction extends AbstractConnectorTableFunction {
                 pageSettings);
     }
 
-    public static final class Handle implements RuntimeTableHandle {
-        @JsonCreator
-        public Handle() {}
-
+    public record Handle() implements RuntimeTableHandle {
         @JsonIgnore
         @Override
         public String runtimeTableName() {
