@@ -43,8 +43,8 @@ jobs:
       - name: Build Trino image
         run: docker compose build trino-coordinator
 
-      - name: Start Trino and MinIO
-        run: docker compose up -d --no-build minio trino-coordinator trino-worker
+      - name: Start Trino and SeaweedFS
+        run: docker compose up -d --no-build seaweedfs trino-coordinator trino-worker
 
       - name: Wait for Trino
         run: |

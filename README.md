@@ -111,7 +111,7 @@ FROM TABLE(
 );
 ```
 
-- `path` (required): XML document location in S3/MinIO.
+- `path` (required): XML document location in S3-compatible storage.
 - `row_element` (optional, default `'row'`): element name that represents one logical row; only direct children of that element become columns.
 - `include_text` (optional, default `'false'`): expose mixed-content text (outside child elements) as an extra column named `text`.
 - `empty_as_null` (optional, default `'false'`): convert empty attribute/element values to `NULL`.
@@ -189,7 +189,7 @@ FROM TABLE(
 );
 ```
 
-- `path` (required): CSV location in S3/MinIO.
+- `path` (required): CSV location in S3-compatible storage.
 - `delimiter` (optional, default `';'`): single character separator.
 - `header` (optional, default `'true'`): when `'false'`, the first row is treated as data and column names default to `column_1`, `column_2`, …
 - `multiline` (optional, default `'false'`): allow quoted fields to contain line breaks. Multiline CSV uses one whole-file split because arbitrary byte offsets are not reliable CSV record boundaries.
@@ -242,7 +242,7 @@ SELECT
 FROM parsed;
 ```
 
-- `path` (required): text file location in S3/MinIO.
+- `path` (required): text file location in S3-compatible storage.
 - `line_break` (optional, default `'\n'`): string separator used to split the file into rows.
 - `encoding` (optional, default `'UTF-8'`): character set for decoding the file.
 - `split_size_mb` (optional, default connector value `32`): target split size in MiB for distributed reads.
@@ -306,19 +306,19 @@ docker compose up --build
 docker compose run --rm tests mvn test
 ```
 
-Run the SQL integration suite against the local Trino and MinIO stack:
+Run the SQL integration suite against the local Trino and SeaweedFS stack:
 
 The integration tests accept these parameters:
 
 | Parameter | Env var | Default |
 | --- | --- | --- |
 | `trino.base-url` | `TRINO_BASE_URL` | `http://trino-coordinator:8080` |
-| `s3.endpoint` | `S3_ENDPOINT` | `http://minio:9000` |
+| `s3.endpoint` | `S3_ENDPOINT` | `http://seaweedfs:9000` |
 
 The defaults are tuned for the Docker Compose stack used below. Override them if you run the suite against another environment.
 
 ```bash
-docker compose up -d --build minio trino-coordinator trino-worker
+docker compose up -d --build seaweedfs trino-coordinator trino-worker
 docker compose run --rm tests mvn -B -DskipUnitTests=true -Pintegration-tests verify
 ```
 
@@ -334,12 +334,12 @@ Once connected you can run the examples below.
 
 ### Seed Sample Files
 
-Populate MinIO with demo data after the containers are up:
+Populate SeaweedFS with demo data after the containers are up:
 
 ```bash
-# MinIO credentials from docker-compose.yml
-export AWS_ACCESS_KEY_ID=minio
-export AWS_SECRET_ACCESS_KEY=minio123
+# SeaweedFS credentials from docker-compose.yml
+export AWS_ACCESS_KEY_ID=s3file
+export AWS_SECRET_ACCESS_KEY=s3file123
 export AWS_DEFAULT_REGION=us-east-1
 
 # create a bucket for the demo data

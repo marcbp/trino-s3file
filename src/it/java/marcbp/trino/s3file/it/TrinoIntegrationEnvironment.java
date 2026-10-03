@@ -28,10 +28,10 @@ import static java.lang.String.format;
 
 final class TrinoIntegrationEnvironment implements AutoCloseable {
     private static final String DEFAULT_TRINO_BASE_URL = "http://trino-coordinator:8080";
-    private static final String DEFAULT_S3_ENDPOINT = "http://minio:9000";
+    private static final String DEFAULT_S3_ENDPOINT = "http://seaweedfs:9000";
     private static final String BUCKET = "mybucket";
-    private static final String S3_ACCESS_KEY = "minio";
-    private static final String S3_SECRET_KEY = "minio123";
+    private static final String S3_ACCESS_KEY = "s3file";
+    private static final String S3_SECRET_KEY = "s3file123";
     private static final Duration READY_TIMEOUT = Duration.ofMinutes(2);
 
     private static final String CSV_DATA = """
@@ -119,7 +119,7 @@ final class TrinoIntegrationEnvironment implements AutoCloseable {
 
     void awaitReadiness() throws InterruptedException {
         awaitHttpOk(trinoBaseUri.resolve("/v1/info"), "Trino");
-        awaitHttpOk(s3Endpoint.resolve("/minio/health/ready"), "MinIO");
+        awaitHttpOk(s3Endpoint.resolve("/status"), "SeaweedFS");
     }
 
     void seedSampleData() {
