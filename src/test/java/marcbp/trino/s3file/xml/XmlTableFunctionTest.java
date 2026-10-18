@@ -15,8 +15,15 @@ import marcbp.trino.s3file.xml.XmlFormatSupport.Column;
 import marcbp.trino.s3file.xml.XmlFormatSupport.ColumnSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import marcbp.trino.s3file.file.FileSelection;
+import marcbp.trino.s3file.file.PageSettings;
+import marcbp.trino.s3file.file.ScanSettings;
+import marcbp.trino.s3file.file.S3ObjectRef;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
 import java.io.StringReader;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -45,6 +52,58 @@ class XmlTableFunctionTest {
         reset(s3ClientBuilder, sessionClient);
         when(s3ClientBuilder.forSession(any(ConnectorSession.class))).thenReturn(sessionClient);
         doNothing().when(sessionClient).close();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"UTF-8", "ISO-8859-1", "UTF-16LE"})
+    void completedBytesTrackEncodedInputThroughoutReading(String encoding) throws Exception {
+        Charset charset = Charset.forName(encoding);
+        byte[] bytes = ("<items>" + "<item><name>été</name></item>".repeat(10_000) + "</items>  ").getBytes(charset);
+        var stream = spy(new ByteArrayInputStream(bytes));
+        when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenReturn(stream);
+        var object = new S3ObjectRef(PATH, bytes.length, null, null);
+        var handle = new XmlTableFunction.Handle(new FileSelection(List.of(object), ""),
+                new ScanSettings(1, new PageSettings(2, 1024), encoding),
+                new XmlFormatSupport.Schema(List.of(new Column("name", ColumnSource.ELEMENT, "name"))),
+                new XmlTableFunction.XmlOptions("item", false, ""));
+        var source = function.createPageSource(mock(ConnectorSession.class), handle, FileSplit.forWholeFile(object), List.of());
+        assertEquals(0, source.getCompletedBytes());
+        var first = source.getNextSourcePage();
+        assertEquals(2, first.getPositionCount());
+        long completed = source.getCompletedBytes();
+        assertTrue(completed > 0 && completed < bytes.length);
+        long rows = first.getPositionCount();
+        while (!source.isFinished()) {
+            var page = source.getNextSourcePage();
+            if (page != null) {
+                rows += page.getPositionCount();
+            }
+            assertTrue(source.getCompletedBytes() >= completed);
+            assertTrue(source.getCompletedBytes() <= bytes.length);
+            completed = source.getCompletedBytes();
+        }
+        assertEquals(10_000, rows);
+        assertEquals(bytes.length, completed);
+        assertEquals(10_000, source.getCompletedPositions().orElseThrow());
+        source.close();
+        verify(stream, atLeastOnce()).close();
+    }
+
+    @Test
+    void documentWithoutRowsStillReportsItsBytes() throws Exception {
+        byte[] bytes = "<items>été</items>".getBytes(StandardCharsets.UTF_8);
+        var stream = spy(new ByteArrayInputStream(bytes));
+        when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenReturn(stream);
+        var object = new S3ObjectRef(PATH, bytes.length, null, null);
+        var handle = new XmlTableFunction.Handle(new FileSelection(List.of(object), ""),
+                new ScanSettings(1, new PageSettings(2, 1024), "UTF-8"), new XmlFormatSupport.Schema(List.of()),
+                new XmlTableFunction.XmlOptions("item", false, ""));
+        var source = function.createPageSource(mock(ConnectorSession.class), handle, FileSplit.forWholeFile(object), List.of());
+        assertNull(source.getNextSourcePage());
+        assertTrue(source.isFinished());
+        assertEquals(bytes.length, source.getCompletedBytes());
+        assertEquals(0, source.getCompletedPositions().orElseThrow());
+        verify(stream, atLeastOnce()).close();
     }
 
     @Test

@@ -32,6 +32,8 @@ import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.FilterInputStream;
+import java.io.InputStreamReader;
 import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
@@ -248,6 +250,32 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
                 FileSplit split,
                 List<S3FileColumnHandle> projectedColumns) {
             super(session, s3ClientBuilder, handle, split, projectedColumns);
+        }
+
+        @Override
+        protected void openSource() throws IOException {
+            // Count the original bytes, including parser read-ahead, before decoding characters.
+            var stream = new FilterInputStream(openStream()) {
+                @Override
+                public int read() throws IOException {
+                    int value = in.read();
+                    if (value >= 0) {
+                        addBytesWithinPrimary(1);
+                    }
+                    return value;
+                }
+
+                @Override
+                public int read(byte[] bytes, int offset, int length) throws IOException {
+                    int count = in.read(bytes, offset, length);
+                    if (count > 0) {
+                        addBytesWithinPrimary(count);
+                    }
+                    return count;
+                }
+            };
+            reader = new BufferedReader(new InputStreamReader(stream, charset));
+            afterReaderOpened(reader);
         }
 
         @Override
