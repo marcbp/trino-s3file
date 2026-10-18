@@ -256,11 +256,11 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
             return SourcePage.create(page);
         }
         catch (IOException e) {
-            closeSession();
+            close();
             throw new UncheckedIOException("Failed to process data for " + handle.object().path(), e);
         }
         catch (RuntimeException e) {
-            closeSession();
+            close();
             throw e;
         }
         finally {

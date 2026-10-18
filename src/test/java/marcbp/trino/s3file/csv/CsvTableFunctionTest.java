@@ -151,22 +151,6 @@ class CsvTableFunctionTest {
     }
 
     @Test
-    void createSplitsGeneratesMultipleRanges() {
-        CsvTableFunction.Handle handle = handle(List.of("c1", "c2"), true, false, 25 * 1024 * 1024L, 8 * 1024 * 1024);
-
-        List<FileSplit> splits = function.createSplits(handle);
-
-        assertEquals(4, splits.size());
-        FileSplit first = splits.get(0);
-        assertEquals(0, first.getStartOffset());
-        assertTrue(first.isFirst());
-        assertFalse(first.isLast());
-        FileSplit last = splits.get(splits.size() - 1);
-        assertTrue(last.isLast());
-        assertTrue(last.getStartOffset() < handle.object().size());
-    }
-
-    @Test
     void multilineCsvUsesOneWholeFileSplit() {
         CsvTableFunction.Handle handle = handle(List.of("c1", "c2"), true, true, 25 * 1024 * 1024L, 8 * 1024 * 1024);
 

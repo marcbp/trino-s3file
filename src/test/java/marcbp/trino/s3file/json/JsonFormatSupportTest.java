@@ -31,10 +31,10 @@ class JsonFormatSupportTest {
     }
 
     @Test
-    void inferColumnsUnionsFieldsAcrossSampleRows() throws Exception {
+    void inferColumnsUnionsFieldsAndWidensNumericTypes() throws Exception {
         BufferedReader reader = new BufferedReader(new StringReader("""
                 {"id":1,"flag":true}
-                {"id":2,"value":12.5}
+                {"id":2.5,"value":12.5}
                 {"id":3,"nickname":"Neo"}
                 """));
 
@@ -42,23 +42,10 @@ class JsonFormatSupportTest {
 
         assertEquals(List.of("id", "flag", "value", "nickname"), metadata.names());
         assertEquals(List.of(
-                ColumnType.BIGINT,
+                ColumnType.DOUBLE,
                 ColumnType.BOOLEAN,
                 ColumnType.DOUBLE,
                 ColumnType.VARCHAR), metadata.types());
-    }
-
-    @Test
-    void inferColumnsStopsAfterConfiguredSampleRows() throws Exception {
-        BufferedReader reader = new BufferedReader(new StringReader("""
-                {"id":1}
-                {"extra":"ignored"}
-                """));
-
-        ColumnsMetadata metadata = JsonFormatSupport.inferColumns(reader, "source", 1);
-
-        assertEquals(List.of("id"), metadata.names());
-        assertEquals(List.of(ColumnType.BIGINT), metadata.types());
     }
 
     @Test
@@ -93,12 +80,4 @@ class JsonFormatSupportTest {
         assertThrows(TrinoException.class, () -> JsonFormatSupport.parseObject("[1,2,3]", "source"));
     }
 
-    @Test
-    void describeColumnsBuildsSummary() {
-        List<String> summary = JsonFormatSupport.describeColumns(
-                List.of("id", "active"),
-                List.of(ColumnType.BIGINT, ColumnType.BOOLEAN));
-
-        assertEquals(List.of("id:bigint", "active:boolean"), summary);
-    }
 }

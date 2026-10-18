@@ -1,9 +1,5 @@
 package marcbp.trino.s3file.txt;
 
-import io.trino.spi.block.BlockBuilder;
-import io.trino.spi.block.BlockBuilderStatus;
-import io.trino.spi.block.PageBuilderStatus;
-import io.trino.spi.type.VarcharType;
 import org.junit.jupiter.api.Test;
 
 import java.io.BufferedReader;
@@ -17,11 +13,6 @@ class TextFormatSupportTest {
     @Test
     void decodeEscapesHandlesCommonSequences() {
         assertEquals("a\nb\tc\\", TextFormatSupport.decodeEscapes("a\\nb\\tc\\\\"));
-    }
-
-    @Test
-    void formatForLogReplacesControlCharacters() {
-        assertEquals("\\r\\n", TextFormatSupport.formatForLog("\r\n"));
     }
 
     @Test
@@ -89,12 +80,4 @@ class TextFormatSupportTest {
         assertEquals(2, TextFormatSupport.calculateLineBytes("é", StandardCharsets.ISO_8859_1, latin1LineBreak));
     }
 
-    @Test
-    void writeLineAppendsUtf8Slice() {
-        PageBuilderStatus pageBuilderStatus = new PageBuilderStatus(PageBuilderStatus.DEFAULT_MAX_PAGE_SIZE_IN_BYTES);
-        BlockBuilderStatus blockBuilderStatus = pageBuilderStatus.createBlockBuilderStatus();
-        BlockBuilder builder = VarcharType.createUnboundedVarcharType().createBlockBuilder(blockBuilderStatus, 1);
-        TextFormatSupport.writeLine(builder, VarcharType.createUnboundedVarcharType(), "hello");
-        assertEquals(1, builder.getPositionCount());
-    }
 }

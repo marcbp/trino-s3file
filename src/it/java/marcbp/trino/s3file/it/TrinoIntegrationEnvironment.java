@@ -128,6 +128,9 @@ final class TrinoIntegrationEnvironment implements AutoCloseable {
         putObject("data.jsonl", JSON_DATA);
         putObject("data.txt", TXT_DATA);
         putObject("data.xml", XML_DATA);
+        putObject("listing/direct.txt", "direct\n");
+        putObject("listing/nested/child.txt", "nested\n");
+        putObject("malformed.jsonl", "{\"id\":1}\nnot-json\n");
         putObject("split-data.txt", largeTextData());
         putObject("split-data.jsonl", largeJsonData());
         putObject("split-data.csv", largeCsvData());

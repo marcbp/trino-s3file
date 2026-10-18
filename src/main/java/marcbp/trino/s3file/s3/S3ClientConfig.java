@@ -89,7 +89,7 @@ public record S3ClientConfig(
             }
             return (int) bytes;
         }
-        catch (NumberFormatException e) {
+        catch (NumberFormatException | ArithmeticException e) {
             throw new IllegalArgumentException("Connector property " + DEFAULT_SPLIT_SIZE_MB_KEY + " must be a positive integer", e);
         }
     }

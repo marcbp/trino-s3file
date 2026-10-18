@@ -158,4 +158,25 @@ class ObjectsTableFunctionTest {
         assertInstanceOf(SourcePage.class, page);
         return page;
     }
+
+    @Test
+    void emptyIntermediatePageDoesNotEndListing() throws Exception {
+        when(sessionClient.listObjects("bucket", "", true, Optional.empty()))
+                .thenReturn(new ListObjectsPage(List.of(), List.of(), Optional.of("next")));
+        when(sessionClient.listObjects("bucket", "", true, Optional.of("next")))
+                .thenReturn(new ListObjectsPage(List.of(new ListedObject(
+                        "bucket", "last.txt", 12, Optional.empty(), Optional.empty())),
+                        List.of(), Optional.empty()));
+        ConnectorPageSource source = function.createPageSource(mock(ConnectorSession.class),
+                new ObjectsTableFunction.Handle("bucket", "", true, false), ListingSplit.INSTANCE,
+                List.of(new S3FileColumnHandle("key", 2)));
+
+        SourcePage page = nextPage(source);
+        assertEquals(1, page.getPositionCount());
+        assertEquals("last.txt", VarcharType.VARCHAR.getObjectValue(page.getBlock(0), 0));
+        assertEquals(null, source.getNextSourcePage());
+        assertTrue(source.isFinished());
+        source.close();
+        verify(sessionClient).close();
+    }
 }

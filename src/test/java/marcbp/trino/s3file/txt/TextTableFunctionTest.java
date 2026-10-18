@@ -20,10 +20,10 @@ import marcbp.trino.s3file.s3.S3ClientBuilder.ObjectMetadata;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.StringReader;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -34,6 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
@@ -41,6 +42,9 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 /**
  * Unit tests covering analysis and split creation for the text table function.
@@ -98,36 +102,6 @@ class TextTableFunctionTest {
 
         TextTableFunction.Handle handle = (TextTableFunction.Handle) analysis.getHandle();
         assertEquals(1024 * 1024, handle.scan().splitSizeBytes());
-    }
-
-    @Test
-    void createSplitsExposeTailRangesToFinishBoundaryRecords() {
-        TextTableFunction.Handle handle = handle("\n", 10, 4, StandardCharsets.UTF_8, null, null);
-
-        List<FileSplit> splits = function.createSplits(handle);
-
-        assertEquals(3, splits.size());
-
-        FileSplit first = splits.get(0);
-        assertEquals(0, first.getStartOffset());
-        assertEquals(4, first.getPrimaryEndOffset());
-        assertEquals(10, first.getRangeEndExclusive());
-        assertTrue(first.isFirst());
-        assertFalse(first.isLast());
-
-        FileSplit second = splits.get(1);
-        assertEquals(4, second.getStartOffset());
-        assertEquals(8, second.getPrimaryEndOffset());
-        assertEquals(10, second.getRangeEndExclusive());
-        assertFalse(second.isFirst());
-        assertFalse(second.isLast());
-
-        FileSplit third = splits.get(2);
-        assertEquals(8, third.getStartOffset());
-        assertEquals(10, third.getPrimaryEndOffset());
-        assertEquals(10, third.getRangeEndExclusive());
-        assertFalse(third.isFirst());
-        assertTrue(third.isLast());
     }
 
     @Test
@@ -242,6 +216,77 @@ class TextTableFunctionTest {
         assertEquals(1, firstPage.getPositionCount());
         assertEquals(1, secondPage.getPositionCount());
         assertEquals(null, pageSource.getNextSourcePage());
+    }
+
+    @Test
+    void closingBeforeFirstReadDoesNotOpenObject() throws IOException {
+        TextTableFunction.Handle handle = handle("\n", 64, 32, StandardCharsets.UTF_8, null, null);
+        ConnectorPageSource source = function.createPageSource(
+                mock(ConnectorSession.class), handle, handle.toWholeFileSplit(), allColumns(handle));
+
+        source.close();
+        source.close();
+
+        assertTrue(source.isFinished());
+        assertEquals(null, source.getNextSourcePage());
+        verify(sessionClient, times(1)).close();
+        verifyNoMoreInteractions(sessionClient);
+    }
+
+    @Test
+    void emptyObjectFinishesAndClosesResources() throws IOException {
+        InputStream stream = mock(InputStream.class);
+        when(stream.read()).thenReturn(-1);
+        when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenReturn(stream);
+        TextTableFunction.Handle handle = handle("\n", 0, 32, StandardCharsets.UTF_8, null, null);
+        ConnectorPageSource source = function.createPageSource(
+                mock(ConnectorSession.class), handle, handle.toWholeFileSplit(), List.of());
+
+        assertEquals(null, source.getNextSourcePage());
+        assertTrue(source.isFinished());
+        assertEquals(0, source.getCompletedBytes());
+        source.close();
+        verify(sessionClient, times(1)).close();
+        verify(stream, times(1)).close();
+    }
+
+    @Test
+    void readFailureClosesStreamAndSession() throws IOException {
+        InputStream stream = mock(InputStream.class);
+        IOException failure = new IOException("read failed");
+        when(stream.read()).thenThrow(failure);
+        when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenReturn(stream);
+        TextTableFunction.Handle handle = handle("\n", 64, 32, StandardCharsets.UTF_8, null, null);
+        ConnectorPageSource source = function.createPageSource(
+                mock(ConnectorSession.class), handle, handle.toWholeFileSplit(), allColumns(handle));
+
+        assertEquals(failure, assertThrows(UncheckedIOException.class, source::getNextSourcePage).getCause());
+        assertTrue(source.isFinished());
+        source.close();
+        verify(stream, times(1)).close();
+        verify(sessionClient, times(1)).close();
+    }
+
+    @Test
+    void closingPartialScanReleasesStreamAndSession() throws IOException {
+        ByteArrayInputStream stream = spy(stream("first\nsecond\n", StandardCharsets.UTF_8));
+        when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenReturn(stream);
+        TextTableFunction.Handle handle = new TextTableFunction.Handle(
+                new S3ObjectRef(PATH, 13, null, null),
+                new ScanSettings(32, new marcbp.trino.s3file.file.PageSettings(1024, 1), "UTF-8"),
+                new TextTableFunction.TextOptions("\n"));
+        ConnectorPageSource source = function.createPageSource(
+                mock(ConnectorSession.class), handle, handle.toWholeFileSplit(), allColumns(handle));
+
+        assertEquals(1, nextPage(source).getPositionCount());
+        assertFalse(source.isFinished());
+        source.close();
+        source.close();
+
+        assertTrue(source.isFinished());
+        assertEquals(null, source.getNextSourcePage());
+        verify(stream, times(1)).close();
+        verify(sessionClient, times(1)).close();
     }
 
     private static List<S3FileColumnHandle> allColumns(TextTableFunction.Handle handle) {

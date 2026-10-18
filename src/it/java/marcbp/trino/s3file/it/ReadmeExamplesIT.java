@@ -3,12 +3,15 @@ package marcbp.trino.s3file.it;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class ReadmeExamplesIT {
     private static TrinoIntegrationEnvironment environment;
@@ -165,7 +168,7 @@ class ReadmeExamplesIT {
     @Test
     void tinySplitsReadEveryTextRecordExactlyOnce() throws Exception {
         List<List<String>> rows = environment.query("""
-                SELECT count(*),
+                SELECT count(*), count(DISTINCT split_part(line, '|', 1)),
                        min(CAST(split_part(line, '|', 1) AS bigint)),
                        max(CAST(split_part(line, '|', 1) AS bigint)),
                        sum(CAST(split_part(line, '|', 1) AS bigint))
@@ -175,13 +178,13 @@ class ReadmeExamplesIT {
                 ))
                 """);
 
-        assertEquals(List.of(List.of("25000", "1", "25000", "312512500")), rows);
+        assertEquals(List.of(List.of("25000", "25000", "1", "25000", "312512500")), rows);
     }
 
     @Test
     void tinySplitsReadEveryJsonRecordExactlyOnce() throws Exception {
         List<List<String>> rows = environment.query("""
-                SELECT count(*), min(id), max(id), sum(id)
+                SELECT count(*), count(DISTINCT id), min(id), max(id), sum(id)
                 FROM TABLE(s3file.json.load(
                     path => 's3://mybucket/split-data.jsonl',
                     split_size_mb => 1,
@@ -189,13 +192,13 @@ class ReadmeExamplesIT {
                 ))
                 """);
 
-        assertEquals(List.of(List.of("25000", "1", "25000", "312512500")), rows);
+        assertEquals(List.of(List.of("25000", "25000", "1", "25000", "312512500")), rows);
     }
 
     @Test
     void tinySplitsReadEveryCsvRecordExactlyOnce() throws Exception {
         List<List<String>> rows = environment.query("""
-                SELECT count(*), min(CAST(id AS bigint)), max(CAST(id AS bigint)), sum(CAST(id AS bigint))
+                SELECT count(*), count(DISTINCT id), min(CAST(id AS bigint)), max(CAST(id AS bigint)), sum(CAST(id AS bigint))
                 FROM TABLE(s3file.csv.load(
                     path => 's3://mybucket/split-data.csv',
                     header => 'true',
@@ -204,7 +207,7 @@ class ReadmeExamplesIT {
                 ))
                 """);
 
-        assertEquals(List.of(List.of("25000", "1", "25000", "312512500")), rows);
+        assertEquals(List.of(List.of("25000", "25000", "1", "25000", "312512500")), rows);
     }
 
     @Test
@@ -223,6 +226,56 @@ class ReadmeExamplesIT {
         assertEquals(List.of(
                 List.of("1", "hello\nfrom two physical lines"),
                 List.of("2", "plain")), rows);
+    }
+
+    @Test
+    void jsonProjectionPreservesColumnOrderAndFilter() throws Exception {
+        assertEquals(List.of(List.of("Moïse", "67")), environment.query("""
+                SELECT nickname, age
+                FROM TABLE(s3file.json.load(path => 's3://mybucket/data.jsonl'))
+                WHERE age > 50
+                """));
+    }
+
+    @Test
+    void nonRecursiveListingReturnsImmediateObjectsAndPrefixes() throws Exception {
+        assertEquals(List.of(
+                List.of("listing/direct.txt", "object"),
+                List.of("listing/nested/", "prefix")), environment.query("""
+                SELECT key, type
+                FROM TABLE(s3file.list.objects(
+                    bucket => 'mybucket', prefix => 'listing/',
+                    recursive_listing => 'false', include_prefixes => 'true'
+                ))
+                ORDER BY key
+                """));
+        assertEquals(List.of(List.of("0")), environment.query("""
+                SELECT count(*) FROM TABLE(s3file.list.objects(
+                    bucket => 'mybucket', prefix => 'listing/missing/'
+                ))
+                """));
+    }
+
+    @Test
+    void countStillRejectsMalformedJsonAfterSchemaSample() {
+        AssertionError error = assertThrows(AssertionError.class, () -> environment.query("""
+                SELECT count(*) FROM TABLE(s3file.json.load(
+                    path => 's3://mybucket/malformed.jsonl', schema_sample_rows => 1
+                ))
+                """));
+        assertTrue(error.getMessage().contains("Invalid JSON"), error.getMessage());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "path => ''",
+            "path => 's3://mybucket/data.txt', split_size_mb => 0",
+            "path => 's3://mybucket/data.txt', encoding => 'not-a-charset'"
+    })
+    void invalidArgumentsProduceSqlErrors(String arguments) {
+        AssertionError error = assertThrows(AssertionError.class, () -> environment.query(
+                "SELECT * FROM TABLE(s3file.txt.load(" + arguments + "))"));
+        assertTrue(error.getMessage().contains("INVALID_FUNCTION_ARGUMENT"), error.getMessage());
     }
 
     private static void assertHasObjectRow(List<List<String>> rows, String path, String bucket, String key, String name, String parent, String type) {
