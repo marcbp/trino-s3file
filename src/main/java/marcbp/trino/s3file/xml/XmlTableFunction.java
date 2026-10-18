@@ -274,7 +274,7 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
                     return count;
                 }
             };
-            reader = new BufferedReader(new InputStreamReader(stream, charset));
+            reader = new BufferedReader(new InputStreamReader(stream, charset), READER_BUFFER_SIZE);
             afterReaderOpened(reader);
         }
 

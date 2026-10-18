@@ -39,6 +39,7 @@ import java.util.List;
 import java.util.Map;
 
 import static java.util.Objects.requireNonNull;
+import static io.airlift.slice.SizeOf.sizeOf;
 import static marcbp.trino.s3file.util.TableFunctionArguments.encodingArgumentSpecification;
 import static marcbp.trino.s3file.util.TableFunctionArguments.optionalBoolean;
 import static marcbp.trino.s3file.util.TableFunctionArguments.optionalString;
@@ -329,6 +330,12 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                 }
             }
             pageBuilder.declarePosition();
+        }
+
+        @Override
+        public long getMemoryUsage() {
+            return super.getMemoryUsage() + sizeOf(lineBreakBytes)
+                    + (recordReader == null ? 0 : recordReader.getRetainedSizeInBytes());
         }
 
         @Override

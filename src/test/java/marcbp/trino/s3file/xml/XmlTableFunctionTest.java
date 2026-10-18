@@ -68,8 +68,11 @@ class XmlTableFunctionTest {
                 new XmlTableFunction.XmlOptions("item", false, ""));
         var source = function.createPageSource(mock(ConnectorSession.class), handle, FileSplit.forWholeFile(object), List.of());
         assertEquals(0, source.getCompletedBytes());
+        long initialMemory = source.getMemoryUsage();
+        assertTrue(initialMemory > 0);
         var first = source.getNextSourcePage();
         assertEquals(2, first.getPositionCount());
+        assertTrue(source.getMemoryUsage() > initialMemory);
         long completed = source.getCompletedBytes();
         assertTrue(completed > 0 && completed < bytes.length);
         long rows = first.getPositionCount();
@@ -86,6 +89,7 @@ class XmlTableFunctionTest {
         assertEquals(bytes.length, completed);
         assertEquals(10_000, source.getCompletedPositions().orElseThrow());
         source.close();
+        assertTrue(source.getMemoryUsage() <= initialMemory);
         verify(stream, atLeastOnce()).close();
     }
 

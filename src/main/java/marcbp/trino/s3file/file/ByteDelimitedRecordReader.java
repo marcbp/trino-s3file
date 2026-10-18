@@ -9,12 +9,17 @@ import java.util.Arrays;
 import java.util.Optional;
 
 import static java.util.Objects.requireNonNull;
+import static io.airlift.slice.SizeOf.instanceSize;
+import static io.airlift.slice.SizeOf.sizeOf;
 
 /**
  * Streams byte-delimited text records while preserving the exact byte count consumed from S3.
  */
 public final class ByteDelimitedRecordReader implements Closeable {
+    private static final int INSTANCE_SIZE = instanceSize(ByteDelimitedRecordReader.class);
+
     private final InputStream input;
+    private byte[] buffer = new byte[8192];
     private final Charset charset;
     private final byte[] delimiter;
     private final boolean trimCarriageReturnBeforeLineFeed;
@@ -34,18 +39,17 @@ public final class ByteDelimitedRecordReader implements Closeable {
     }
 
     public Optional<Record> readNext() throws IOException {
-        byte[] bytes = new byte[8192];
         int size = 0;
         int next;
         while ((next = input.read()) != -1) {
-            if (size == bytes.length) {
-                bytes = Arrays.copyOf(bytes, bytes.length * 2);
+            if (size == buffer.length) {
+                buffer = Arrays.copyOf(buffer, buffer.length * 2);
             }
-            bytes[size] = (byte) next;
+            buffer[size] = (byte) next;
             size++;
-            if (endsWith(bytes, size, delimiter)) {
+            if (endsWith(buffer, size, delimiter)) {
                 int contentLength = size - delimiter.length;
-                byte[] content = Arrays.copyOf(bytes, contentLength);
+                byte[] content = Arrays.copyOf(buffer, contentLength);
                 content = trimCarriageReturnBeforeLineFeed(content);
                 return Optional.of(new Record(content, size, true));
             }
@@ -54,7 +58,7 @@ public final class ByteDelimitedRecordReader implements Closeable {
         if (size == 0) {
             return Optional.empty();
         }
-        byte[] remaining = Arrays.copyOf(bytes, size);
+        byte[] remaining = Arrays.copyOf(buffer, size);
         return Optional.of(new Record(remaining, remaining.length, false));
     }
 
@@ -80,6 +84,10 @@ public final class ByteDelimitedRecordReader implements Closeable {
             }
         }
         return true;
+    }
+
+    public long getRetainedSizeInBytes() {
+        return INSTANCE_SIZE + sizeOf(buffer) + sizeOf(delimiter);
     }
 
     @Override

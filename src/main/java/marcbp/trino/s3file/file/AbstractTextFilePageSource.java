@@ -16,6 +16,7 @@ import marcbp.trino.s3file.s3.S3ClientBuilder;
 
 import java.io.BufferedReader;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
@@ -23,8 +24,20 @@ import java.util.List;
 import java.util.OptionalLong;
 
 import static java.util.Objects.requireNonNull;
+import static io.airlift.slice.SizeOf.instanceSize;
+import static io.airlift.slice.SizeOf.sizeOfByteArray;
+import static io.airlift.slice.SizeOf.sizeOfCharArray;
 
 public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> implements ConnectorPageSource {
+    protected static final int READER_BUFFER_SIZE = 8192;
+    // BufferedReader's character buffer and the JDK InputStreamReader's byte buffer.
+    // Opaque parser/client internals and pages handed to Trino are not included.
+    private static final long BUFFERED_READER_MEMORY = instanceSize(BufferedReader.class)
+            + instanceSize(InputStreamReader.class)
+            + sizeOfCharArray(READER_BUFFER_SIZE)
+            + sizeOfByteArray(READER_BUFFER_SIZE);
+    private final long instanceSize = instanceSize(getClass());
+
     protected final Logger logger;
     protected final S3ClientBuilder.SessionClient sessionClient;
     protected final H handle;
@@ -290,7 +303,7 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
 
     @Override
     public long getMemoryUsage() {
-        return 0;
+        return instanceSize + (reader == null ? 0 : BUFFERED_READER_MEMORY);
     }
 
     @Override

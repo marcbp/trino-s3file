@@ -208,14 +208,20 @@ class TextTableFunctionTest {
                 mock(ConnectorSession.class),
                 handle,
                 handle.createSplits(false).getFirst(),
-                List.of());
+                allColumns(handle));
 
+        long initialMemory = pageSource.getMemoryUsage();
+        assertTrue(initialMemory > 0);
         SourcePage firstPage = nextPage(pageSource);
+        assertTrue(pageSource.getMemoryUsage() >= initialMemory + largeLine.length());
         SourcePage secondPage = nextPage(pageSource);
+        assertEquals(largeLine, VarcharType.VARCHAR.getObjectValue(firstPage.getBlock(0), 0));
+        assertEquals("small", VarcharType.VARCHAR.getObjectValue(secondPage.getBlock(0), 0));
 
         assertEquals(1, firstPage.getPositionCount());
         assertEquals(1, secondPage.getPositionCount());
         assertEquals(null, pageSource.getNextSourcePage());
+        assertTrue(pageSource.getMemoryUsage() <= initialMemory);
     }
 
     @Test

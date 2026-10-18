@@ -39,6 +39,7 @@ import marcbp.trino.s3file.file.BaseTextFileHandle;
 import marcbp.trino.s3file.file.PageSettings;
 import marcbp.trino.s3file.file.AbstractTextFilePageSource;
 import static java.util.Objects.requireNonNull;
+import static io.airlift.slice.SizeOf.sizeOf;
 import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static marcbp.trino.s3file.util.TableFunctionArguments.encodingArgumentSpecification;
 import static marcbp.trino.s3file.util.TableFunctionArguments.pathArgumentSpecification;
@@ -226,6 +227,12 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
                 TextFormatSupport.writeLine(blockBuilder, outputType, (String) payload);
             }
             pageBuilder.declarePosition();
+        }
+
+        @Override
+        public long getMemoryUsage() {
+            return super.getMemoryUsage() + sizeOf(lineBreakBytes)
+                    + (recordReader == null ? 0 : recordReader.getRetainedSizeInBytes());
         }
 
         @Override
