@@ -134,6 +134,36 @@ final class TrinoIntegrationEnvironment implements AutoCloseable {
         putObject("split-data.txt", largeTextData());
         putObject("split-data.jsonl", largeJsonData());
         putObject("split-data.csv", largeCsvData());
+        for (String prefix : List.of("multi/a", "multi/nested/b")) {
+            putObject(prefix + ".txt", largeTextData());
+            putObject(prefix + ".csv", largeCsvData());
+            putObject(prefix + ".jsonl", largeJsonData());
+        }
+        putObject("schema/00-empty.jsonl", "");
+        putObject("schema/01-reference.jsonl", "{\"id\":1,\"optional\":\"yes\"}\n");
+        putObject("schema/02-missing.jsonl", "{\"id\":2}\n");
+        putObject("bad-type/01.jsonl", "{\"id\":1}\n");
+        putObject("bad-type/02.jsonl", "{\"id\":1.5}\n");
+        putObject("bad-field/01.jsonl", "{\"id\":1}\n");
+        putObject("bad-field/02.jsonl", "{\"id\":2,\"extra\":true}\n");
+        putObject("bad-header/01.csv", "id;name\n1;one\n");
+        putObject("bad-header/02.csv", "name;id\ntwo;2\n");
+        putObject("bad-width/01.csv", "id;name\n1;one\n");
+        putObject("bad-width/02.csv", "id;name\n2\n");
+        putObject("xml-multi/00.xml", "<items/>");
+        putObject("xml-multi/01.xml", "<items><row id=\"1\"><name>one</name></row></items>");
+        putObject("xml-multi/02.xml", "<items><row id=\"2\"/></items>");
+        putObject("bad-xml/01.xml", "<items><row><name>one</name></row></items>");
+        putObject("bad-xml/02.xml", "<items><row><extra>two</extra></row></items>");
+        putObject("multi-line/01.csv", "id;comment\n1;\"hello\nworld\"\n");
+        putObject("multi-line/02.csv", "id;comment\n2;plain\n");
+        for (String value : List.of("literal", "neighbor")) {
+            String key = value.equals("literal") ? "escaped/file[2026]*?" : "escaped/file2-other";
+            putObject(key + ".txt", value + "\n");
+            putObject(key + ".csv", "value\n" + value + "\n");
+            putObject(key + ".jsonl", "{\"value\":\"" + value + "\"}\n");
+            putObject(key + ".xml", "<rows><row><value>" + value + "</value></row></rows>");
+        }
         putObject("multiline.csv", "id;comment\n1;\"hello\nfrom two physical lines\"\n2;plain\n");
     }
 

@@ -8,6 +8,7 @@ A Trino connector for ad-hoc exploration, validation, or lightweight ingestion o
 - **Schema inference on read**: metadata are inferred at runtime from each object.
 - **Parameterized table functions**: pass parsing tweaks per query without redeploying.
 - **Distributed processing**: workers stream byte ranges concurrently so oversized files stay readable.
+- **Multi-file reads**: query files across partitioned S3 prefixes using glob patterns.
 - **JSON projection pushdown**: scans parse only the required JSON fields.
 - **Request-scoped S3 clients**: each user query gets its own S3 client per worker, with interceptor-based customization and reuse across all splits.
 - **Snapshot safety**: object versions or ETags are pinned to avoid mixing data when objects change mid-scan.
@@ -62,14 +63,13 @@ The function handles S3 pagination internally and returns a row per object or pr
 SELECT *
 FROM TABLE(
     s3file.json.load(
-        path => 's3://mybucket/data.jsonl',
-        schema_sample_rows => 100,      -- inspect the first N rows to infer the schema
+        path => 's3://mybucket/data*.jsonl',
         additional_columns => 'nickname:varchar' -- include fields missing from the first object
     )
 );
 ```
 
-- `path` (required): location of a newline-delimited JSON (NDJSON) object stream.
+- `path` (required): exact S3 path or glob selecting newline-delimited JSON (NDJSON) files.
 - `encoding` (optional, default `'UTF-8'`): override the charset used when decoding the object.
 - `split_size_mb` (optional, default connector value `32`): target split size in MiB for distributed reads.
 - `schema_sample_rows` (optional, default `100`): number of non-empty JSON rows used to infer the schema. Fields are merged across these rows, so columns that appear later in the sample are still detected.
@@ -103,7 +103,7 @@ Fields are inferred from the first `schema_sample_rows` JSON objects: booleans m
 SELECT *
 FROM TABLE(
     s3file.xml.load(
-        path => 's3://mybucket/data.xml',
+        path => 's3://mybucket/data*.xml',
         row_element => 'employee', -- element treated as one row
         empty_as_null => 'true',  -- convert empty strings to NULL when set to 'true'
         invalid_row_column => '', -- disable the default raw-error column for this example
@@ -112,7 +112,7 @@ FROM TABLE(
 );
 ```
 
-- `path` (required): XML document location in S3-compatible storage.
+- `path` (required): exact S3 path or glob selecting XML documents.
 - `row_element` (optional, default `'row'`): element name that represents one logical row; only direct children of that element become columns.
 - `include_text` (optional, default `'false'`): expose mixed-content text (outside child elements) as an extra column named `text`.
 - `empty_as_null` (optional, default `'false'`): convert empty attribute/element values to `NULL`.
@@ -181,7 +181,7 @@ Set `invalid_row_column` to keep malformed rows instead of failing the query. Th
 SELECT *
 FROM TABLE(
     s3file.csv.load(
-        path => 's3://mybucket/data.csv',
+        path => 's3://mybucket/data*.csv',
         delimiter => ';',
         header => 'true',        -- set to 'false' when the CSV has no header row
         multiline => 'false',    -- set to 'true' for quoted fields containing line breaks
@@ -190,7 +190,7 @@ FROM TABLE(
 );
 ```
 
-- `path` (required): CSV location in S3-compatible storage.
+- `path` (required): exact S3 path or glob selecting CSV files.
 - `delimiter` (optional, default `';'`): single character separator.
 - `header` (optional, default `'true'`): when `'false'`, the first row is treated as data and column names default to `column_1`, `column_2`, …
 - `multiline` (optional, default `'false'`): allow quoted fields to contain line breaks. Multiline CSV uses one whole-file split because arbitrary byte offsets are not reliable CSV record boundaries.
@@ -227,7 +227,7 @@ WITH parsed AS (
     SELECT split_to_map(line, ' ', '=') AS fields
     FROM TABLE(
         s3file.txt.load(
-            path => 's3://mybucket/data.txt',
+            path => 's3://mybucket/data*.txt',
             line_break => '\n',  -- override with '\r\n' or any custom separator
             encoding => 'UTF-8'  -- override when the file is not UTF-8
         )
@@ -243,12 +243,12 @@ SELECT
 FROM parsed;
 ```
 
-- `path` (required): text file location in S3-compatible storage.
+- `path` (required): exact S3 path or glob selecting text files.
 - `line_break` (optional, default `'\n'`): string separator used to split the file into rows.
 - `encoding` (optional, default `'UTF-8'`): character set for decoding the file.
 - `split_size_mb` (optional, default connector value `32`): target split size in MiB for distributed reads.
 
-The function yields a single `VARCHAR` column named `line` containing each record in order. Use Trino SQL functions to split and cast the line into structured columns when needed.
+The function yields a `VARCHAR` column named `line` containing each record, plus `$path` by default for glob selections. Row order is not guaranteed. Use Trino SQL functions to split and cast the line into structured columns when needed.
 
 **Example input** (`docker/examples/data.txt`)
 
@@ -269,6 +269,21 @@ id=5 firstname=Georges lastname=Préjean nickname=Moïse age=67 status=inactive
 | 3 | Jacky | JACQUARD | 44 | null | active |
 | 4 | Jean-René | CALOT | 47 | null | active |
 | 5 | Georges | PRÉJEAN | 67 | Moïse | inactive |
+
+## Read multiple files
+
+All `load` functions accept JDK glob patterns in `path`, using Unix paths (the bucket must be literal):
+
+```sql
+SELECT "$path", id
+FROM TABLE(s3file.json.load(path => 's3://mybucket/events/{,**/}*.jsonl'));
+```
+
+- `*` and `?` match within one path segment; `**` crosses `/`. Use `events/{,**/}*.jsonl` to include both direct children and subfolders; `events/**/*.jsonl` requires a subfolder. Classes (`[a-z]`), alternatives (`{csv,txt}`), and backslash escapes are supported; nested alternatives are not.
+- Set `glob => false` (default `true`) to read one exact S3 key, preserving special characters and backslashes without escaping.
+- `$path` contains the source S3 path. Rename it with `path_column => 'source_file'` or disable it with `path_column => ''`.
+- One schema is inferred from the first usable file in key order, skipping empty files, then applied to all files without merging. Missing JSON/XML fields become NULL; incompatible rows fail the query unless XML error capture is enabled.
+- Selection is limited to 10,000 files; no matches fail the query. Each file retains its own splits, with one split per file for XML and multiline CSV.
 
 ## Parallelism Limits
 

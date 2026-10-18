@@ -3,8 +3,6 @@ package marcbp.trino.s3file.file;
 import java.util.ArrayList;
 import java.util.List;
 
-import static java.lang.Math.max;
-
 /**
  * Utility for planning primary file splits whose readable range extends to the end of the object.
  *
@@ -15,9 +13,10 @@ import static java.lang.Math.max;
 public final class SplitPlanner {
     private SplitPlanner() {}
 
-    public static List<FileSplit> planSplits(long fileSize, int splitSizeBytes) {
+    public static List<FileSplit> planSplits(S3ObjectRef object, int splitSizeBytes) {
+        long fileSize = object.size();
         if (fileSize <= 0) {
-            return List.of(FileSplit.forWholeFile(max(0, fileSize)));
+            return List.of(FileSplit.forWholeFile(object));
         }
 
         if (splitSizeBytes <= 0) {
@@ -31,6 +30,7 @@ public final class SplitPlanner {
             long primaryEnd = Math.min(fileSize, offset + splitSizeBytes);
             boolean last = primaryEnd >= fileSize;
             splits.add(new FileSplit(
+                    object,
                     "split-" + index,
                     offset,
                     primaryEnd,

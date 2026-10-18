@@ -2,7 +2,6 @@ package marcbp.trino.s3file.xml;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import io.trino.spi.TrinoException;
 
 import javax.xml.stream.XMLInputFactory;
 import javax.xml.stream.XMLStreamConstants;
@@ -104,7 +103,7 @@ public final class XmlFormatSupport {
             }
         }
         if (!foundRow) {
-            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "Element <" + rowElement + "> not found in " + sourceDescription);
+            return null;
         }
         return buildSchema(attributeNames, elementNames, includeText);
     }
@@ -195,7 +194,7 @@ public final class XmlFormatSupport {
 
         StringBuilder textBuilder = textColumnIndex >= 0 ? new StringBuilder() : null;
         Deque<ElementFrame> frames = new ArrayDeque<>();
-        boolean invalid = false;
+        boolean invalid = attributes.keySet().stream().anyMatch(name -> !attributeIndex.containsKey(name));
 
         while (reader.hasNext()) {
             int event = reader.next();
@@ -206,6 +205,7 @@ public final class XmlFormatSupport {
                     ElementFrame frame;
                     if (frames.isEmpty()) {
                         int columnIndex = elementIndex.getOrDefault(localName, -1);
+                        invalid |= columnIndex < 0;
                         frame = new ElementFrame(columnIndex);
                         frames.push(frame);
                         if (columnIndex >= 0 && seen[columnIndex]) {

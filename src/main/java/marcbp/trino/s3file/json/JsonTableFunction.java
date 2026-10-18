@@ -26,17 +26,13 @@ import marcbp.trino.s3file.file.BaseTextFileHandle;
 import marcbp.trino.s3file.file.PageSettings;
 import marcbp.trino.s3file.file.ByteDelimitedRecordReader;
 import marcbp.trino.s3file.file.FileSplit;
-import marcbp.trino.s3file.file.S3ObjectRef;
+import marcbp.trino.s3file.file.FileSelection;
 import marcbp.trino.s3file.file.ScanSettings;
 import marcbp.trino.s3file.file.TextSplitBoundarySupport;
-import marcbp.trino.s3file.file.SplitPlanner;
-import marcbp.trino.s3file.json.JsonFormatSupport.ColumnDefinition;
 import marcbp.trino.s3file.json.JsonFormatSupport.ColumnType;
 import marcbp.trino.s3file.json.JsonFormatSupport.ColumnsMetadata;
-import marcbp.trino.s3file.json.JsonFormatSupport.ProjectedColumn;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
 
-import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
@@ -80,6 +76,8 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
                 "load",
                 List.of(
                         pathArgumentSpecification(),
+                        FileSelection.pathColumnArgument(),
+                        FileSelection.globArgument(),
                         encodingArgumentSpecification(),
                         splitSizeMbArgumentSpecification(),
                         ScalarArgumentSpecification.builder()
@@ -111,19 +109,14 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
 
         List<String> columnNames;
         List<ColumnType> detectedTypes;
-        int sampledRows;
-        S3ClientBuilder.ObjectMetadata metadata;
+        FileSelection selection;
         try (S3ClientBuilder.SessionClient s3 = s3ClientBuilder.forSession(session)) {
-            metadata = s3.getObjectMetadata(s3Path);
-            try (BufferedReader reader = s3.openReader(s3Path, charset, metadata.versionId(), metadata.eTag())) {
-                ColumnsMetadata columnsMetadata = JsonFormatSupport.inferColumns(reader, s3Path, schemaSampleRows);
-                columnNames = new ArrayList<>(columnsMetadata.names());
-                detectedTypes = new ArrayList<>(columnsMetadata.types());
-                sampledRows = columnsMetadata.sampledRows();
-
-                List<ColumnDefinition> additionalColumns = JsonFormatSupport.parseAdditionalColumns(arguments);
-                JsonFormatSupport.mergeAdditionalColumns(columnNames, detectedTypes, additionalColumns);
-            }
+            selection = FileSelection.resolve(s3, s3Path, arguments);
+            ColumnsMetadata columnsMetadata = selection.infer(s3, charset, (reader, object) ->
+                    JsonFormatSupport.inferColumns(reader, object.path(), schemaSampleRows));
+            columnNames = new ArrayList<>(columnsMetadata.names());
+            detectedTypes = new ArrayList<>(columnsMetadata.types());
+            JsonFormatSupport.mergeAdditionalColumns(columnNames, detectedTypes, JsonFormatSupport.parseAdditionalColumns(arguments));
         }
         catch (IOException e) {
             logger.error(e, "Failed to analyze json for %s", s3Path);
@@ -132,18 +125,14 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
 
         logger.info("Detected %s JSON field(s) for path %s after sampling %s row(s): %s",
                 columnNames.size(), s3Path, schemaSampleRows, JsonFormatSupport.describeColumns(columnNames, detectedTypes));
-        List<Type> columnTypes = new ArrayList<>(detectedTypes.size());
-        for (ColumnType columnType : detectedTypes) {
-            columnTypes.add(columnType.trinoType());
-        }
-        Descriptor descriptor = Descriptor.descriptor(columnNames, columnTypes);
 
+        Handle handle = new Handle(
+                selection,
+                new ScanSettings(splitSizeBytes, pageSettings, charset.name()),
+                new JsonSchema(columnNames, detectedTypes));
         return TableFunctionAnalysis.builder()
-                .returnedType(descriptor)
-                .handle(new Handle(
-                        S3ObjectRef.from(s3Path, metadata),
-                        new ScanSettings(splitSizeBytes, pageSettings, charset.name()),
-                        new JsonSchema(columnNames, detectedTypes)))
+                .returnedType(Descriptor.descriptor(handle.columnNames(), handle.resolveColumnTypes()))
+                .handle(handle)
                 .build();
     }
 
@@ -169,7 +158,7 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
     }
 
     public List<FileSplit> createSplits(Handle handle) {
-        return SplitPlanner.planSplits(handle.object().size(), handle.scan().splitSizeBytes());
+        return handle.createSplits(true);
     }
 
     public ConnectorPageSource createPageSource(ConnectorSession session, Handle handle, FileSplit split, List<S3FileColumnHandle> columns) {
@@ -191,10 +180,10 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
 
         @JsonCreator
         public Handle(
-                @JsonProperty("object") S3ObjectRef object,
+                @JsonProperty("selection") FileSelection selection,
                 @JsonProperty("scan") ScanSettings scan,
                 @JsonProperty("schema") JsonSchema schema) {
-            super(object, scan);
+            super(selection, scan);
             this.schema = requireNonNull(schema, "schema is null");
         }
 
@@ -209,12 +198,12 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
         }
 
         @Override
-        public List<String> columnNames() {
+        public List<String> dataColumnNames() {
             return schema.columns();
         }
 
         @Override
-        public List<Type> resolveColumnTypes() {
+        public List<Type> dataColumnTypes() {
             List<Type> types = new ArrayList<>(schema.columnTypes().size());
             for (ColumnType columnType : schema.columnTypes()) {
                 types.add(columnType.trinoType());
@@ -227,7 +216,7 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
         private final List<String> columnNames;
         private final List<ColumnType> columnKinds;
         private final List<ColumnType> projectedColumnKinds;
-        private final Map<String, List<ProjectedColumn>> projectedFields;
+        private final Map<String, Integer> columnIndexes;
         private final byte[] lineBreakBytes;
         private ByteDelimitedRecordReader recordReader;
         private boolean skipFirstRecord;
@@ -241,22 +230,19 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
             super(session, s3ClientBuilder, handle, split, projectedColumns);
             this.columnNames = handle.schema().columns();
             this.columnKinds = handle.schema().columnTypes();
-            this.projectedColumnKinds = projectedColumns.stream()
+            this.projectedColumnKinds = this.projectedColumns.stream()
                     .map(column -> columnKinds.get(column.getOrdinalPosition()))
                     .toList();
-            this.projectedFields = buildProjectedFields();
+            this.columnIndexes = buildColumnIndexes();
             this.lineBreakBytes = "\n".getBytes(charset);
             this.skipFirstRecord = split.getStartOffset() > 0;
         }
 
-        private Map<String, List<ProjectedColumn>> buildProjectedFields() {
-            Map<String, List<ProjectedColumn>> fields = new HashMap<>();
-            for (int outputIndex = 0; outputIndex < projectedColumns.size(); outputIndex++) {
-                int sourceIndex = projectedColumns.get(outputIndex).getOrdinalPosition();
-                fields.computeIfAbsent(columnNames.get(sourceIndex), ignored -> new ArrayList<>())
-                        .add(new ProjectedColumn(outputIndex, columnKinds.get(sourceIndex)));
+        private Map<String, Integer> buildColumnIndexes() {
+            Map<String, Integer> fields = new HashMap<>();
+            for (int i = 0; i < columnNames.size(); i++) {
+                fields.put(columnNames.get(i), i);
             }
-            fields.replaceAll((ignored, columns) -> List.copyOf(columns));
             return Map.copyOf(fields);
         }
 
@@ -269,7 +255,7 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
         protected void openSource() throws IOException {
             if (skipFirstRecord) {
                 recordS3Request();
-                skipFirstRecord = !TextSplitBoundarySupport.startsAfterDelimiter(sessionClient, handle, split, lineBreakBytes);
+                skipFirstRecord = !TextSplitBoundarySupport.startsAfterDelimiter(sessionClient, split, lineBreakBytes);
             }
             InputStream stream = openStream();
             recordReader = new ByteDelimitedRecordReader(stream, charset, lineBreakBytes, true);
@@ -291,16 +277,12 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
                 return RecordReadResult.skip(lineBytes);
             }
             boolean finishesSplit = !split.isLast() && bytesWithinPrimary + lineBytes > primaryLength;
-            if (projectedColumns.isEmpty()) {
-                JsonFormatSupport.validateObjectRecord(lineRecord.valueBytes(), charset, handle.object().path());
-                return RecordReadResult.produce(new Object[0], lineBytes, finishesSplit);
-            }
-            Object[] values = JsonFormatSupport.parseProjectedRecord(
+            Object[] values = JsonFormatSupport.parseRecord(
                     lineRecord.valueBytes(),
                     charset,
-                    handle.object().path(),
-                    projectedFields,
-                    projectedColumns.size());
+                    split.object().path(),
+                    columnIndexes,
+                    columnKinds);
             return RecordReadResult.produce(values, lineBytes, finishesSplit);
         }
 
@@ -313,7 +295,7 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
                 recordReader.close();
             }
             catch (IOException e) {
-                logger.warn(e, "Failed to close reader for %s", handle.object().path());
+                logger.warn(e, "Failed to close reader for %s", split.object().path());
             }
             finally {
                 recordReader = null;
@@ -325,7 +307,7 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
             Object[] values = (Object[]) payload;
             for (int outputIndex = 0; outputIndex < projectedColumns.size(); outputIndex++) {
                 BlockBuilder blockBuilder = pageBuilder.getBlockBuilder(outputIndex);
-                projectedColumnKinds.get(outputIndex).writeValue(blockBuilder, values[outputIndex]);
+                projectedColumnKinds.get(outputIndex).writeValue(blockBuilder, values[projectedColumns.get(outputIndex).getOrdinalPosition()]);
             }
             pageBuilder.declarePosition();
         }

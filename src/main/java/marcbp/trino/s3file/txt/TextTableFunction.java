@@ -6,7 +6,6 @@ import io.airlift.log.Logger;
 import marcbp.trino.s3file.file.ByteDelimitedRecordReader;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.file.TextSplitBoundarySupport;
-import marcbp.trino.s3file.file.SplitPlanner;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
@@ -27,7 +26,7 @@ import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
-import marcbp.trino.s3file.file.S3ObjectRef;
+import marcbp.trino.s3file.file.FileSelection;
 import marcbp.trino.s3file.file.ScanSettings;
 
 import java.io.IOException;
@@ -72,6 +71,8 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
                 "load",
                 List.of(
                         pathArgumentSpecification(),
+                        FileSelection.pathColumnArgument(),
+                        FileSelection.globArgument(),
                         ScalarArgumentSpecification.builder()
                                 .name(LINE_BREAK_ARGUMENT)
                                 .type(VarcharType.VARCHAR)
@@ -106,26 +107,24 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
 
         logger.info("Analyzing txt.load table function for path %s with line break %s", s3Path, TextFormatSupport.formatForLog(lineBreak));
 
-        S3ClientBuilder.ObjectMetadata metadata;
+        FileSelection selection;
         try (S3ClientBuilder.SessionClient s3 = s3ClientBuilder.forSession(session)) {
-            metadata = s3.getObjectMetadata(s3Path);
+            selection = FileSelection.resolve(s3, s3Path, arguments);
         }
 
-        List<String> columnNames = List.of("line");
-        List<Type> columnTypes = List.of(VarcharType.createUnboundedVarcharType());
-        Descriptor descriptor = Descriptor.descriptor(columnNames, columnTypes);
 
+        Handle handle = new Handle(
+                selection,
+                new ScanSettings(splitSizeBytes, pageSettings, charset.name()),
+                new TextOptions(lineBreak));
         return TableFunctionAnalysis.builder()
-                .returnedType(descriptor)
-                .handle(new Handle(
-                        S3ObjectRef.from(s3Path, metadata),
-                        new ScanSettings(splitSizeBytes, pageSettings, charset.name()),
-                        new TextOptions(lineBreak)))
+                .returnedType(Descriptor.descriptor(handle.columnNames(), handle.resolveColumnTypes()))
+                .handle(handle)
                 .build();
     }
 
     public List<FileSplit> createSplits(Handle handle) {
-        return SplitPlanner.planSplits(handle.object().size(), handle.scan().splitSizeBytes());
+        return handle.createSplits(true);
     }
 
     public ConnectorPageSource createPageSource(ConnectorSession session, Handle handle, FileSplit split, List<S3FileColumnHandle> columns) {
@@ -144,10 +143,10 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
 
         @JsonCreator
         public Handle(
-                @JsonProperty("object") S3ObjectRef object,
+                @JsonProperty("selection") FileSelection selection,
                 @JsonProperty("scan") ScanSettings scan,
                 @JsonProperty("options") TextOptions options) {
-            super(object, scan);
+            super(selection, scan);
             this.options = requireNonNull(options, "options is null");
         }
 
@@ -162,12 +161,12 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
         }
 
         @Override
-        public List<String> columnNames() {
+        public List<String> dataColumnNames() {
             return List.of("line");
         }
 
         @Override
-        public List<Type> resolveColumnTypes() {
+        public List<Type> dataColumnTypes() {
             return List.of(VarcharType.createUnboundedVarcharType());
         }
     }
@@ -199,7 +198,7 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
         protected void openSource() throws IOException {
             if (skipFirstRecord) {
                 recordS3Request();
-                skipFirstRecord = !TextSplitBoundarySupport.startsAfterDelimiter(sessionClient, handle, split, lineBreakBytes);
+                skipFirstRecord = !TextSplitBoundarySupport.startsAfterDelimiter(sessionClient, split, lineBreakBytes);
             }
             InputStream stream = openStream();
             recordReader = new ByteDelimitedRecordReader(stream, charset, lineBreakBytes, false);
@@ -238,7 +237,7 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
                 recordReader.close();
             }
             catch (IOException e) {
-                logger.warn(e, "Failed to close reader for %s", handle.object().path());
+                logger.warn(e, "Failed to close reader for %s", split.object().path());
             }
             finally {
                 recordReader = null;

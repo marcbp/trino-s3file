@@ -24,7 +24,7 @@ import marcbp.trino.s3file.file.AbstractTextFilePageSource;
 import marcbp.trino.s3file.file.BaseTextFileHandle;
 import marcbp.trino.s3file.file.PageSettings;
 import marcbp.trino.s3file.file.FileSplit;
-import marcbp.trino.s3file.file.S3ObjectRef;
+import marcbp.trino.s3file.file.FileSelection;
 import marcbp.trino.s3file.file.ScanSettings;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
 
@@ -70,6 +70,8 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
                 "load",
                 List.of(
                         pathArgumentSpecification(),
+                        FileSelection.pathColumnArgument(),
+                        FileSelection.globArgument(),
                         encodingArgumentSpecification(),
                         ScalarArgumentSpecification.builder()
                                 .name(ROW_ELEMENT_ARGUMENT)
@@ -110,18 +112,17 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         String invalidRowColumn = resolveInvalidRowColumn(arguments);
 
         XmlFormatSupport.Schema schema;
-        S3ClientBuilder.ObjectMetadata metadata;
+        FileSelection selection;
 
         try (S3ClientBuilder.SessionClient s3 = s3ClientBuilder.forSession(session)) {
-            metadata = s3.getObjectMetadata(s3Path);
-            try (BufferedReader reader = s3.openReader(s3Path, charset, metadata.versionId(), metadata.eTag())) {
-                schema = XmlFormatSupport.inferSchema(reader, s3Path, rowElement);
-                if (!includeText) {
-                    schema = filterTextColumn(schema);
-                }
-                if (!invalidRowColumn.isEmpty()) {
-                    schema = XmlFormatSupport.appendRawColumn(schema, invalidRowColumn);
-                }
+            selection = FileSelection.resolve(s3, s3Path, arguments);
+            schema = selection.infer(s3, charset, (reader, object) ->
+                    XmlFormatSupport.inferSchema(reader, object.path(), rowElement));
+            if (!includeText) {
+                schema = filterTextColumn(schema);
+            }
+            if (!invalidRowColumn.isEmpty()) {
+                schema = XmlFormatSupport.appendRawColumn(schema, invalidRowColumn);
             }
         }
         catch (IOException e) {
@@ -130,20 +131,16 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         }
 
         List<String> columnNames = schema.columnNames();
-        List<Type> columnTypes = new ArrayList<>(columnNames.size());
-        for (int i = 0; i < columnNames.size(); i++) {
-            columnTypes.add(VarcharType.createUnboundedVarcharType());
-        }
-        Descriptor descriptor = Descriptor.descriptor(columnNames, columnTypes);
 
         logger.info("Detected %s XML field(s) for %s", columnNames.size(), s3Path);
+        Handle handle = new Handle(
+                selection,
+                new ScanSettings(Integer.MAX_VALUE, pageSettings, charset.name()),
+                schema,
+                new XmlOptions(rowElement, emptyAsNull, invalidRowColumn.isEmpty() ? null : invalidRowColumn));
         return TableFunctionAnalysis.builder()
-                .returnedType(descriptor)
-                .handle(new Handle(
-                        S3ObjectRef.from(s3Path, metadata),
-                        new ScanSettings(Integer.MAX_VALUE, pageSettings, charset.name()),
-                        schema,
-                        new XmlOptions(rowElement, emptyAsNull, invalidRowColumn.isEmpty() ? null : invalidRowColumn)))
+                .returnedType(Descriptor.descriptor(handle.columnNames(), handle.resolveColumnTypes()))
+                .handle(handle)
                 .build();
     }
 
@@ -178,7 +175,7 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
     }
 
     public List<FileSplit> createSplits(Handle handle) {
-        return List.of(handle.toWholeFileSplit());
+        return handle.createSplits(false);
     }
 
     public ConnectorPageSource createPageSource(ConnectorSession session, Handle handle, FileSplit split, List<S3FileColumnHandle> columns) {
@@ -202,11 +199,11 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
 
         @JsonCreator
         public Handle(
-                @JsonProperty("object") S3ObjectRef object,
+                @JsonProperty("selection") FileSelection selection,
                 @JsonProperty("scan") ScanSettings scan,
                 @JsonProperty("schema") XmlFormatSupport.Schema schema,
                 @JsonProperty("options") XmlOptions options) {
-            super(object, scan);
+            super(selection, scan);
             this.schema = requireNonNull(schema, "schema is null");
             this.options = requireNonNull(options, "options is null");
         }
@@ -227,12 +224,12 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         }
 
         @Override
-        public List<String> columnNames() {
+        public List<String> dataColumnNames() {
             return schema.columnNames();
         }
 
         @Override
-        public List<Type> resolveColumnTypes() {
+        public List<Type> dataColumnTypes() {
             List<Type> types = new ArrayList<>(schema.columns().size());
             for (int i = 0; i < schema.columns().size(); i++) {
                 types.add(VarcharType.createUnboundedVarcharType());
@@ -259,7 +256,7 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
                 this.xmlReader = XmlFormatSupport.newXmlReader(reader);
             }
             catch (XMLStreamException e) {
-                throw new IOException("Failed to initialise XML reader for " + handle.object().path(), e);
+                throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "Failed to initialise XML reader for " + split.object().path(), e);
             }
         }
 
@@ -276,7 +273,7 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
                 return RecordReadResult.produce(row.values(), 0, false);
             }
             catch (XMLStreamException e) {
-                throw new IOException("Failed to read XML record for " + handle.object().path(), e);
+                throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "Failed to read XML record for " + split.object().path(), e);
             }
         }
 
@@ -305,7 +302,7 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
                     xmlReader.close();
                 }
                 catch (XMLStreamException e) {
-                    logger.warn(e, "Failed to close XML reader for %s", handle.object().path());
+                    logger.warn(e, "Failed to close XML reader for %s", split.object().path());
                 }
                 finally {
                     xmlReader = null;

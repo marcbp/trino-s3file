@@ -72,14 +72,14 @@ class CsvTableFunctionTest {
                 null);
 
         CsvTableFunction.Handle handle = (CsvTableFunction.Handle) analysis.getHandle();
-        assertEquals(PATH, handle.object().path());
+        assertEquals(PATH, handle.selection().objects().getFirst().path());
         assertEquals(List.of("first", "second"), handle.schema().columns());
         assertTrue(handle.options().headerPresent());
         assertFalse(handle.options().multiline());
         assertEquals(1024, handle.scan().page().batchSize());
-        assertEquals(64L, handle.object().size());
-        assertEquals(Optional.of("etag-1"), handle.object().eTagRef());
-        assertEquals(Optional.empty(), handle.object().versionIdRef());
+        assertEquals(64L, handle.selection().objects().getFirst().size());
+        assertEquals(Optional.of("etag-1"), handle.selection().objects().getFirst().eTagRef());
+        assertEquals(Optional.empty(), handle.selection().objects().getFirst().versionIdRef());
         assertEquals(DEFAULT_SPLIT_SIZE_BYTES, handle.scan().splitSizeBytes());
         assertEquals(StandardCharsets.UTF_8.name(), handle.scan().charsetName());
 
@@ -113,7 +113,7 @@ class CsvTableFunctionTest {
         CsvTableFunction.Handle handle = (CsvTableFunction.Handle) analysis.getHandle();
         assertEquals(List.of("column_1", "column_2", "column_3"), handle.schema().columns());
         assertTrue(handle.scan().page().batchSize() > 0);
-        assertEquals(64L, handle.object().size());
+        assertEquals(64L, handle.selection().objects().getFirst().size());
         assertEquals(StandardCharsets.UTF_8.name(), handle.scan().charsetName());
 
         Descriptor expectedDescriptor = Descriptor.descriptor(
@@ -188,7 +188,7 @@ class CsvTableFunctionTest {
                 stream("3;4\n5;6\n", StandardCharsets.UTF_8));
 
         CsvTableFunction.Handle handle = handle(List.of("c1", "c2"), false, false, 128, 32);
-        FileSplit split = new FileSplit("split-1", 10, 20, 40, false, false);
+        FileSplit split = new FileSplit(handle.selection().objects().getFirst(), "split-1", 10, 20, 40, false, false);
 
         ConnectorPageSource pageSource = function.createPageSource(mock(ConnectorSession.class), handle, split, allColumns(handle));
         SourcePage page = nextPage(pageSource);
@@ -210,7 +210,7 @@ class CsvTableFunctionTest {
         ConnectorPageSource pageSource = function.createPageSource(
                 mock(ConnectorSession.class),
                 handle,
-                handle.toWholeFileSplit(),
+                handle.createSplits(false).getFirst(),
                 allColumns(handle));
         SourcePage page = nextPage(pageSource);
 
@@ -233,7 +233,7 @@ class CsvTableFunctionTest {
             long fileSize,
             int splitSizeBytes) {
         return new CsvTableFunction.Handle(
-                new S3ObjectRef(PATH, fileSize, null, null),
+                new marcbp.trino.s3file.file.FileSelection(List.of(new S3ObjectRef(PATH, fileSize, null, null)), ""),
                 new ScanSettings(splitSizeBytes, new marcbp.trino.s3file.file.PageSettings(CsvTableFunction.Handle.DEFAULT_BATCH_SIZE, 8L * 1024L * 1024L), StandardCharsets.UTF_8.name()),
                 new CsvTableFunction.CsvSchema(columns),
                 new CsvTableFunction.CsvOptions(';', headerPresent, multiline));

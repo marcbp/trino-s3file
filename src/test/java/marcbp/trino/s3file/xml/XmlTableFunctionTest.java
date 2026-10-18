@@ -88,13 +88,13 @@ class XmlTableFunctionTest {
         assertEquals(expectedDescriptor, descriptor);
 
         XmlTableFunction.Handle handle = (XmlTableFunction.Handle) analysis.getHandle();
-        assertEquals(PATH, handle.object().path());
+        assertEquals(PATH, handle.selection().objects().getFirst().path());
         assertEquals("book", handle.options().rowElement());
         assertEquals(List.of("@id", "author", "title", "genre"), handle.columnNames());
         assertEquals(StandardCharsets.UTF_8.name(), handle.scan().charsetName());
-        assertEquals(512L, handle.object().size());
-        assertEquals(Optional.of("etag-xml"), handle.object().eTagRef());
-        assertEquals(Optional.empty(), handle.object().versionIdRef());
+        assertEquals(512L, handle.selection().objects().getFirst().size());
+        assertEquals(Optional.of("etag-xml"), handle.selection().objects().getFirst().eTagRef());
+        assertEquals(Optional.empty(), handle.selection().objects().getFirst().versionIdRef());
         assertFalse(handle.options().emptyAsNull());
         assertEquals("", handle.options().invalidRowColumn());
 
@@ -144,9 +144,9 @@ class XmlTableFunctionTest {
         assertEquals("entry", handle.options().rowElement());
         assertEquals("ISO-8859-1", handle.scan().charsetName());
         assertEquals(List.of("@status", "message", "text"), handle.columnNames());
-        assertEquals(1024L, handle.object().size());
-        assertEquals(Optional.empty(), handle.object().eTagRef());
-        assertEquals(Optional.of("version-text"), handle.object().versionIdRef());
+        assertEquals(1024L, handle.selection().objects().getFirst().size());
+        assertEquals(Optional.empty(), handle.selection().objects().getFirst().eTagRef());
+        assertEquals(Optional.of("version-text"), handle.selection().objects().getFirst().versionIdRef());
         assertFalse(handle.options().emptyAsNull());
         assertEquals("", handle.options().invalidRowColumn());
 
@@ -259,12 +259,30 @@ class XmlTableFunctionTest {
     }
 
     @Test
+    void unknownFieldsAreCapturedWhenInvalidRowColumnIsEnabled() throws Exception {
+        var schema = XmlFormatSupport.appendRawColumn(new XmlFormatSupport.Schema(List.of(
+                new Column("name", ColumnSource.ELEMENT, "name"))), "errors");
+        for (String xml : List.of("<item extra=\"new\"><name>one</name></item>",
+                "<item><name>one</name><extra>new</extra></item>")) {
+            var reader = XmlFormatSupport.newXmlReader(new BufferedReader(new StringReader(xml)));
+            try {
+                var row = XmlFormatSupport.readNextRecord(reader, schema, "item", false);
+                assertFalse(row.valid());
+                assertNull(row.values()[0]);
+                assertTrue(row.values()[1].contains("extra"));
+            }
+            finally {
+                reader.close();
+            }
+        }
+    }
+
+    @Test
     void readNextRecordConvertsEmptyStringsWhenRequested() throws Exception {
         String xml = """
                 <items>
                   <item code="">
                     <name></name>
-                    <note> </note>
                   </item>
                 </items>
                 """;

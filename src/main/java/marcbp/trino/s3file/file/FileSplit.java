@@ -10,6 +10,7 @@ import static java.util.Objects.requireNonNull;
  * Generic file-based split shared by the S3 table functions.
  */
 public record FileSplit(
+        @JsonProperty("object") S3ObjectRef object,
         @JsonProperty("id") String id,
         @JsonProperty("startOffset") long startOffset,
         @JsonProperty("primaryEndOffset") long primaryEndOffset,
@@ -19,11 +20,12 @@ public record FileSplit(
         implements ConnectorSplit {
     @JsonCreator
     public FileSplit {
+        object = requireNonNull(object, "object is null");
         id = requireNonNull(id, "id is null");
     }
 
-    public static FileSplit forWholeFile(long size) {
-        return new FileSplit("split-0", 0, size, size, true, true);
+    public static FileSplit forWholeFile(S3ObjectRef object) {
+        return new FileSplit(object, "split-0", 0, object.size(), object.size(), true, true);
     }
 
     @JsonProperty

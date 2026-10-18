@@ -87,14 +87,14 @@ class JsonTableFunctionTest {
         assertEquals(expectedDescriptor, descriptor);
 
         JsonTableFunction.Handle handle = (JsonTableFunction.Handle) analysis.getHandle();
-        assertEquals(PATH, handle.object().path());
+        assertEquals(PATH, handle.selection().objects().getFirst().path());
         assertEquals(expectedDescriptor, Descriptor.descriptor(handle.schema().columns(), handle.resolveColumnTypes()));
-        assertEquals(512L, handle.object().size());
+        assertEquals(512L, handle.selection().objects().getFirst().size());
         assertEquals(CONNECTOR_SPLIT_SIZE_BYTES, handle.scan().splitSizeBytes());
         assertEquals(1024, handle.scan().page().batchSize());
         assertEquals(8L * 1024L * 1024L, handle.scan().page().targetSizeBytes());
-        assertEquals(Optional.of("etag-json"), handle.object().eTagRef());
-        assertEquals(Optional.empty(), handle.object().versionIdRef());
+        assertEquals(Optional.of("etag-json"), handle.selection().objects().getFirst().eTagRef());
+        assertEquals(Optional.empty(), handle.selection().objects().getFirst().versionIdRef());
         assertEquals(StandardCharsets.UTF_8.name(), handle.scan().charsetName());
 
         verify(sessionClient).getObjectMetadata(eq(PATH));
@@ -191,8 +191,8 @@ class JsonTableFunctionTest {
                 List.of(BigintType.BIGINT, VarcharType.createUnboundedVarcharType(), DoubleType.DOUBLE),
                 handle.resolveColumnTypes());
         assertEquals("ISO-8859-1", handle.scan().charsetName());
-        assertEquals(Optional.empty(), handle.object().eTagRef());
-        assertEquals(Optional.of("v2"), handle.object().versionIdRef());
+        assertEquals(Optional.empty(), handle.selection().objects().getFirst().eTagRef());
+        assertEquals(Optional.of("v2"), handle.selection().objects().getFirst().versionIdRef());
 
         verify(sessionClient).getObjectMetadata(eq(PATH));
         verify(sessionClient).openReader(eq(PATH), any(Charset.class), eq(Optional.of("v2")), eq(Optional.empty()));
@@ -216,7 +216,7 @@ class JsonTableFunctionTest {
         ConnectorPageSource pageSource = function.createPageSource(
                 mock(ConnectorSession.class),
                 handle,
-                handle.toWholeFileSplit(),
+                handle.createSplits(false).getFirst(),
                 allColumns(handle));
         SourcePage page = nextPage(pageSource);
 
@@ -241,7 +241,7 @@ class JsonTableFunctionTest {
         ConnectorPageSource pageSource = function.createPageSource(
                 mock(ConnectorSession.class),
                 handle,
-                handle.toWholeFileSplit(),
+                handle.createSplits(false).getFirst(),
                 List.of(new S3FileColumnHandle("meta", 1)));
         SourcePage page = nextPage(pageSource);
 
@@ -266,7 +266,7 @@ class JsonTableFunctionTest {
         ConnectorPageSource pageSource = function.createPageSource(
                 mock(ConnectorSession.class),
                 handle,
-                handle.toWholeFileSplit(),
+                handle.createSplits(false).getFirst(),
                 List.of());
 
         assertThrows(TrinoException.class, () -> countRows(pageSource));
@@ -289,7 +289,7 @@ class JsonTableFunctionTest {
                 List.of(JsonFormatSupport.ColumnType.BIGINT, JsonFormatSupport.ColumnType.BOOLEAN),
                 256,
                 64);
-        FileSplit split = new FileSplit("split-1", 12, 32, 64, false, false);
+        FileSplit split = new FileSplit(handle.selection().objects().getFirst(), "split-1", 12, 32, 64, false, false);
 
         ConnectorPageSource pageSource = function.createPageSource(mock(ConnectorSession.class), handle, split, allColumns(handle));
         SourcePage page = nextPage(pageSource);
@@ -316,7 +316,7 @@ class JsonTableFunctionTest {
                 List.of(JsonFormatSupport.ColumnType.BIGINT, JsonFormatSupport.ColumnType.BOOLEAN),
                 256,
                 64);
-        FileSplit split = new FileSplit("split-1", 32, 64, 96, false, false);
+        FileSplit split = new FileSplit(handle.selection().objects().getFirst(), "split-1", 32, 64, 96, false, false);
 
         ConnectorPageSource pageSource = function.createPageSource(mock(ConnectorSession.class), handle, split, allColumns(handle));
         SourcePage page = nextPage(pageSource);
@@ -346,8 +346,8 @@ class JsonTableFunctionTest {
                 List.of(JsonFormatSupport.ColumnType.BIGINT, JsonFormatSupport.ColumnType.BOOLEAN),
                 contentBytes,
                 (int) firstRecordBytes);
-        FileSplit firstSplit = new FileSplit("split-0", 0, firstRecordBytes, contentBytes, true, false);
-        FileSplit secondSplit = new FileSplit("split-1", firstRecordBytes, contentBytes, contentBytes, false, true);
+        FileSplit firstSplit = new FileSplit(handle.selection().objects().getFirst(), "split-0", 0, firstRecordBytes, contentBytes, true, false);
+        FileSplit secondSplit = new FileSplit(handle.selection().objects().getFirst(), "split-1", firstRecordBytes, contentBytes, contentBytes, false, true);
 
         int firstSplitRows = countRows(function.createPageSource(mock(ConnectorSession.class), handle, firstSplit, List.of()));
         int secondSplitRows = countRows(function.createPageSource(mock(ConnectorSession.class), handle, secondSplit, List.of()));
@@ -373,7 +373,7 @@ class JsonTableFunctionTest {
         ConnectorPageSource pageSource = function.createPageSource(
                 mock(ConnectorSession.class),
                 handle,
-                handle.toWholeFileSplit(),
+                handle.createSplits(false).getFirst(),
                 List.of());
 
         assertEquals(2, countRows(pageSource));
@@ -400,7 +400,7 @@ class JsonTableFunctionTest {
                 contentBytes,
                 (int) firstRecordBytes,
                 StandardCharsets.UTF_16LE);
-        FileSplit secondSplit = new FileSplit("split-1", firstRecordBytes, contentBytes, contentBytes, false, true);
+        FileSplit secondSplit = new FileSplit(handle.selection().objects().getFirst(), "split-1", firstRecordBytes, contentBytes, contentBytes, false, true);
 
         int rows = countRows(function.createPageSource(mock(ConnectorSession.class), handle, secondSplit, List.of()));
 
@@ -424,7 +424,7 @@ class JsonTableFunctionTest {
             int splitSizeBytes,
             Charset charset) {
         return new JsonTableFunction.Handle(
-                new S3ObjectRef(PATH, fileSize, null, null),
+                new marcbp.trino.s3file.file.FileSelection(List.of(new S3ObjectRef(PATH, fileSize, null, null)), ""),
                 new ScanSettings(splitSizeBytes, new marcbp.trino.s3file.file.PageSettings(JsonTableFunction.Handle.DEFAULT_BATCH_SIZE, 8L * 1024L * 1024L), charset.name()),
                 new JsonTableFunction.JsonSchema(columns, columnTypes));
     }

@@ -10,26 +10,8 @@ import java.io.IOException;
 public final class TextSplitBoundarySupport {
     private TextSplitBoundarySupport() {}
 
-    public static boolean startsAtLineBoundary(
-            S3ClientBuilder.SessionClient sessionClient,
-            BaseTextFileHandle handle,
-            FileSplit split)
-            throws IOException {
-        if (split.isFirst()) {
-            return true;
-        }
-        byte[] preceding = sessionClient.readBytes(
-                handle.object().path(),
-                split.getStartOffset() - 1,
-                split.getStartOffset(),
-                handle.object().versionIdRef(),
-                handle.object().eTagRef());
-        return preceding.length == 1 && (preceding[0] == '\n' || preceding[0] == '\r');
-    }
-
     public static boolean startsAfterDelimiter(
             S3ClientBuilder.SessionClient sessionClient,
-            BaseTextFileHandle handle,
             FileSplit split,
             byte[] delimiterBytes)
             throws IOException {
@@ -41,11 +23,11 @@ public final class TextSplitBoundarySupport {
         }
         long lookbehindStart = split.getStartOffset() - delimiterBytes.length;
         byte[] preceding = sessionClient.readBytes(
-                handle.object().path(),
+                split.object().path(),
                 lookbehindStart,
                 split.getStartOffset(),
-                handle.object().versionIdRef(),
-                handle.object().eTagRef());
+                split.object().versionIdRef(),
+                split.object().eTagRef());
         if (preceding.length != delimiterBytes.length) {
             return false;
         }

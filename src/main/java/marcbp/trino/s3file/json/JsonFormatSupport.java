@@ -66,6 +66,9 @@ public final class JsonFormatSupport {
                 break;
             }
         }
+        if (sampledRows == 0) {
+            return null;
+        }
         if (columns.isEmpty()) {
             throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "No JSON object found in " + path);
         }
@@ -142,32 +145,34 @@ public final class JsonFormatSupport {
         }
     }
 
-    public static Object[] parseProjectedRecord(
+    public static Object[] parseRecord(
             byte[] jsonBytes,
             Charset charset,
             String path,
-            Map<String, List<ProjectedColumn>> projectedColumns,
-            int outputSize) {
+            Map<String, Integer> columnIndexes,
+            List<ColumnType> columnTypes) {
         try (JsonParser parser = newParser(jsonBytes, charset)) {
             if (parser.nextToken() != JsonToken.START_OBJECT) {
                 throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "JSON row must be an object in " + path);
             }
 
-            Object[] values = new Object[outputSize];
+            Object[] values = new Object[columnTypes.size()];
             while (parser.nextToken() != JsonToken.END_OBJECT) {
                 if (parser.currentToken() != JsonToken.FIELD_NAME) {
                     throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "Invalid JSON object in " + path);
                 }
                 String fieldName = parser.currentName();
                 JsonToken valueToken = parser.nextToken();
-                List<ProjectedColumn> targets = projectedColumns.get(fieldName);
-                if (targets == null) {
-                    parser.skipChildren();
-                    continue;
+                Integer index = columnIndexes.get(fieldName);
+                if (index == null) {
+                    throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "Unexpected JSON field '" + fieldName + "' in " + path);
                 }
-                for (ProjectedColumn target : targets) {
-                    values[target.outputIndex()] = target.type().read(parser, valueToken);
+                Object value = columnTypes.get(index).read(parser, valueToken);
+                if (value == null && valueToken != JsonToken.VALUE_NULL) {
+                    throw new TrinoException(INVALID_FUNCTION_ARGUMENT,
+                            "Incompatible JSON type for field '" + fieldName + "' in " + path + ": expected " + columnTypes.get(index));
                 }
+                values[index] = value;
                 if (valueToken != null && valueToken.isStructStart()) {
                     parser.skipChildren();
                 }
@@ -184,25 +189,6 @@ public final class JsonFormatSupport {
             throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "Failed to read JSON content in " + path, e);
         }
     }
-
-    public static void validateObjectRecord(byte[] jsonBytes, Charset charset, String path) {
-        try (JsonParser parser = newParser(jsonBytes, charset)) {
-            if (parser.nextToken() != JsonToken.START_OBJECT) {
-                throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "JSON row must be an object in " + path);
-            }
-            parser.skipChildren();
-            if (parser.nextToken() != null) {
-                throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "Invalid JSON content in " + path);
-            }
-        }
-        catch (JsonProcessingException e) {
-            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "Invalid JSON content in " + path, e);
-        }
-        catch (IOException e) {
-            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "Failed to read JSON content in " + path, e);
-        }
-    }
-
 
     private static JsonParser newParser(byte[] jsonBytes, Charset charset) throws IOException {
         if (StandardCharsets.UTF_8.equals(charset)) {
@@ -266,15 +252,6 @@ public final class JsonFormatSupport {
     public enum ColumnType {
         BOOLEAN(BooleanType.BOOLEAN) {
             @Override
-            void write(io.trino.spi.block.BlockBuilder blockBuilder, JsonNode node) {
-                if (!node.isBoolean()) {
-                    blockBuilder.appendNull();
-                    return;
-                }
-                ((BooleanType) type).writeBoolean(blockBuilder, node.booleanValue());
-            }
-
-            @Override
             Object read(JsonParser parser, JsonToken token) {
                 if (token == JsonToken.VALUE_TRUE) {
                     return true;
@@ -295,15 +272,6 @@ public final class JsonFormatSupport {
             }
         },
         BIGINT(BigintType.BIGINT) {
-            @Override
-            void write(io.trino.spi.block.BlockBuilder blockBuilder, JsonNode node) {
-                if (!(node.isIntegralNumber() || node.canConvertToLong())) {
-                    blockBuilder.appendNull();
-                    return;
-                }
-                ((BigintType) type).writeLong(blockBuilder, node.longValue());
-            }
-
             @Override
             Object read(JsonParser parser, JsonToken token) throws IOException {
                 if (token == null || !token.isNumeric()) {
@@ -326,15 +294,6 @@ public final class JsonFormatSupport {
         },
         DOUBLE(DoubleType.DOUBLE) {
             @Override
-            void write(io.trino.spi.block.BlockBuilder blockBuilder, JsonNode node) {
-                if (!node.isNumber()) {
-                    blockBuilder.appendNull();
-                    return;
-                }
-                ((DoubleType) type).writeDouble(blockBuilder, node.doubleValue());
-            }
-
-            @Override
             Object read(JsonParser parser, JsonToken token) throws IOException {
                 if (token == null || !token.isNumeric()) {
                     return null;
@@ -352,16 +311,6 @@ public final class JsonFormatSupport {
             }
         },
         VARCHAR(VarcharType.createUnboundedVarcharType()) {
-            @Override
-            void write(io.trino.spi.block.BlockBuilder blockBuilder, JsonNode node) {
-                if (node == null || node.isNull()) {
-                    blockBuilder.appendNull();
-                    return;
-                }
-                String text = node.isTextual() ? node.textValue() : node.toString();
-                ((VarcharType) type).writeSlice(blockBuilder, io.airlift.slice.Slices.utf8Slice(text));
-            }
-
             @Override
             Object read(JsonParser parser, JsonToken token) throws IOException {
                 if (token == null || token == JsonToken.VALUE_NULL) {
@@ -396,8 +345,6 @@ public final class JsonFormatSupport {
             return type;
         }
 
-        abstract void write(io.trino.spi.block.BlockBuilder blockBuilder, JsonNode node);
-
         abstract Object read(JsonParser parser, JsonToken token) throws IOException;
 
         abstract void writeValue(io.trino.spi.block.BlockBuilder blockBuilder, Object value);
@@ -414,9 +361,4 @@ public final class JsonFormatSupport {
         }
     }
 
-    public record ProjectedColumn(int outputIndex, ColumnType type) {
-        public ProjectedColumn {
-            type = requireNonNull(type, "type is null");
-        }
-    }
 }

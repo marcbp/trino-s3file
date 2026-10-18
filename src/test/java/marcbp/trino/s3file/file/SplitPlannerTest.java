@@ -12,18 +12,18 @@ class SplitPlannerTest {
 
     @Test
     void zeroOrNegativeSizeProducesWholeFileSplit() {
-        List<FileSplit> zeroSplits = SplitPlanner.planSplits(0, 8 * 1024 * 1024);
+        List<FileSplit> zeroSplits = SplitPlanner.planSplits(new S3ObjectRef("s3://bucket/file", 0, null, null), 8 * 1024 * 1024);
         assertEquals(1, zeroSplits.size());
         assertEquals(0, zeroSplits.get(0).getPrimaryLength());
 
-        List<FileSplit> negativeSplits = SplitPlanner.planSplits(-42, 8 * 1024 * 1024);
+        List<FileSplit> negativeSplits = SplitPlanner.planSplits(new S3ObjectRef("s3://bucket/file", -42, null, null), 8 * 1024 * 1024);
         assertEquals(1, negativeSplits.size());
         assertEquals(0, negativeSplits.get(0).getPrimaryLength());
     }
 
     @Test
     void singleSplitWhenFileFitsIntoChunk() {
-        List<FileSplit> splits = SplitPlanner.planSplits(1_000_000, 8 * 1024 * 1024);
+        List<FileSplit> splits = SplitPlanner.planSplits(new S3ObjectRef("s3://bucket/file", 1_000_000, null, null), 8 * 1024 * 1024);
         assertEquals(1, splits.size());
         FileSplit split = splits.get(0);
         assertTrue(split.isFirst());
@@ -38,7 +38,7 @@ class SplitPlannerTest {
         int splitSize = 4;
         long fileSize = 11;
 
-        List<FileSplit> splits = SplitPlanner.planSplits(fileSize, splitSize);
+        List<FileSplit> splits = SplitPlanner.planSplits(new S3ObjectRef("s3://bucket/file", fileSize, null, null), splitSize);
         assertEquals(3, splits.size());
 
         FileSplit first = splits.get(0);
@@ -63,8 +63,8 @@ class SplitPlannerTest {
 
     @Test
     void splitSizeMustBePositive() {
-        assertThrows(IllegalArgumentException.class, () -> SplitPlanner.planSplits(100, 0));
-        assertThrows(IllegalArgumentException.class, () -> SplitPlanner.planSplits(100, -1));
+        assertThrows(IllegalArgumentException.class, () -> SplitPlanner.planSplits(new S3ObjectRef("s3://bucket/file", 100, null, null), 0));
+        assertThrows(IllegalArgumentException.class, () -> SplitPlanner.planSplits(new S3ObjectRef("s3://bucket/file", 100, null, null), -1));
     }
 
 }

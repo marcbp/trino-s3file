@@ -177,11 +177,11 @@ class S3ClientBuilderTest {
             }
         });
         TextTableFunction.Handle handle = new TextTableFunction.Handle(
-                new S3ObjectRef("s3://bucket/truncated.txt", 1024, null, null),
+                new marcbp.trino.s3file.file.FileSelection(List.of(new S3ObjectRef("s3://bucket/truncated.txt", 1024, null, null)), ""),
                 new ScanSettings(1024, new PageSettings(1024, 1024), "UTF-8"),
                 new TextTableFunction.TextOptions("\n"));
         ConnectorPageSource source = new TextTableFunction(builder, 1024)
-                .createPageSource(session, handle, handle.toWholeFileSplit(), List.of());
+                .createPageSource(session, handle, handle.createSplits(false).getFirst(), List.of());
 
         try (source) {
             assertThrows(UncheckedIOException.class, source::getNextSourcePage);

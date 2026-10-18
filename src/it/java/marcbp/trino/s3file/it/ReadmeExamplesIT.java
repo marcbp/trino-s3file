@@ -289,6 +289,83 @@ class ReadmeExamplesIT {
                 """));
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"txt", "csv", "json"})
+    void globKeepsMultipleSplitsPerObjectAndProvenance(String format) throws Exception {
+        String extension = format.equals("json") ? "jsonl" : format;
+        String id = format.equals("txt") ? "CAST(split_part(line, '|', 1) AS bigint)" : "CAST(id AS bigint)";
+        var rows = environment.query("SELECT \"$path\", count(*), count(DISTINCT " + id + "), sum(" + id + ") "
+                + "FROM TABLE(s3file." + format + ".load(path => 's3://mybucket/multi/{,**/}*." + extension
+                + "', split_size_mb => 1)) GROUP BY 1 ORDER BY 1");
+        assertEquals(List.of(
+                List.of("s3://mybucket/multi/a." + extension, "25000", "25000", "312512500"),
+                List.of("s3://mybucket/multi/nested/b." + extension, "25000", "25000", "312512500")), rows);
+    }
+
+    @Test
+    void schemaComesFromFirstNonEmptyFileAndMissingValuesAreNull() throws Exception {
+        assertEquals(List.of(List.of("1", "yes"), Arrays.asList("2", null)), environment.query("""
+                SELECT id, optional FROM TABLE(s3file.json.load(
+                    path => 's3://mybucket/schema/*.jsonl', path_column => ''
+                )) ORDER BY id
+                """));
+        assertEquals(List.of(List.of("s3://mybucket/schema/01-reference.jsonl"),
+                List.of("s3://mybucket/schema/02-missing.jsonl")), environment.query("""
+                SELECT source FROM TABLE(s3file.json.load(
+                    path => 's3://mybucket/schema/*.jsonl', path_column => 'source'
+                )) ORDER BY source
+                """));
+    }
+
+    @Test
+    void globSupportsMultilineCsvAndXmlWithMissingFields() throws Exception {
+        assertEquals(List.of(List.of("1", "hello\nworld"), List.of("2", "plain")), environment.query("""
+                SELECT id, comment FROM TABLE(s3file.csv.load(
+                    path => 's3://mybucket/multi-line/*.csv', multiline => 'true'
+                )) ORDER BY id
+                """));
+        assertEquals(List.of(List.of("1", "one"), Arrays.asList("2", null)), environment.query("""
+                SELECT "@id", name FROM TABLE(s3file.xml.load(
+                    path => 's3://mybucket/xml-multi/*.xml', invalid_row_column => ''
+                )) ORDER BY "@id"
+                """));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"json:bad-type:jsonl", "json:bad-field:jsonl", "csv:bad-header:csv", "csv:bad-width:csv", "xml:bad-xml:xml"})
+    void countRejectsIncompatibleFilesWithoutProjection(String scenario) {
+        String[] parts = scenario.split(":");
+        AssertionError error = assertThrows(AssertionError.class, () -> environment.query(
+                "SELECT count(*) FROM TABLE(s3file." + parts[0] + ".load(path => 's3://mybucket/"
+                        + parts[1] + "/*." + parts[2] + "'" + (parts[0].equals("xml") ? ", invalid_row_column => ''" : "") + "))"));
+        assertTrue(error.getMessage().contains("schema") || error.getMessage().contains("JSON")
+                || error.getMessage().contains("XML"), error.getMessage());
+    }
+
+    @Test
+    void emptyGlobAndPathColumnCollisionFailClearly() {
+        for (String arguments : List.of("path => 's3://mybucket/no-matches/*.txt'",
+                "path => 's3://mybucket/multi/*.txt', path_column => 'line'")) {
+            AssertionError error = assertThrows(AssertionError.class, () -> environment.query(
+                    "SELECT * FROM TABLE(s3file.txt.load(" + arguments + "))"));
+            assertTrue(error.getMessage().contains("INVALID_FUNCTION_ARGUMENT"), error.getMessage());
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"txt", "csv", "json", "xml"})
+    void literalKeysCanBeReadByDisablingGlobOrEscaping(String format) throws Exception {
+        String extension = format.equals("json") ? "jsonl" : format;
+        String column = format.equals("txt") ? "line" : "value";
+        String query = "SELECT " + column + " FROM TABLE(s3file." + format + ".load(path => 's3://mybucket/escaped/";
+        assertEquals(List.of(List.of("literal")), environment.query(
+                query + "file[2026]*?." + extension + "', glob => false))"));
+        assertEquals(List.of(List.of("literal")), environment.query(
+                query + "file\\[2026\\]\\*\\?." + extension + "'))"));
+        assertEquals(List.of(List.of("neighbor")), environment.query(
+                query + "file[2026]*?." + extension + "', glob => true))"));
+    }
+
     private static void assertHasObjectRow(List<List<String>> rows, String path, String bucket, String key, String name, String parent, String type) {
         boolean match = rows.stream().anyMatch(row ->
                 path.equals(row.get(0))

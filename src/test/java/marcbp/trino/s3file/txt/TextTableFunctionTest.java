@@ -111,7 +111,7 @@ class TextTableFunctionTest {
                 stream("a;bravo;charlie;", StandardCharsets.UTF_8));
 
         TextTableFunction.Handle handle = handle(";", 128, 32, StandardCharsets.UTF_8, null, null);
-        FileSplit split = new FileSplit("split-1", 5, 20, 40, false, false);
+        FileSplit split = new FileSplit(handle.selection().objects().getFirst(), "split-1", 5, 20, 40, false, false);
 
         ConnectorPageSource pageSource = function.createPageSource(mock(ConnectorSession.class), handle, split, allColumns(handle));
         SourcePage page = nextPage(pageSource);
@@ -131,7 +131,7 @@ class TextTableFunctionTest {
                 stream("bravo;charlie;", StandardCharsets.UTF_8));
 
         TextTableFunction.Handle handle = handle(";", 128, 32, StandardCharsets.UTF_8, null, null);
-        FileSplit split = new FileSplit("split-1", 6, 20, 40, false, false);
+        FileSplit split = new FileSplit(handle.selection().objects().getFirst(), "split-1", 6, 20, 40, false, false);
 
         ConnectorPageSource pageSource = function.createPageSource(mock(ConnectorSession.class), handle, split, allColumns(handle));
         SourcePage page = nextPage(pageSource);
@@ -156,8 +156,8 @@ class TextTableFunctionTest {
                 new ByteArrayInputStream(java.util.Arrays.copyOfRange(contentBytes, (int) boundary, contentBytes.length)));
 
         TextTableFunction.Handle handle = handle("\n", contentBytes.length, (int) boundary, StandardCharsets.UTF_8, null, null);
-        FileSplit first = new FileSplit("split-0", 0, boundary, contentBytes.length, true, false);
-        FileSplit second = new FileSplit("split-1", boundary, contentBytes.length, contentBytes.length, false, true);
+        FileSplit first = new FileSplit(handle.selection().objects().getFirst(), "split-0", 0, boundary, contentBytes.length, true, false);
+        FileSplit second = new FileSplit(handle.selection().objects().getFirst(), "split-1", boundary, contentBytes.length, contentBytes.length, false, true);
 
         ConnectorPageSource firstSource = function.createPageSource(mock(ConnectorSession.class), handle, first, allColumns(handle));
         ConnectorPageSource secondSource = function.createPageSource(mock(ConnectorSession.class), handle, second, allColumns(handle));
@@ -184,7 +184,7 @@ class TextTableFunctionTest {
         ConnectorPageSource pageSource = function.createPageSource(
                 mock(ConnectorSession.class),
                 handle,
-                handle.toWholeFileSplit(),
+                handle.createSplits(false).getFirst(),
                 allColumns(handle));
 
         SourcePage page = nextPage(pageSource);
@@ -207,7 +207,7 @@ class TextTableFunctionTest {
         ConnectorPageSource pageSource = function.createPageSource(
                 mock(ConnectorSession.class),
                 handle,
-                handle.toWholeFileSplit(),
+                handle.createSplits(false).getFirst(),
                 List.of());
 
         SourcePage firstPage = nextPage(pageSource);
@@ -222,7 +222,7 @@ class TextTableFunctionTest {
     void closingBeforeFirstReadDoesNotOpenObject() throws IOException {
         TextTableFunction.Handle handle = handle("\n", 64, 32, StandardCharsets.UTF_8, null, null);
         ConnectorPageSource source = function.createPageSource(
-                mock(ConnectorSession.class), handle, handle.toWholeFileSplit(), allColumns(handle));
+                mock(ConnectorSession.class), handle, handle.createSplits(false).getFirst(), allColumns(handle));
 
         source.close();
         source.close();
@@ -240,7 +240,7 @@ class TextTableFunctionTest {
         when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenReturn(stream);
         TextTableFunction.Handle handle = handle("\n", 0, 32, StandardCharsets.UTF_8, null, null);
         ConnectorPageSource source = function.createPageSource(
-                mock(ConnectorSession.class), handle, handle.toWholeFileSplit(), List.of());
+                mock(ConnectorSession.class), handle, handle.createSplits(false).getFirst(), List.of());
 
         assertEquals(null, source.getNextSourcePage());
         assertTrue(source.isFinished());
@@ -258,7 +258,7 @@ class TextTableFunctionTest {
         when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenReturn(stream);
         TextTableFunction.Handle handle = handle("\n", 64, 32, StandardCharsets.UTF_8, null, null);
         ConnectorPageSource source = function.createPageSource(
-                mock(ConnectorSession.class), handle, handle.toWholeFileSplit(), allColumns(handle));
+                mock(ConnectorSession.class), handle, handle.createSplits(false).getFirst(), allColumns(handle));
 
         assertEquals(failure, assertThrows(UncheckedIOException.class, source::getNextSourcePage).getCause());
         assertTrue(source.isFinished());
@@ -272,11 +272,11 @@ class TextTableFunctionTest {
         ByteArrayInputStream stream = spy(stream("first\nsecond\n", StandardCharsets.UTF_8));
         when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenReturn(stream);
         TextTableFunction.Handle handle = new TextTableFunction.Handle(
-                new S3ObjectRef(PATH, 13, null, null),
+                new marcbp.trino.s3file.file.FileSelection(List.of(new S3ObjectRef(PATH, 13, null, null)), ""),
                 new ScanSettings(32, new marcbp.trino.s3file.file.PageSettings(1024, 1), "UTF-8"),
                 new TextTableFunction.TextOptions("\n"));
         ConnectorPageSource source = function.createPageSource(
-                mock(ConnectorSession.class), handle, handle.toWholeFileSplit(), allColumns(handle));
+                mock(ConnectorSession.class), handle, handle.createSplits(false).getFirst(), allColumns(handle));
 
         assertEquals(1, nextPage(source).getPositionCount());
         assertFalse(source.isFinished());
@@ -306,14 +306,14 @@ class TextTableFunctionTest {
                                                          Optional<String> expectedVersion) {
         assertInstanceOf(TextTableFunction.Handle.class, analysis.getHandle());
         TextTableFunction.Handle handle = (TextTableFunction.Handle) analysis.getHandle();
-        assertEquals(PATH, handle.object().path());
+        assertEquals(PATH, handle.selection().objects().getFirst().path());
         assertEquals(expectedDelimiter, handle.options().lineBreak());
-        assertEquals(expectedSize, handle.object().size());
+        assertEquals(expectedSize, handle.selection().objects().getFirst().size());
         assertEquals(DEFAULT_SPLIT_SIZE_BYTES, handle.scan().splitSizeBytes());
         assertEquals(1024, handle.scan().page().batchSize());
         assertEquals(StandardCharsets.UTF_8.name(), handle.scan().charsetName());
-        assertEquals(expectedEtag, handle.object().eTagRef());
-        assertEquals(expectedVersion, handle.object().versionIdRef());
+        assertEquals(expectedEtag, handle.selection().objects().getFirst().eTagRef());
+        assertEquals(expectedVersion, handle.selection().objects().getFirst().versionIdRef());
         List<Type> columnTypes = handle.resolveColumnTypes();
         assertEquals(1, columnTypes.size());
         assertEquals(VarcharType.createUnboundedVarcharType(), columnTypes.get(0));
@@ -328,7 +328,7 @@ class TextTableFunctionTest {
             String eTag,
             String versionId) {
         return new TextTableFunction.Handle(
-                new S3ObjectRef(PATH, fileSize, eTag, versionId),
+                new marcbp.trino.s3file.file.FileSelection(List.of(new S3ObjectRef(PATH, fileSize, eTag, versionId)), ""),
                 new ScanSettings(splitSizeBytes, new marcbp.trino.s3file.file.PageSettings(TextTableFunction.Handle.DEFAULT_BATCH_SIZE, 8L * 1024L * 1024L), charset.name()),
                 new TextTableFunction.TextOptions(lineBreak));
     }

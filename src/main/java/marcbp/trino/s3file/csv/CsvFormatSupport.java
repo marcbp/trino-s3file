@@ -37,18 +37,16 @@ public final class CsvFormatSupport {
             CSVParser parser = newParser(delimiter);
             String[] tokens = readRecord(reader, parser, multiline);
             if (tokens == null) {
-                throw new IllegalArgumentException("CSV file is empty: " + sourceDescription);
+                return null;
             }
             List<String> columns = new ArrayList<>();
             if (headerPresent) {
                 for (String token : tokens) {
-                    if (token == null) {
-                        continue;
+                    String trimmed = token == null ? "" : token.trim();
+                    if (trimmed.isEmpty() || columns.stream().anyMatch(name -> name.equalsIgnoreCase(trimmed))) {
+                        throw new IllegalArgumentException("Blank or duplicate CSV column in " + sourceDescription);
                     }
-                    String trimmed = token.trim();
-                    if (!trimmed.isEmpty()) {
-                        columns.add(trimmed);
-                    }
+                    columns.add(trimmed);
                 }
                 if (columns.isEmpty()) {
                     throw new IllegalArgumentException("No column detected in CSV header: " + sourceDescription);

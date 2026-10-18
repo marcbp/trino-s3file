@@ -2,13 +2,17 @@ package marcbp.trino.s3file.file;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import io.trino.spi.TrinoException;
 import io.trino.spi.type.Type;
+import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.util.CharsetUtils;
 
 import java.nio.charset.Charset;
+import java.util.ArrayList;
 import java.util.List;
 
 import static java.util.Objects.requireNonNull;
+import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 
 /**
  * Common connector table function handle metadata shared by text-backed functions.
@@ -16,17 +20,17 @@ import static java.util.Objects.requireNonNull;
 public abstract class BaseTextFileHandle implements RuntimeTableHandle {
     public static final int DEFAULT_BATCH_SIZE = 1024;
 
-    private final S3ObjectRef object;
+    private final FileSelection selection;
     private final ScanSettings scan;
 
-    protected BaseTextFileHandle(S3ObjectRef object, ScanSettings scan) {
-        this.object = requireNonNull(object, "object is null");
+    protected BaseTextFileHandle(FileSelection selection, ScanSettings scan) {
+        this.selection = requireNonNull(selection, "selection is null");
         this.scan = requireNonNull(scan, "scan is null");
     }
 
-    @JsonProperty("object")
-    public S3ObjectRef object() {
-        return object;
+    @JsonProperty("selection")
+    public FileSelection selection() {
+        return selection;
     }
 
     @JsonProperty("scan")
@@ -39,9 +43,34 @@ public abstract class BaseTextFileHandle implements RuntimeTableHandle {
         return CharsetUtils.resolve(scan.charsetName());
     }
 
+    public List<FileSplit> createSplits(boolean splittable) {
+        return selection.objects().stream()
+                .flatMap(object -> (splittable
+                        ? SplitPlanner.planSplits(object, scan.splitSizeBytes())
+                        : List.of(FileSplit.forWholeFile(object))).stream())
+                .toList();
+    }
+
     @JsonIgnore
-    public FileSplit toWholeFileSplit() {
-        return FileSplit.forWholeFile(object.size());
+    public final List<String> columnNames() {
+        var names = new ArrayList<>(dataColumnNames());
+        if (!selection.pathColumn().isEmpty()) {
+            if (names.stream().anyMatch(name -> name.equalsIgnoreCase(selection.pathColumn()))) {
+                throw new TrinoException(INVALID_FUNCTION_ARGUMENT,
+                        "PATH_COLUMN conflicts with a data column: " + selection.pathColumn());
+            }
+            names.add(selection.pathColumn());
+        }
+        return List.copyOf(names);
+    }
+
+    @JsonIgnore
+    public final List<Type> resolveColumnTypes() {
+        var types = new ArrayList<>(dataColumnTypes());
+        if (!selection.pathColumn().isEmpty()) {
+            types.add(VarcharType.VARCHAR);
+        }
+        return List.copyOf(types);
     }
 
     @JsonIgnore
@@ -53,8 +82,8 @@ public abstract class BaseTextFileHandle implements RuntimeTableHandle {
     public abstract String format();
 
     @JsonIgnore
-    public abstract List<String> columnNames();
+    public abstract List<String> dataColumnNames();
 
     @JsonIgnore
-    public abstract List<Type> resolveColumnTypes();
+    public abstract List<Type> dataColumnTypes();
 }

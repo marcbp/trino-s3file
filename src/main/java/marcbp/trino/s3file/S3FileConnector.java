@@ -10,7 +10,6 @@ import io.trino.spi.connector.ConnectorSplitSource;
 import io.trino.spi.connector.ConnectorTableHandle;
 import io.trino.spi.connector.ConnectorTransactionHandle;
 import io.trino.spi.connector.Constraint;
-import io.trino.spi.connector.DynamicFilter;
 import io.trino.spi.connector.FixedSplitSource;
 import io.trino.spi.function.table.ConnectorTableFunction;
 import io.trino.spi.transaction.IsolationLevel;
@@ -25,7 +24,6 @@ import marcbp.trino.s3file.s3.S3ClientBuilder;
 import marcbp.trino.s3file.s3.S3ClientConfig;
 import marcbp.trino.s3file.file.FileSplit;
 
-import java.util.Optional;
 import java.util.Set;
 import java.util.List;
 
@@ -120,15 +118,15 @@ public final class S3FileConnector implements Connector {
                 case CsvTableFunction.Handle csvHandle -> fixedFileSplits(
                         csvTableFunction.createSplits(csvHandle),
                         "CSV",
-                        csvHandle.object().path());
+                        csvHandle.selection().objects().size());
                 case TextTableFunction.Handle textHandle -> fixedFileSplits(
                         textTableFunction.createSplits(textHandle),
                         "text",
-                        textHandle.object().path());
+                        textHandle.selection().objects().size());
                 case JsonTableFunction.Handle jsonHandle -> fixedFileSplits(
                         jsonTableFunction.createSplits(jsonHandle),
                         "JSON",
-                        jsonHandle.object().path());
+                        jsonHandle.selection().objects().size());
                 case ObjectsTableFunction.Handle objectsHandle -> {
                     LOG.info("Providing 1 objects split for bucket %s and prefix %s", objectsHandle.bucket(), objectsHandle.prefix());
                     yield new FixedSplitSource(List.of(ListingSplit.INSTANCE));
@@ -140,13 +138,13 @@ public final class S3FileConnector implements Connector {
                 case XmlTableFunction.Handle xmlHandle -> fixedFileSplits(
                         xmlTableFunction.createSplits(xmlHandle),
                         "XML",
-                        xmlHandle.object().path());
+                        xmlHandle.selection().objects().size());
                 default -> throw new IllegalArgumentException("Unexpected handle type: " + handle.getClass().getName());
             };
         }
 
-        private ConnectorSplitSource fixedFileSplits(List<FileSplit> splits, String format, String path) {
-            LOG.info("Providing %s %s split(s) for path %s", splits.size(), format, path);
+        private ConnectorSplitSource fixedFileSplits(List<FileSplit> splits, String format, int objectCount) {
+            LOG.info("Providing %s %s split(s) for %s object(s)", splits.size(), format, objectCount);
             return new FixedSplitSource(splits);
         }
     }

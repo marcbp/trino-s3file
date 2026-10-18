@@ -24,13 +24,11 @@ import marcbp.trino.s3file.file.BaseTextFileHandle;
 import marcbp.trino.s3file.file.PageSettings;
 import marcbp.trino.s3file.file.ByteDelimitedRecordReader;
 import marcbp.trino.s3file.file.FileSplit;
-import marcbp.trino.s3file.file.S3ObjectRef;
+import marcbp.trino.s3file.file.FileSelection;
 import marcbp.trino.s3file.file.ScanSettings;
 import marcbp.trino.s3file.file.TextSplitBoundarySupport;
-import marcbp.trino.s3file.file.SplitPlanner;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
 
-import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
@@ -76,6 +74,8 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                 "load",
                 List.of(
                         pathArgumentSpecification(),
+                        FileSelection.pathColumnArgument(),
+                        FileSelection.globArgument(),
                         ScalarArgumentSpecification.builder()
                                 .name(DELIMITER_ARGUMENT)
                                 .type(VarcharType.VARCHAR)
@@ -117,30 +117,26 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
         logger.info("Header present: %s", headerPresent);
 
         List<String> columnNames;
-        S3ClientBuilder.ObjectMetadata metadata;
+        FileSelection selection;
         try (S3ClientBuilder.SessionClient s3 = s3ClientBuilder.forSession(session)) {
-            metadata = s3.getObjectMetadata(s3Path);
-            try (BufferedReader reader = s3.openReader(s3Path, charset, metadata.versionId(), metadata.eTag())) {
-                columnNames = CsvFormatSupport.inferColumnNames(reader, s3Path, delimiter, headerPresent, multiline);
-            }
+            selection = FileSelection.resolve(s3, s3Path, arguments);
+            columnNames = selection.infer(s3, charset, (reader, object) ->
+                    CsvFormatSupport.inferColumnNames(reader, object.path(), delimiter, headerPresent, multiline));
         }
         catch (IOException e) {
             logger.error(e, "Failed to infer column names for %s", s3Path);
             throw new UncheckedIOException("Failed to infer column names", e);
         }
         logger.info("Detected %s columns: %s", columnNames.size(), columnNames);
-        List<Type> columnTypes = columnNames.stream()
-                .map(name -> (Type) VarcharType.createUnboundedVarcharType())
-                .toList();
-        Descriptor descriptor = Descriptor.descriptor(columnNames, columnTypes);
 
+        Handle handle = new Handle(
+                selection,
+                new ScanSettings(splitSizeBytes, pageSettings, charset.name()),
+                new CsvSchema(columnNames),
+                new CsvOptions(delimiter, headerPresent, multiline));
         return TableFunctionAnalysis.builder()
-                .returnedType(descriptor)
-                .handle(new Handle(
-                        S3ObjectRef.from(s3Path, metadata),
-                        new ScanSettings(splitSizeBytes, pageSettings, charset.name()),
-                        new CsvSchema(columnNames),
-                        new CsvOptions(delimiter, headerPresent, multiline)))
+                .returnedType(Descriptor.descriptor(handle.columnNames(), handle.resolveColumnTypes()))
+                .handle(handle)
                 .build();
     }
 
@@ -155,10 +151,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
     }
 
     public List<FileSplit> createSplits(Handle handle) {
-        if (handle.options().multiline()) {
-            return List.of(handle.toWholeFileSplit());
-        }
-        return SplitPlanner.planSplits(handle.object().size(), handle.scan().splitSizeBytes());
+        return handle.createSplits(!handle.options().multiline());
     }
 
     public ConnectorPageSource createPageSource(ConnectorSession session, Handle handle, FileSplit split, List<S3FileColumnHandle> columns) {
@@ -186,11 +179,11 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
 
         @JsonCreator
         public Handle(
-                @JsonProperty("object") S3ObjectRef object,
+                @JsonProperty("selection") FileSelection selection,
                 @JsonProperty("scan") ScanSettings scan,
                 @JsonProperty("schema") CsvSchema schema,
                 @JsonProperty("options") CsvOptions options) {
-            super(object, scan);
+            super(selection, scan);
             this.schema = requireNonNull(schema, "schema is null");
             this.options = requireNonNull(options, "options is null");
         }
@@ -211,12 +204,12 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
         }
 
         @Override
-        public List<String> columnNames() {
+        public List<String> dataColumnNames() {
             return schema.columns();
         }
 
         @Override
-        public List<Type> resolveColumnTypes() {
+        public List<Type> dataColumnTypes() {
             List<Type> types = new ArrayList<>(schema.columns().size());
             for (int i = 0; i < schema.columns().size(); i++) {
                 types.add(VarcharType.createUnboundedVarcharType());
@@ -252,13 +245,17 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
         protected void openSource() throws IOException {
             if (skipFirstLine) {
                 recordS3Request();
-                skipFirstLine = !TextSplitBoundarySupport.startsAfterDelimiter(sessionClient, handle, split, lineBreakBytes);
+                skipFirstLine = !TextSplitBoundarySupport.startsAfterDelimiter(sessionClient, split, lineBreakBytes);
             }
             InputStream stream = openStream();
             recordReader = new ByteDelimitedRecordReader(stream, charset, lineBreakBytes, true);
             if (handle.options().headerPresent() && split.isFirst()) {
                 CsvRecord header = readCsvRecord();
                 if (header != null) {
+                    List<String> names = java.util.Arrays.stream(header.values()).map(String::trim).toList();
+                    if (!names.equals(handle.schema().columns())) {
+                        throw new io.trino.spi.TrinoException(io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT, "CSV header does not match inferred schema in " + split.object().path());
+                    }
                     addBytesWithinPrimary(header.bytesConsumed());
                 }
             }
@@ -279,6 +276,10 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                 return RecordReadResult.skip(record.bytesConsumed());
             }
 
+            if (record.values().length != handle.schema().columns().size()) {
+                throw new io.trino.spi.TrinoException(io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT, "CSV column count does not match inferred schema in " + split.object().path()
+                        + ": expected " + handle.schema().columns().size() + ", got " + record.values().length);
+            }
             boolean finishesSplit = !split.isLast() && bytesWithinPrimary + record.bytesConsumed() > primaryLength;
             return RecordReadResult.produce(record.values(), record.bytesConsumed(), finishesSplit);
         }
@@ -339,7 +340,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                 recordReader.close();
             }
             catch (IOException e) {
-                logger.warn(e, "Failed to close reader for %s", handle.object().path());
+                logger.warn(e, "Failed to close reader for %s", split.object().path());
             }
             finally {
                 recordReader = null;

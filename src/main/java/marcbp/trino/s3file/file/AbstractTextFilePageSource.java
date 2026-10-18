@@ -1,6 +1,10 @@
 package marcbp.trino.s3file.file;
 
 import io.airlift.log.Logger;
+import io.airlift.slice.Slices;
+import io.trino.spi.block.Block;
+import io.trino.spi.block.RunLengthEncodedBlock;
+import io.trino.spi.type.VarcharType;
 import io.trino.spi.Page;
 import io.trino.spi.PageBuilder;
 import io.trino.spi.connector.ConnectorPageSource;
@@ -30,6 +34,7 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
     protected final List<S3FileColumnHandle> projectedColumns;
 
     private final List<Type> projectedTypes;
+    private final List<S3FileColumnHandle> outputColumns;
 
     protected BufferedReader reader;
     protected boolean finished;
@@ -54,7 +59,10 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
         this.split = requireNonNull(split, "split is null");
         this.charset = handle.charset();
         this.primaryLength = split.getPrimaryLength();
-        this.projectedColumns = List.copyOf(requireNonNull(projectedColumns, "projectedColumns is null"));
+        this.outputColumns = List.copyOf(requireNonNull(projectedColumns, "projectedColumns is null"));
+        this.projectedColumns = outputColumns.stream()
+                .filter(column -> column.getOrdinalPosition() < handle.dataColumnNames().size())
+                .toList();
         List<Type> allTypes = handle.resolveColumnTypes();
         this.projectedTypes = this.projectedColumns.stream()
                 .map(column -> allTypes.get(column.getOrdinalPosition()))
@@ -98,36 +106,36 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
         recordS3Request();
         if (split.isWholeFile()) {
             return sessionClient.openReader(
-                    handle.object().path(),
+                    split.object().path(),
                     charset,
-                    handle.object().versionIdRef(),
-                    handle.object().eTagRef());
+                    split.object().versionIdRef(),
+                    split.object().eTagRef());
         }
         return sessionClient.openReader(
-                handle.object().path(),
+                split.object().path(),
                 split.getStartOffset(),
                 split.getRangeEndExclusive(),
                 charset,
-                handle.object().versionIdRef(),
-                handle.object().eTagRef());
+                split.object().versionIdRef(),
+                split.object().eTagRef());
     }
 
     protected final InputStream openStream() throws IOException {
         recordS3Request();
         if (split.isWholeFile()) {
             return sessionClient.openStream(
-                    handle.object().path(),
+                    split.object().path(),
                     0,
                     null,
-                    handle.object().versionIdRef(),
-                    handle.object().eTagRef());
+                    split.object().versionIdRef(),
+                    split.object().eTagRef());
         }
         return sessionClient.openStream(
-                handle.object().path(),
+                split.object().path(),
                 split.getStartOffset(),
                 split.getRangeEndExclusive(),
-                handle.object().versionIdRef(),
-                handle.object().eTagRef());
+                split.object().versionIdRef(),
+                split.object().eTagRef());
     }
 
     private void ensureReader() throws IOException {
@@ -150,7 +158,7 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
             reader.close();
         }
         catch (IOException e) {
-            logger.warn(e, "Failed to close reader for %s", handle.object().path());
+            logger.warn(e, "Failed to close reader for %s", split.object().path());
         }
         finally {
             reader = null;
@@ -252,12 +260,24 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
                 return null;
             }
             Page page = pageBuilder.build();
+            if (outputColumns.size() != projectedColumns.size()) {
+                Block[] blocks = new Block[outputColumns.size()];
+                var pathBuilder = VarcharType.VARCHAR.createBlockBuilder(null, 1);
+                VarcharType.VARCHAR.writeSlice(pathBuilder, Slices.utf8Slice(split.object().path()));
+                var path = RunLengthEncodedBlock.create(pathBuilder.build(), page.getPositionCount());
+                int dataIndex = 0;
+                for (int i = 0; i < outputColumns.size(); i++) {
+                    blocks[i] = outputColumns.get(i).getOrdinalPosition() == handle.dataColumnNames().size()
+                            ? path : page.getBlock(dataIndex++);
+                }
+                page = new Page(page.getPositionCount(), blocks);
+            }
             pagesProduced++;
             return SourcePage.create(page);
         }
         catch (IOException e) {
             close();
-            throw new UncheckedIOException("Failed to process data for " + handle.object().path(), e);
+            throw new UncheckedIOException("Failed to process data for " + split.object().path(), e);
         }
         catch (RuntimeException e) {
             close();
