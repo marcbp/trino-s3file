@@ -19,7 +19,15 @@ services:
     volumes:
       - ./docker/etc/worker:/etc/trino-worker:ro
       - ./docker/etc/exchange-manager.properties:/etc/trino/exchange-manager.properties:ro
-    entrypoint: ["/etc/trino-worker/entrypoint.sh"]
+    entrypoint:
+      - /usr/lib/trino/bin/launcher
+      - run
+      - --etc-dir
+      - /etc/trino
+      - --config
+      - /etc/trino-worker/config.properties
+      - --node-config
+      - /etc/trino-worker/node.properties
     depends_on:
       - seaweedfs
       - trino-coordinator

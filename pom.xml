@@ -5,16 +5,16 @@
 
     <groupId>marcbp</groupId>
     <artifactId>trino-s3file</artifactId>
-    <version>0.7</version>
+    <version>0.8</version>
     <name>S3 File Trino Plugin</name>
     <description>Trino connector exposing raw files stored in S3 storage.</description>
     <packaging>trino-plugin</packaging>
 
     <properties>
-        <trino.version>483</trino.version>
+        <trino.version>484</trino.version>
         <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <airlift.log.version>439</airlift.log.version>
+        <airlift.log.version>451</airlift.log.version>
         <aws-sdk.version>2.55.11</aws-sdk.version>
         <jackson.version>2.22.3</jackson.version>
         <skipUnitTests>false</skipUnitTests>
@@ -35,7 +35,7 @@
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
-            <version>2.0.18</version>
+            <version>2.0.20</version>
         </dependency>
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
