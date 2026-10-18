@@ -278,6 +278,17 @@ class ReadmeExamplesIT {
         assertTrue(error.getMessage().contains("INVALID_FUNCTION_ARGUMENT"), error.getMessage());
     }
 
+    @Test
+    void missingS3ObjectFailsQueryWithoutBreakingSubsequentReads() throws Exception {
+        AssertionError error = assertThrows(AssertionError.class, () -> environment.query("""
+                SELECT * FROM TABLE(s3file.txt.load(path => 's3://mybucket/missing-object.txt'))
+                """));
+        assertTrue(error.getMessage().contains("Status Code: 404"), error.getMessage());
+        assertEquals(List.of(List.of("5")), environment.query("""
+                SELECT count(*) FROM TABLE(s3file.txt.load(path => 's3://mybucket/data.txt'))
+                """));
+    }
+
     private static void assertHasObjectRow(List<List<String>> rows, String path, String bucket, String key, String name, String parent, String type) {
         boolean match = rows.stream().anyMatch(row ->
                 path.equals(row.get(0))
