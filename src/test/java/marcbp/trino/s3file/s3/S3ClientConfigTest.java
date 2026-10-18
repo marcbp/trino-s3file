@@ -11,6 +11,13 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class S3ClientConfigTest {
     @Test
+    void parsesFileLimit() {
+        assertEquals(10_000, S3ClientConfig.defaults().maxGlobFiles());
+        assertEquals(10_000, S3ClientConfig.from(Map.of()).maxGlobFiles());
+        assertEquals(25_000, S3ClientConfig.from(Map.of("s3.max-glob-files", "25000")).maxGlobFiles());
+    }
+
+    @Test
     void parsesPageSettings() {
         S3ClientConfig config = S3ClientConfig.from(Map.of(
                 "s3.page-batch-size", "2048",
@@ -23,7 +30,7 @@ class S3ClientConfigTest {
     @ParameterizedTest
     @ValueSource(strings = {
             "s3.page-batch-size", "s3.page-target-size-mb", "s3.default-split-size-mb",
-            "s3.max-connections-per-worker", "s3.connection-acquisition-timeout-s"
+            "s3.max-glob-files", "s3.max-connections-per-worker", "s3.connection-acquisition-timeout-s"
     })
     void rejectsInvalidNumericSettings(String property) {
         for (String value : new String[] {"0", "-1", "invalid", "9223372036854775808"}) {

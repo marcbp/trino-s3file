@@ -20,6 +20,7 @@ public record S3ClientConfig(
         int splitSizeBytes,
         PageSettings pageSettings,
         int maxConnections,
+        int maxGlobFiles,
         Duration connectionAcquisitionTimeout) {
 
     public static final String REGION_KEY = "s3.region";
@@ -32,6 +33,8 @@ public record S3ClientConfig(
     public static final String DEFAULT_SPLIT_SIZE_MB_KEY = "s3.default-split-size-mb";
     public static final String PAGE_BATCH_SIZE_KEY = "s3.page-batch-size";
     public static final String PAGE_TARGET_SIZE_MB_KEY = "s3.page-target-size-mb";
+    public static final String MAX_GLOB_FILES_KEY = "s3.max-glob-files";
+    public static final int DEFAULT_MAX_GLOB_FILES = 10_000;
     public static final String MAX_CONNECTIONS_KEY = "s3.max-connections-per-worker";
     public static final String CONNECTION_ACQUISITION_TIMEOUT_KEY = "s3.connection-acquisition-timeout-s";
     public static final int DEFAULT_SPLIT_SIZE_BYTES = 32 * 1024 * 1024;
@@ -52,9 +55,10 @@ public record S3ClientConfig(
         PageSettings pageSettings = new PageSettings(
                 parsePageBatchSize(config.get(PAGE_BATCH_SIZE_KEY)),
                 parsePageTargetSizeBytes(config.get(PAGE_TARGET_SIZE_MB_KEY)));
-        int maxConnections = parseMaxConnections(config.get(MAX_CONNECTIONS_KEY));
+        int maxConnections = parsePositiveInteger(config.get(MAX_CONNECTIONS_KEY), MAX_CONNECTIONS_KEY, DEFAULT_MAX_CONNECTIONS);
+        int maxGlobFiles = parsePositiveInteger(config.get(MAX_GLOB_FILES_KEY), MAX_GLOB_FILES_KEY, DEFAULT_MAX_GLOB_FILES);
         Duration connectionAcquisitionTimeout = parseConnectionAcquisitionTimeout(config.get(CONNECTION_ACQUISITION_TIMEOUT_KEY));
-        return new S3ClientConfig(region, endpoint, accessKey, secretKey, authMode, pathStyleAccess, interceptorClass, splitSizeBytes, pageSettings, maxConnections, connectionAcquisitionTimeout);
+        return new S3ClientConfig(region, endpoint, accessKey, secretKey, authMode, pathStyleAccess, interceptorClass, splitSizeBytes, pageSettings, maxConnections, maxGlobFiles, connectionAcquisitionTimeout);
     }
 
     public static S3ClientConfig defaults() {
@@ -69,6 +73,7 @@ public record S3ClientConfig(
                 DEFAULT_SPLIT_SIZE_BYTES,
                 new PageSettings(DEFAULT_PAGE_BATCH_SIZE, DEFAULT_PAGE_TARGET_SIZE_BYTES),
                 DEFAULT_MAX_CONNECTIONS,
+                DEFAULT_MAX_GLOB_FILES,
                 DEFAULT_CONNECTION_ACQUISITION_TIMEOUT);
     }
 
@@ -94,21 +99,21 @@ public record S3ClientConfig(
         }
     }
 
-    private static int parseMaxConnections(String configuredMaxConnections) {
-        Optional<String> maxConnections = optionalValue(configuredMaxConnections);
-        if (maxConnections.isEmpty()) {
-            return DEFAULT_MAX_CONNECTIONS;
+    private static int parsePositiveInteger(String configuredValue, String key, int defaultValue) {
+        Optional<String> value = optionalValue(configuredValue);
+        if (value.isEmpty()) {
+            return defaultValue;
         }
 
         try {
-            int connections = Integer.parseInt(maxConnections.get());
-            if (connections <= 0) {
-                throw new IllegalArgumentException("Connector property " + MAX_CONNECTIONS_KEY + " must be a positive integer");
+            int number = Integer.parseInt(value.get());
+            if (number <= 0) {
+                throw new IllegalArgumentException("Connector property " + key + " must be a positive integer");
             }
-            return connections;
+            return number;
         }
         catch (NumberFormatException e) {
-            throw new IllegalArgumentException("Connector property " + MAX_CONNECTIONS_KEY + " must be a positive integer", e);
+            throw new IllegalArgumentException("Connector property " + key + " must be a positive integer", e);
         }
     }
 

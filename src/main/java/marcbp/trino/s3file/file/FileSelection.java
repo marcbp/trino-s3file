@@ -27,7 +27,6 @@ import static marcbp.trino.s3file.util.TableFunctionArguments.scalarArgument;
 public record FileSelection(
         @JsonProperty("objects") List<S3ObjectRef> objects,
         @JsonProperty("pathColumn") String pathColumn) {
-    private static final int MAX_FILES = 10_000;
 
     @JsonCreator
     public FileSelection {
@@ -83,8 +82,8 @@ public record FileSelection(
                             ? new S3ObjectRef(object.path(), object.size(), object.eTag().orElseThrow(), null)
                             : S3ObjectRef.from(object.path(), client.getObjectMetadata(object.path()));
                     objects.put(object.key(), ref);
-                    if (objects.size() > MAX_FILES) {
-                        throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "S3 glob selects more than " + MAX_FILES + " objects: " + path);
+                    if (objects.size() > client.maxGlobFiles()) {
+                        throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "S3 glob selects more than " + client.maxGlobFiles() + " objects: " + path);
                     }
                 }
             }

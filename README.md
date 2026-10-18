@@ -279,11 +279,13 @@ SELECT "$path", id
 FROM TABLE(s3file.json.load(path => 's3://mybucket/events/{,**/}*.jsonl'));
 ```
 
-- `*` and `?` match within one path segment; `**` crosses `/`. Use `events/{,**/}*.jsonl` to include both direct children and subfolders; `events/**/*.jsonl` requires a subfolder. Classes (`[a-z]`), alternatives (`{csv,txt}`), and backslash escapes are supported; nested alternatives are not.
+- `*` and `?` match within one path segment; `**` crosses `/`. Use `events/{,**/}*.jsonl` to include both direct children and subfolders; `events/**/*.jsonl` requires a subfolder. Classes (`[a-z]`), alternatives (`{csv,txt}`), and backslash escapes are supported; nested alternatives are not. Keys are matched verbatim, preserving consecutive `/`.
 - Set `glob => false` (default `true`) to read one exact S3 key, preserving special characters and backslashes without escaping.
 - `$path` contains the source S3 path. Rename it with `path_column => 'source_file'` or disable it with `path_column => ''`.
 - One schema is inferred from the first usable file in key order, skipping empty files, then applied to all files without merging. Missing JSON/XML fields become NULL; incompatible rows fail the query unless XML error capture is enabled.
-- Selection is limited to 10,000 files; no matches fail the query. Each file retains its own splits, with one split per file for XML and multiline CSV.
+- Selection defaults to at most 10,000 files, configurable with the catalog property `s3.max-glob-files`; no matches fail the query. Each file retains its own splits, with one split per file for XML and multiline CSV.
+
+The listing is not transactional: concurrent additions or deletions can affect the selection, and changes to selected objects can fail the query.
 
 ## Parallelism Limits
 
@@ -300,6 +302,7 @@ Set the connector-wide split size default in the catalog properties:
 ```properties
 connector.name=s3file
 s3.default-split-size-mb=32
+s3.max-glob-files=10000
 s3.page-batch-size=1024
 s3.page-target-size-mb=8
 s3.max-connections-per-worker=10

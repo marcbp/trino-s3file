@@ -259,6 +259,10 @@ public final class S3ClientBuilder implements Closeable {
             this.entry = acquire(session);
         }
 
+        public int maxGlobFiles() {
+            return config.maxGlobFiles();
+        }
+
         public BufferedReader openReader(String s3Uri) {
             return openReader(s3Uri, StandardCharsets.UTF_8);
         }

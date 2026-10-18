@@ -40,6 +40,15 @@ class S3GlobTest {
     }
 
     @Test
+    void repeatedAndTrailingSeparatorsAreNotNormalized() {
+        assertTrue(S3Glob.parse("s3://bucket/events//part/*.jsonl", true).matches("events//part/a.jsonl"));
+        assertFalse(S3Glob.parse("s3://bucket/events/*/*.jsonl", true).matches("events//part/a.jsonl"));
+        assertTrue(S3Glob.parse("s3://bucket/events/*/part/*.jsonl", true).matches("events//part/a.jsonl"));
+        assertFalse(S3Glob.parse("s3://bucket/events/*.jsonl", true).matches("events/a.jsonl/"));
+        assertTrue(S3Glob.parse("s3://bucket/events/{,**/}*.jsonl", true).matches("events///part/a.jsonl"));
+    }
+
+    @Test
     void invalidPatternsAndWildcardBucketsFailBeforeListing() {
         for (String path : new String[] {"s3://buck*/x", "s3://bucket/x/[", "s3://bucket/x/{a,b", "s3://bucket/x/{a,{b,c}}", "s3://bucket/x/escape\\"}) {
             assertThrows(TrinoException.class, () -> S3Glob.parse(path, true));

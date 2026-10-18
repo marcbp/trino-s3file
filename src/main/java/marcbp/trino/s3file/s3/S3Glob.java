@@ -2,6 +2,7 @@ package marcbp.trino.s3file.s3;
 
 import io.trino.spi.TrinoException;
 
+import java.lang.reflect.Proxy;
 import java.nio.file.FileSystems;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
@@ -48,6 +49,18 @@ public record S3Glob(String bucket, String prefix, PathMatcher matcher) {
     }
 
     public boolean matches(String key) {
-        return isGlob() ? matcher.matches(Path.of(key)) : prefix.equals(key);
+        if (!isGlob()) {
+            return prefix.equals(key);
+        }
+        // The JDK glob matcher reads Path.toString(). A filesystem Path would collapse
+        // consecutive slashes, although they distinguish valid S3 keys.
+        Path rawKey = (Path) Proxy.newProxyInstance(Path.class.getClassLoader(), new Class<?>[] {Path.class},
+                (proxy, method, arguments) -> {
+                    if (method.getName().equals("toString")) {
+                        return key;
+                    }
+                    throw new UnsupportedOperationException("S3 keys only support string matching");
+                });
+        return matcher.matches(rawKey);
     }
 }

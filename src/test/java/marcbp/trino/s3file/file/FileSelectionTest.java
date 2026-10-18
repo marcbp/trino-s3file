@@ -22,6 +22,7 @@ class FileSelectionTest {
     @Test
     void paginatedListingFiltersSortsAndPinsObjects() {
         var client = mock(S3ClientBuilder.SessionClient.class);
+        when(client.maxGlobFiles()).thenReturn(10_000);
         var a = listed("logs/a.jsonl", 11);
         var b = listed("logs/nested/b.jsonl", 7);
         when(client.listObjects("bucket", "logs/", true, Optional.empty())).thenReturn(
@@ -121,6 +122,7 @@ class FileSelectionTest {
     @Test
     void escapedPrefixAndActiveWildcardSelectOnlyIntendedObjects() {
         var client = mock(S3ClientBuilder.SessionClient.class);
+        when(client.maxGlobFiles()).thenReturn(10_000);
         var intended = listed("logs/[2026]/file?.txt", 10);
         var alsoIntended = listed("logs/[2026]/file?-2.txt", 10);
         when(client.listObjects("bucket", "logs/[2026]/file?", true, Optional.empty())).thenReturn(
@@ -147,6 +149,41 @@ class FileSelectionTest {
             verify(client).getObjectMetadata(path);
         }
         verify(client, never()).listObjects(any(), any(), anyBoolean(), any());
+    }
+
+    @Test
+    void selectionPreservesEmptyKeySegments() {
+        var client = mock(S3ClientBuilder.SessionClient.class);
+        when(client.maxGlobFiles()).thenReturn(10_000);
+        var doubleSlash = listed("events//part/a.txt", 1);
+        when(client.listObjects("bucket", "events/", true, Optional.empty())).thenReturn(
+                new S3ClientBuilder.ListObjectsPage(List.of(doubleSlash, listed("events/part/a.txt", 1)),
+                        List.of(), Optional.empty()));
+        var selection = FileSelection.resolve(client, "s3://bucket/events/*/part/*.txt", Map.of());
+        assertEquals(List.of(doubleSlash.path()), selection.objects().stream().map(S3ObjectRef::path).toList());
+
+        when(client.listObjects("bucket", "events//part/", true, Optional.empty())).thenReturn(
+                new S3ClientBuilder.ListObjectsPage(List.of(doubleSlash), List.of(), Optional.empty()));
+        assertEquals(selection.objects(), FileSelection.resolve(client, "s3://bucket/events//part/*.txt", Map.of()).objects());
+    }
+
+    @Test
+    void configuredFileLimitCountsUniqueMatchesAcrossPages() {
+        var client = mock(S3ClientBuilder.SessionClient.class);
+        when(client.maxGlobFiles()).thenReturn(2);
+        var a = listed("a.txt", 1);
+        var b = listed("b.txt", 1);
+        when(client.listObjects("bucket", "", true, Optional.empty())).thenReturn(
+                new S3ClientBuilder.ListObjectsPage(List.of(a, listed("ignored.csv", 1)), List.of(), Optional.of("next")));
+        when(client.listObjects("bucket", "", true, Optional.of("next"))).thenReturn(
+                new S3ClientBuilder.ListObjectsPage(List.of(a, b), List.of(), Optional.empty()));
+        assertEquals(2, FileSelection.resolve(client, "s3://bucket/*.txt", Map.of()).objects().size());
+
+        when(client.listObjects("bucket", "", true, Optional.of("next"))).thenReturn(
+                new S3ClientBuilder.ListObjectsPage(List.of(a, b, listed("c.txt", 1)), List.of(), Optional.empty()));
+        var error = assertThrows(TrinoException.class,
+                () -> FileSelection.resolve(client, "s3://bucket/*.txt", Map.of()));
+        assertTrue(error.getMessage().contains("more than 2 objects"));
     }
 
     private static S3ClientBuilder.ListedObject listed(String key, long size) {
