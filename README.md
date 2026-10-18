@@ -1,8 +1,9 @@
-# Trino s3file Plugin
+<img src="assets/trino-s3file-horizontal.png" alt="Trino s3file — S3 file connector" width="525">
 
 [![Tests](https://github.com/marcbp/trino-s3file/actions/workflows/tests.yml/badge.svg)](https://github.com/marcbp/trino-s3file/actions/workflows/tests.yml)
+[![Trino 484](https://img.shields.io/badge/Trino-484-DD00A1)](https://trino.io/docs/484/)
 
-A Trino connector for ad-hoc exploration, validation, or lightweight ingestion of JSON/CSV/TXT/XML S3 object files :
+A Trino connector for ad-hoc exploration, validation, or lightweight ingestion of JSON/CSV/TXT/XML S3 object files:
 
 - **Schema inference on read**: metadata are inferred at runtime from each object.
 - **Parameterized table functions**: pass parsing tweaks per query without redeploying.
