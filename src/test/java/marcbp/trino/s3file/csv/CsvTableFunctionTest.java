@@ -11,23 +11,24 @@ import io.trino.spi.function.table.ScalarArgument;
 import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
+import marcbp.trino.s3file.file.Compression;
+import marcbp.trino.s3file.file.FileSelection;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.file.S3ObjectRef;
 import marcbp.trino.s3file.file.ScanSettings;
-import marcbp.trino.s3file.s3.S3ClientBuilder;
 import marcbp.trino.s3file.s3.S3ClientBuilder.ObjectMetadata;
+import marcbp.trino.s3file.s3.S3ClientBuilder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.StringReader;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -57,8 +58,8 @@ class CsvTableFunctionTest {
 
     @Test
     void analyzeInfersColumnsFromHeader() {
-        when(sessionClient.openReader(eq(PATH), any(Charset.class), any(), any())).thenAnswer(invocation ->
-                new BufferedReader(new StringReader("first;second\n1;2\n")));
+        when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenAnswer(invocation ->
+                new ByteArrayInputStream(("first;second\n1;2\n").getBytes(StandardCharsets.UTF_8)));
         when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(64L, Optional.of("etag-1"), Optional.empty()));
 
         Map<String, Argument> arguments = Map.of(
@@ -89,14 +90,14 @@ class CsvTableFunctionTest {
         assertEquals(expectedDescriptor, analysis.getReturnedType().orElseThrow());
 
         verify(sessionClient).getObjectMetadata(eq(PATH));
-        verify(sessionClient).openReader(eq(PATH), any(Charset.class), eq(Optional.empty()), eq(Optional.of("etag-1")));
+        verify(sessionClient).openStream(eq(PATH), eq(0L), any(), eq(Optional.empty()), eq(Optional.of("etag-1")));
         verify(sessionClient).close();
     }
 
     @Test
     void analyzeWithoutHeaderGeneratesDefaultColumns() {
-        when(sessionClient.openReader(eq(PATH), any(Charset.class), any(), any())).thenAnswer(invocation ->
-                new BufferedReader(new StringReader("value1;value2;value3\n1;2;3\n")));
+        when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenAnswer(invocation ->
+                new ByteArrayInputStream(("value1;value2;value3\n1;2;3\n").getBytes(StandardCharsets.UTF_8)));
         when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(64L, Optional.empty(), Optional.empty()));
 
         Map<String, Argument> arguments = Map.of(
@@ -125,14 +126,14 @@ class CsvTableFunctionTest {
         assertEquals(expectedDescriptor, analysis.getReturnedType().orElseThrow());
 
         verify(sessionClient).getObjectMetadata(eq(PATH));
-        verify(sessionClient).openReader(eq(PATH), any(Charset.class), eq(Optional.empty()), eq(Optional.empty()));
+        verify(sessionClient).openStream(eq(PATH), eq(0L), any(), eq(Optional.empty()), eq(Optional.empty()));
         verify(sessionClient).close();
     }
 
     @Test
     void analyzeAllowsSplitSizeOverridePerRequest() {
-        when(sessionClient.openReader(eq(PATH), any(Charset.class), any(), any())).thenAnswer(invocation ->
-                new BufferedReader(new StringReader("first;second\n1;2\n")));
+        when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenAnswer(invocation ->
+                new ByteArrayInputStream(("first;second\n1;2\n").getBytes(StandardCharsets.UTF_8)));
         when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(64L, Optional.empty(), Optional.empty()));
 
         Map<String, Argument> arguments = Map.of(
@@ -162,8 +163,8 @@ class CsvTableFunctionTest {
 
     @Test
     void analyzeInfersMultilineHeaderWhenEnabled() {
-        when(sessionClient.openReader(eq(PATH), any(Charset.class), any(), any())).thenAnswer(invocation ->
-                new BufferedReader(new StringReader("\"first\nname\";second\n1;2\n")));
+        when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenAnswer(invocation ->
+                new ByteArrayInputStream(("\"first\nname\";second\n1;2\n").getBytes(StandardCharsets.UTF_8)));
         when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(64L, Optional.empty(), Optional.empty()));
 
         Map<String, Argument> arguments = Map.of(
@@ -221,7 +222,7 @@ class CsvTableFunctionTest {
     }
 
     private static List<S3FileColumnHandle> allColumns(CsvTableFunction.Handle handle) {
-        return java.util.stream.IntStream.range(0, handle.schema().columns().size())
+        return IntStream.range(0, handle.schema().columns().size())
                 .mapToObj(index -> new S3FileColumnHandle(handle.schema().columns().get(index), index))
                 .toList();
     }
@@ -233,7 +234,7 @@ class CsvTableFunctionTest {
             long fileSize,
             int splitSizeBytes) {
         return new CsvTableFunction.Handle(
-                new marcbp.trino.s3file.file.FileSelection(List.of(new S3ObjectRef(PATH, fileSize, null, null)), ""),
+                new FileSelection(List.of(new S3ObjectRef(PATH, fileSize, null, null, Compression.NONE)), ""),
                 new ScanSettings(splitSizeBytes, new marcbp.trino.s3file.file.PageSettings(CsvTableFunction.Handle.DEFAULT_BATCH_SIZE, 8L * 1024L * 1024L), StandardCharsets.UTF_8.name()),
                 new CsvTableFunction.CsvSchema(columns),
                 new CsvTableFunction.CsvOptions(';', headerPresent, multiline));

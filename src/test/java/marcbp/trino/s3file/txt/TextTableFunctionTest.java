@@ -12,11 +12,13 @@ import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
+import marcbp.trino.s3file.file.Compression;
+import marcbp.trino.s3file.file.FileSelection;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.file.S3ObjectRef;
 import marcbp.trino.s3file.file.ScanSettings;
-import marcbp.trino.s3file.s3.S3ClientBuilder;
 import marcbp.trino.s3file.s3.S3ClientBuilder.ObjectMetadata;
+import marcbp.trino.s3file.s3.S3ClientBuilder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -26,6 +28,7 @@ import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -33,18 +36,18 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.reset;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.when;
 
 /**
  * Unit tests covering analysis and split creation for the text table function.
@@ -153,7 +156,7 @@ class TextTableFunctionTest {
                 new ByteArrayInputStream(contentBytes));
         when(sessionClient.readBytes(eq(PATH), eq(boundary - 1), eq(boundary), any(), any())).thenReturn(new byte[] {'x'});
         when(sessionClient.openStream(eq(PATH), eq(boundary), eq((long) contentBytes.length), any(), any())).thenAnswer(invocation ->
-                new ByteArrayInputStream(java.util.Arrays.copyOfRange(contentBytes, (int) boundary, contentBytes.length)));
+                new ByteArrayInputStream(Arrays.copyOfRange(contentBytes, (int) boundary, contentBytes.length)));
 
         TextTableFunction.Handle handle = handle("\n", contentBytes.length, (int) boundary, StandardCharsets.UTF_8, null, null);
         FileSplit first = new FileSplit(handle.selection().objects().getFirst(), "split-0", 0, boundary, contentBytes.length, true, false);
@@ -278,7 +281,7 @@ class TextTableFunctionTest {
         ByteArrayInputStream stream = spy(stream("first\nsecond\n", StandardCharsets.UTF_8));
         when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenReturn(stream);
         TextTableFunction.Handle handle = new TextTableFunction.Handle(
-                new marcbp.trino.s3file.file.FileSelection(List.of(new S3ObjectRef(PATH, 13, null, null)), ""),
+                new FileSelection(List.of(new S3ObjectRef(PATH, 13, null, null, Compression.NONE)), ""),
                 new ScanSettings(32, new marcbp.trino.s3file.file.PageSettings(1024, 1), "UTF-8"),
                 new TextTableFunction.TextOptions("\n"));
         ConnectorPageSource source = function.createPageSource(
@@ -334,7 +337,7 @@ class TextTableFunctionTest {
             String eTag,
             String versionId) {
         return new TextTableFunction.Handle(
-                new marcbp.trino.s3file.file.FileSelection(List.of(new S3ObjectRef(PATH, fileSize, eTag, versionId)), ""),
+                new FileSelection(List.of(new S3ObjectRef(PATH, fileSize, eTag, versionId, Compression.NONE)), ""),
                 new ScanSettings(splitSizeBytes, new marcbp.trino.s3file.file.PageSettings(TextTableFunction.Handle.DEFAULT_BATCH_SIZE, 8L * 1024L * 1024L), charset.name()),
                 new TextTableFunction.TextOptions(lineBreak));
     }

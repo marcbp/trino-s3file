@@ -3,12 +3,13 @@ package marcbp.trino.s3file.csv;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.opencsv.CSVParser;
+import io.airlift.log.Logger;
 import io.airlift.slice.Slices;
 import io.trino.spi.PageBuilder;
 import io.trino.spi.block.BlockBuilder;
+import io.trino.spi.connector.ConnectorPageSource;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorTransactionHandle;
-import io.trino.spi.connector.ConnectorPageSource;
 import io.trino.spi.function.table.AbstractConnectorTableFunction;
 import io.trino.spi.function.table.Argument;
 import io.trino.spi.function.table.Descriptor;
@@ -17,14 +18,14 @@ import io.trino.spi.function.table.ScalarArgumentSpecification;
 import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
-import io.airlift.log.Logger;
 import marcbp.trino.s3file.S3FileColumnHandle;
 import marcbp.trino.s3file.file.AbstractTextFilePageSource;
 import marcbp.trino.s3file.file.BaseTextFileHandle;
-import marcbp.trino.s3file.file.PageSettings;
 import marcbp.trino.s3file.file.ByteDelimitedRecordReader;
-import marcbp.trino.s3file.file.FileSplit;
+import marcbp.trino.s3file.file.Compression;
 import marcbp.trino.s3file.file.FileSelection;
+import marcbp.trino.s3file.file.FileSplit;
+import marcbp.trino.s3file.file.PageSettings;
 import marcbp.trino.s3file.file.ScanSettings;
 import marcbp.trino.s3file.file.TextSplitBoundarySupport;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
@@ -34,12 +35,13 @@ import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
-import static java.util.Objects.requireNonNull;
 import static io.airlift.slice.SizeOf.sizeOf;
+import static java.util.Objects.requireNonNull;
 import static marcbp.trino.s3file.util.TableFunctionArguments.encodingArgumentSpecification;
 import static marcbp.trino.s3file.util.TableFunctionArguments.optionalBoolean;
 import static marcbp.trino.s3file.util.TableFunctionArguments.optionalString;
@@ -77,6 +79,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                         pathArgumentSpecification(),
                         FileSelection.pathColumnArgument(),
                         FileSelection.globArgument(),
+                        Compression.argument(),
                         ScalarArgumentSpecification.builder()
                                 .name(DELIMITER_ARGUMENT)
                                 .type(VarcharType.VARCHAR)
@@ -253,7 +256,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
             if (handle.options().headerPresent() && split.isFirst()) {
                 CsvRecord header = readCsvRecord();
                 if (header != null) {
-                    List<String> names = java.util.Arrays.stream(header.values()).map(String::trim).toList();
+                    List<String> names = Arrays.stream(header.values()).map(String::trim).toList();
                     if (!names.equals(handle.schema().columns())) {
                         throw new io.trino.spi.TrinoException(io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT, "CSV header does not match inferred schema in " + split.object().path());
                     }

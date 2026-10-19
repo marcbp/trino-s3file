@@ -2,9 +2,10 @@ package marcbp.trino.s3file.s3;
 
 import io.airlift.log.Logger;
 import io.trino.spi.connector.ConnectorSession;
+import marcbp.trino.s3file.s3.S3UriUtils.S3Location;
+import software.amazon.awssdk.auth.credentials.AnonymousCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
-import software.amazon.awssdk.auth.credentials.AnonymousCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.core.ResponseInputStream;
@@ -12,30 +13,26 @@ import software.amazon.awssdk.core.interceptor.Context;
 import software.amazon.awssdk.core.interceptor.ExecutionAttribute;
 import software.amazon.awssdk.core.interceptor.ExecutionAttributes;
 import software.amazon.awssdk.core.interceptor.ExecutionInterceptor;
-import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.http.apache5.Apache5HttpClient;
+import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3Configuration;
+import software.amazon.awssdk.services.s3.model.Bucket;
 import software.amazon.awssdk.services.s3.model.CommonPrefix;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
-import software.amazon.awssdk.services.s3.model.Bucket;
 import software.amazon.awssdk.services.s3.model.ListBucketsResponse;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.S3Object;
 
-import java.io.BufferedReader;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.nio.charset.Charset;
-import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -43,8 +40,6 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import marcbp.trino.s3file.s3.S3UriUtils.S3Location;
 
 import static java.util.Objects.requireNonNull;
 
@@ -263,31 +258,6 @@ public final class S3ClientBuilder implements Closeable {
             return config.maxGlobFiles();
         }
 
-        public BufferedReader openReader(String s3Uri) {
-            return openReader(s3Uri, StandardCharsets.UTF_8);
-        }
-
-        public BufferedReader openReader(String s3Uri, Charset charset) {
-            return openReader(s3Uri, 0, null, charset, Optional.empty(), Optional.empty());
-        }
-
-        public BufferedReader openReader(String s3Uri, long start, Long endExclusive) {
-            return openReader(s3Uri, start, endExclusive, StandardCharsets.UTF_8, Optional.empty(), Optional.empty());
-        }
-
-        public BufferedReader openReader(String s3Uri, long start, Long endExclusive, Charset charset) {
-            return openReader(s3Uri, start, endExclusive, charset, Optional.empty(), Optional.empty());
-        }
-
-        public BufferedReader openReader(String s3Uri, Charset charset, Optional<String> versionId, Optional<String> eTag) {
-            return openReader(s3Uri, 0, null, charset, versionId, eTag);
-        }
-
-        public BufferedReader openReader(String s3Uri, long start, Long endExclusive, Charset charset, Optional<String> versionId, Optional<String> eTag) {
-            InputStream stream = openStream(s3Uri, start, endExclusive, versionId, eTag);
-            return new ClosingBufferedReader(new InputStreamReader(stream, charset), stream);
-        }
-
         public InputStream openStream(String s3Uri, long start, Long endExclusive, Optional<String> versionId, Optional<String> eTag) {
             ResponseInputStream<GetObjectResponse> stream = openObjectStream(s3Uri, start, endExclusive, versionId, eTag);
             logger.info("Opened S3 object %s/%s (versionId=%s, etag=%s)",
@@ -402,22 +372,6 @@ public final class S3ClientBuilder implements Closeable {
             return entry.client.getObject(requestBuilder.build());
         }
 
-        private final class ClosingBufferedReader extends BufferedReader {
-            private final InputStream stream;
-
-            private ClosingBufferedReader(InputStreamReader reader,
-                                          InputStream stream) {
-                super(reader);
-                this.stream = stream;
-            }
-
-            @Override
-            public void close() throws IOException {
-                try (stream) {
-                    super.close();
-                }
-            }
-        }
     }
 
     private final class CachedS3Client {

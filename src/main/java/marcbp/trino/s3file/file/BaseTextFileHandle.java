@@ -11,8 +11,8 @@ import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.List;
 
-import static java.util.Objects.requireNonNull;
 import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
+import static java.util.Objects.requireNonNull;
 
 /**
  * Common connector table function handle metadata shared by text-backed functions.
@@ -45,7 +45,7 @@ public abstract class BaseTextFileHandle implements RuntimeTableHandle {
 
     public List<FileSplit> createSplits(boolean splittable) {
         return selection.objects().stream()
-                .flatMap(object -> (splittable
+                .flatMap(object -> (splittable && object.compression() == Compression.NONE
                         ? SplitPlanner.planSplits(object, scan.splitSizeBytes())
                         : List.of(FileSplit.forWholeFile(object))).stream())
                 .toList();

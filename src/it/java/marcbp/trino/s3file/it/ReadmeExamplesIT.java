@@ -1,17 +1,24 @@
 package marcbp.trino.s3file.it;
 
+import marcbp.trino.s3file.file.CompressedTestData;
+import marcbp.trino.s3file.file.Compression;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ReadmeExamplesIT {
     private static TrinoIntegrationEnvironment environment;
@@ -269,6 +276,7 @@ class ReadmeExamplesIT {
     @ParameterizedTest
     @ValueSource(strings = {
             "path => ''",
+            "path => 's3://mybucket/data.txt', compression => 'zip'",
             "path => 's3://mybucket/data.txt', split_size_mb => 0",
             "path => 's3://mybucket/data.txt', encoding => 'not-a-charset'"
     })
@@ -364,6 +372,82 @@ class ReadmeExamplesIT {
                 query + "file\\[2026\\]\\*\\?." + extension + "'))"));
         assertEquals(List.of(List.of("neighbor")), environment.query(
                 query + "file[2026]*?." + extension + "', glob => true))"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"txt", "json", "csv", "xml"})
+    void gzipGlobReadsEveryFileAndPreservesItsPath(String format) throws Exception {
+        String extension = format.equals("json") ? "jsonl" : format;
+        String id = format.equals("txt") ? "CAST(split_part(line, '|', 1) AS bigint)" : "CAST(id AS bigint)";
+        String splitSize = format.equals("xml") ? "" : ", split_size_mb => 1";
+        var rows = environment.query("SELECT \"$path\", count(*), count(DISTINCT " + id + "), sum(" + id + ") "
+                + "FROM TABLE(s3file." + format + ".load(path => 's3://mybucket/gzip/" + format + "/*." + extension
+                + ".gz'" + splitSize + ")) GROUP BY 1 ORDER BY 1");
+        assertEquals(IntStream.range(0, 24).mapToObj(part -> List.of(
+                "s3://mybucket/gzip/" + format + "/part-%02d.".formatted(part) + extension + ".gz",
+                "25000", "25000", "312512500")).toList(), rows);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"txt", "json", "csv", "xml"})
+    void compressionAutoMixedFilesAndExplicitModes(String format) throws Exception {
+        String expression = format.equals("txt") ? "line" : "value";
+        assertEquals(List.of(List.of("2")), environment.query("SELECT count(*) FROM TABLE(s3file." + format
+                + ".load(path => 's3://mybucket/gzip/mixed/" + format + "/*'))"));
+        for (String mode : List.of("gzip", "none")) {
+            String suffix = mode.equals("gzip") ? "forced/" + format + "/payload" : "plain/" + format + "/literal.gz";
+            String expected = format.equals("txt") ? "1|été" : "été";
+            assertEquals(List.of(List.of(expected)), environment.query("SELECT " + expression + " FROM TABLE(s3file."
+                    + format + ".load(path => 's3://mybucket/gzip/" + suffix + "', compression => '" + mode + "'))"));
+        }
+    }
+
+    @Test
+    void gzipMultilineCsvStillStreamsLogicalRecords() throws Exception {
+        assertEquals(List.of(List.of("1", "hello\nworld"), List.of("2", "plain")), environment.query("""
+                SELECT id, comment FROM TABLE(s3file.csv.load(
+                    path => 's3://mybucket/gzip/multiline.csv.gz', multiline => 'true')) ORDER BY id
+                """));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"truncated", "crc", "header"})
+    void invalidGzipFailsWithTheObjectPath(String kind) {
+        String path = "s3://mybucket/gzip/errors/" + kind + ".gz";
+        var error = assertThrows(AssertionError.class, () -> environment.query(
+                "SELECT count(*) FROM TABLE(s3file.txt.load(path => '" + path + "'))"));
+        assertTrue(error.getMessage().contains("INVALID_FUNCTION_ARGUMENT"), error.getMessage());
+        assertTrue(error.getMessage().contains(path), error.getMessage());
+    }
+
+    static Stream<Arguments> codecsAndFormats() {
+        return Arrays.stream(Compression.values()).filter(codec -> codec != Compression.NONE)
+                .flatMap(codec -> Stream.of("txt", "csv", "json", "xml").map(format -> Arguments.of(codec, format)));
+    }
+
+    @ParameterizedTest
+    @MethodSource("codecsAndFormats")
+    void streamCodecsReadMultipleFilesWithAutoAndExplicitModes(Compression codec, String format) throws Exception {
+        String prefix = "s3://mybucket/codecs/" + format + "/" + codec.name().toLowerCase(Locale.ROOT) + "/";
+        String value = format.equals("txt") ? "line" : "value";
+        String splitSize = format.equals("xml") ? "" : ", split_size_mb => 1";
+        var rows = environment.query("SELECT \"$path\", count(*), count(DISTINCT " + value + ") FROM TABLE(s3file."
+                + format + ".load(path => '" + prefix + "part-*." + TrinoIntegrationEnvironment.compressionExtension(codec)
+                + "'" + splitSize + ")) GROUP BY 1 ORDER BY 1");
+        String count = Integer.toString(CompressedTestData.ROWS);
+        assertEquals(List.of(List.of(prefix + "part-01." + TrinoIntegrationEnvironment.compressionExtension(codec), count, count),
+                List.of(prefix + "part-02." + TrinoIntegrationEnvironment.compressionExtension(codec), count, count)), rows);
+        String mode = codec.name().toLowerCase(Locale.ROOT).replace('_', '-');
+        assertEquals(List.of(List.of(count)), environment.query("SELECT count(*) FROM TABLE(s3file." + format
+                + ".load(path => '" + prefix + "extensionless', compression => '" + mode + "'))"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"txt", "csv", "json", "xml"})
+    void aGlobCanMixAllCompressionAlgorithms(String format) throws Exception {
+        assertEquals(List.of(List.of(Integer.toString(2 * 5 * CompressedTestData.ROWS), "10")), environment.query(
+                "SELECT count(*), count(DISTINCT \"$path\") FROM TABLE(s3file." + format
+                        + ".load(path => 's3://mybucket/codecs/" + format + "/*/part-*'))"));
     }
 
     private static void assertHasObjectRow(List<List<String>> rows, String path, String bucket, String key, String name, String parent, String type) {

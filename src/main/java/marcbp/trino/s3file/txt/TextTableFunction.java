@@ -3,10 +3,6 @@ package marcbp.trino.s3file.txt;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import io.airlift.log.Logger;
-import marcbp.trino.s3file.file.ByteDelimitedRecordReader;
-import marcbp.trino.s3file.file.FileSplit;
-import marcbp.trino.s3file.file.TextSplitBoundarySupport;
-import marcbp.trino.s3file.s3.S3ClientBuilder;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
 import io.trino.spi.PageBuilder;
@@ -26,8 +22,16 @@ import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
+import marcbp.trino.s3file.file.AbstractTextFilePageSource;
+import marcbp.trino.s3file.file.BaseTextFileHandle;
+import marcbp.trino.s3file.file.ByteDelimitedRecordReader;
+import marcbp.trino.s3file.file.Compression;
 import marcbp.trino.s3file.file.FileSelection;
+import marcbp.trino.s3file.file.FileSplit;
+import marcbp.trino.s3file.file.PageSettings;
 import marcbp.trino.s3file.file.ScanSettings;
+import marcbp.trino.s3file.file.TextSplitBoundarySupport;
+import marcbp.trino.s3file.s3.S3ClientBuilder;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -35,12 +39,9 @@ import java.nio.charset.Charset;
 import java.util.List;
 import java.util.Map;
 
-import marcbp.trino.s3file.file.BaseTextFileHandle;
-import marcbp.trino.s3file.file.PageSettings;
-import marcbp.trino.s3file.file.AbstractTextFilePageSource;
-import static java.util.Objects.requireNonNull;
 import static io.airlift.slice.SizeOf.sizeOf;
 import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
+import static java.util.Objects.requireNonNull;
 import static marcbp.trino.s3file.util.TableFunctionArguments.encodingArgumentSpecification;
 import static marcbp.trino.s3file.util.TableFunctionArguments.pathArgumentSpecification;
 import static marcbp.trino.s3file.util.TableFunctionArguments.requirePath;
@@ -74,6 +75,7 @@ public final class TextTableFunction extends AbstractConnectorTableFunction {
                         pathArgumentSpecification(),
                         FileSelection.pathColumnArgument(),
                         FileSelection.globArgument(),
+                        Compression.argument(),
                         ScalarArgumentSpecification.builder()
                                 .name(LINE_BREAK_ARGUMENT)
                                 .type(VarcharType.VARCHAR)

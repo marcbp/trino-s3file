@@ -9,9 +9,9 @@ import java.util.Optional;
 
 import static java.util.Objects.requireNonNull;
 
-public record S3ObjectRef(String path, long size, String eTag, String versionId) {
-    public static S3ObjectRef from(String path, S3ClientBuilder.ObjectMetadata metadata) {
-        return new S3ObjectRef(path, metadata.size(), metadata.eTag().orElse(null), metadata.versionId().orElse(null));
+public record S3ObjectRef(String path, long size, String eTag, String versionId, Compression compression) {
+    public static S3ObjectRef from(String path, S3ClientBuilder.ObjectMetadata metadata, Compression compression) {
+        return new S3ObjectRef(path, metadata.size(), metadata.eTag().orElse(null), metadata.versionId().orElse(null), compression);
     }
 
     @JsonCreator
@@ -19,11 +19,13 @@ public record S3ObjectRef(String path, long size, String eTag, String versionId)
             @JsonProperty("path") String path,
             @JsonProperty("size") long size,
             @JsonProperty("etag") String eTag,
-            @JsonProperty("versionId") String versionId) {
+            @JsonProperty("versionId") String versionId,
+            @JsonProperty("compression") Compression compression) {
         this.path = requireNonNull(path, "path is null");
         this.size = size;
         this.eTag = eTag;
         this.versionId = versionId;
+        this.compression = requireNonNull(compression, "compression is null");
     }
 
     @JsonIgnore

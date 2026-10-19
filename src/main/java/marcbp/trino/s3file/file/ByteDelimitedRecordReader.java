@@ -86,6 +86,8 @@ public final class ByteDelimitedRecordReader implements Closeable {
         return true;
     }
 
+    // Count this reader and its actual arrays, including buffer growth. The input is
+    // accounted by the page source; temporary record builders and returned records are excluded.
     public long getRetainedSizeInBytes() {
         return INSTANCE_SIZE + sizeOf(buffer) + sizeOf(delimiter);
     }

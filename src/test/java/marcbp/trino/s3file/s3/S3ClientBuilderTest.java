@@ -3,6 +3,8 @@ package marcbp.trino.s3file.s3;
 import com.sun.net.httpserver.HttpServer;
 import io.trino.spi.connector.ConnectorPageSource;
 import io.trino.spi.connector.ConnectorSession;
+import marcbp.trino.s3file.file.Compression;
+import marcbp.trino.s3file.file.FileSelection;
 import marcbp.trino.s3file.file.PageSettings;
 import marcbp.trino.s3file.file.S3ObjectRef;
 import marcbp.trino.s3file.file.ScanSettings;
@@ -43,7 +45,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -177,7 +178,7 @@ class S3ClientBuilderTest {
             }
         });
         TextTableFunction.Handle handle = new TextTableFunction.Handle(
-                new marcbp.trino.s3file.file.FileSelection(List.of(new S3ObjectRef("s3://bucket/truncated.txt", 1024, null, null)), ""),
+                new FileSelection(List.of(new S3ObjectRef("s3://bucket/truncated.txt", 1024, null, null, Compression.NONE)), ""),
                 new ScanSettings(1024, new PageSettings(1024, 1024), "UTF-8"),
                 new TextTableFunction.TextOptions("\n"));
         ConnectorPageSource source = new TextTableFunction(builder, 1024)

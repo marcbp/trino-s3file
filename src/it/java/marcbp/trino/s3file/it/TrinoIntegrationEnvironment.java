@@ -2,6 +2,8 @@ package marcbp.trino.s3file.it;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import marcbp.trino.s3file.file.CompressedTestData;
+import marcbp.trino.s3file.file.Compression;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.core.sync.RequestBody;
@@ -14,7 +16,9 @@ import software.amazon.awssdk.services.s3.model.BucketAlreadyOwnedByYouException
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -22,7 +26,11 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.zip.GZIPOutputStream;
 
 import static java.lang.String.format;
 
@@ -122,7 +130,7 @@ final class TrinoIntegrationEnvironment implements AutoCloseable {
         awaitHttpOk(s3Endpoint.resolve("/status"), "SeaweedFS");
     }
 
-    void seedSampleData() {
+    void seedSampleData() throws Exception {
         createBucket(BUCKET);
         putObject("data.csv", CSV_DATA);
         putObject("data.jsonl", JSON_DATA);
@@ -164,6 +172,47 @@ final class TrinoIntegrationEnvironment implements AutoCloseable {
             putObject(key + ".jsonl", "{\"value\":\"" + value + "\"}\n");
             putObject(key + ".xml", "<rows><row><value>" + value + "</value></row></rows>");
         }
+        var xml = new StringBuilder("<rows>");
+        for (int id = 1; id <= 25_000; id++) {
+            xml.append("<row><id>").append(id).append("</id><payload>").append("x".repeat(96)).append("</payload></row>");
+        }
+        xml.append("</rows>");
+        var dataByFormat = Map.of("txt", largeTextData(), "json", largeJsonData(),
+                "csv", largeCsvData(), "xml", xml.toString());
+        var smallByFormat = Map.of("txt", "1|été\n", "json", "{\"id\":1,\"value\":\"été\"}\n",
+                "csv", "id;value\n1;été\n", "xml", "<rows><row><id>1</id><value>été</value></row></rows>");
+        for (String format : dataByFormat.keySet()) {
+            String extension = format.equals("json") ? "jsonl" : format;
+            byte[] compressed = gzip(dataByFormat.get(format));
+            putObject("gzip/" + format + "/00-empty." + extension + ".gz", gzip(""));
+            for (int part = 0; part < 24; part++) {
+                putObject("gzip/" + format + "/part-%02d.".formatted(part) + extension + ".gz", compressed);
+            }
+            String small = smallByFormat.get(format);
+            putObject("gzip/mixed/" + format + "/a." + extension, small);
+            putObject("gzip/mixed/" + format + "/b." + extension + ".gzip", gzip(small));
+            putObject("gzip/forced/" + format + "/payload", gzip(small));
+            putObject("gzip/plain/" + format + "/literal.gz", small);
+        }
+        for (Compression codec : Compression.values()) {
+            if (codec == Compression.NONE) {
+                continue;
+            }
+            String extension = compressionExtension(codec);
+            for (String format : List.of("txt", "csv", "json", "xml")) {
+                byte[] compressed = CompressedTestData.compressed(codec, format);
+                String prefix = "codecs/" + format + "/" + codec.name().toLowerCase(Locale.ROOT) + "/";
+                putObject(prefix + "part-01." + extension, compressed);
+                putObject(prefix + "part-02." + extension, compressed);
+                putObject(prefix + "extensionless", compressed);
+            }
+        }
+        putObject("gzip/multiline.csv.gz", gzip("id;comment\n1;\"hello\nworld\"\n2;plain\n"));
+        byte[] complete = gzip("valid\n");
+        putObject("gzip/errors/truncated.gz", Arrays.copyOf(complete, complete.length - 4));
+        complete[complete.length - 8] ^= 1;
+        putObject("gzip/errors/crc.gz", complete);
+        putObject("gzip/errors/header.gz", "not gzip");
         putObject("multiline.csv", "id;comment\n1;\"hello\nfrom two physical lines\"\n2;plain\n");
     }
 
@@ -286,9 +335,35 @@ final class TrinoIntegrationEnvironment implements AutoCloseable {
     }
 
     private void putObject(String key, String body) {
+        putObject(key, body.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private void putObject(String key, byte[] body) {
         s3Client.putObject(
                 PutObjectRequest.builder().bucket(BUCKET).key(key).build(),
-                RequestBody.fromString(body, StandardCharsets.UTF_8));
+                RequestBody.fromBytes(body));
+    }
+
+    static String compressionExtension(Compression codec) {
+        return switch (codec) {
+            case GZIP -> "gz";
+            case BZIP2 -> "bz2";
+            case ZSTD -> "zst";
+            case LZ4_FRAMED -> "lz4";
+            case SNAPPY_FRAMED -> "sz";
+            case NONE -> throw new IllegalArgumentException("Not compressed");
+        };
+    }
+
+    private static byte[] gzip(String content) {
+        var bytes = new ByteArrayOutputStream();
+        try (var gzip = new GZIPOutputStream(bytes)) {
+            gzip.write(content.getBytes(StandardCharsets.UTF_8));
+        }
+        catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        return bytes.toByteArray();
     }
 
     private static String largeTextData() {

@@ -2,36 +2,37 @@ package marcbp.trino.s3file.file;
 
 import io.airlift.log.Logger;
 import io.airlift.slice.Slices;
-import io.trino.spi.block.Block;
-import io.trino.spi.block.RunLengthEncodedBlock;
-import io.trino.spi.type.VarcharType;
 import io.trino.spi.Page;
 import io.trino.spi.PageBuilder;
+import io.trino.spi.block.Block;
+import io.trino.spi.block.RunLengthEncodedBlock;
 import io.trino.spi.connector.ConnectorPageSource;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.SourcePage;
 import io.trino.spi.type.Type;
+import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 import java.util.List;
 import java.util.OptionalLong;
 
-import static java.util.Objects.requireNonNull;
 import static io.airlift.slice.SizeOf.instanceSize;
 import static io.airlift.slice.SizeOf.sizeOfByteArray;
 import static io.airlift.slice.SizeOf.sizeOfCharArray;
+import static java.util.Objects.requireNonNull;
 
 public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> implements ConnectorPageSource {
     protected static final int READER_BUFFER_SIZE = 8192;
-    // BufferedReader's character buffer and the JDK InputStreamReader's byte buffer.
-    // Opaque parser/client internals and pages handed to Trino are not included.
+    // Shallow reader sizes, BufferedReader's configured char array and the Java 25
+    // InputStreamReader's default 8 KiB byte array. Charset decoder state and other
+    // JDK/parser internals are not counted.
     private static final long BUFFERED_READER_MEMORY = instanceSize(BufferedReader.class)
             + instanceSize(InputStreamReader.class)
             + sizeOfCharArray(READER_BUFFER_SIZE)
@@ -50,6 +51,8 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
     private final List<S3FileColumnHandle> outputColumns;
 
     protected BufferedReader reader;
+    private FileInput input;
+    private long physicalBytes;
     protected boolean finished;
     protected boolean sessionClosed;
     private boolean sourceOpened;
@@ -99,7 +102,7 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
     }
 
     protected boolean finishWhenEmptySplit() {
-        return primaryLength == 0;
+        return primaryLength == 0 && split.object().compression() == Compression.NONE;
     }
 
     protected void afterReaderOpened(BufferedReader reader) throws IOException {
@@ -116,39 +119,14 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
     protected abstract void appendRecord(PageBuilder pageBuilder, Object payload);
 
     protected final BufferedReader openReader() throws IOException {
-        recordS3Request();
-        if (split.isWholeFile()) {
-            return sessionClient.openReader(
-                    split.object().path(),
-                    charset,
-                    split.object().versionIdRef(),
-                    split.object().eTagRef());
-        }
-        return sessionClient.openReader(
-                split.object().path(),
-                split.getStartOffset(),
-                split.getRangeEndExclusive(),
-                charset,
-                split.object().versionIdRef(),
-                split.object().eTagRef());
+        return new BufferedReader(new InputStreamReader(openStream(), charset), READER_BUFFER_SIZE);
     }
 
     protected final InputStream openStream() throws IOException {
         recordS3Request();
-        if (split.isWholeFile()) {
-            return sessionClient.openStream(
-                    split.object().path(),
-                    0,
-                    null,
-                    split.object().versionIdRef(),
-                    split.object().eTagRef());
-        }
-        return sessionClient.openStream(
-                split.object().path(),
-                split.getStartOffset(),
-                split.getRangeEndExclusive(),
-                split.object().versionIdRef(),
-                split.object().eTagRef());
+        input = FileInput.open(sessionClient, split.object(), split.getStartOffset(),
+                split.isWholeFile() ? null : split.getRangeEndExclusive());
+        return input;
     }
 
     private void ensureReader() throws IOException {
@@ -184,7 +162,23 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
             return;
         }
         sessionClosed = true;
-        sessionClient.close();
+        try {
+            if (input != null) {
+                physicalBytes = input.physicalBytes();
+                try {
+                    input.close();
+                }
+                finally {
+                    input = null;
+                }
+            }
+        }
+        catch (IOException e) {
+            logger.warn(e, "Failed to close input for %s", split.object().path());
+        }
+        finally {
+            sessionClient.close();
+        }
     }
 
     protected void markFinished() {
@@ -199,7 +193,7 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
 
     @Override
     public final long getCompletedBytes() {
-        return Math.min(bytesWithinPrimary, Math.max(0L, primaryLength));
+        return Math.min(input == null ? physicalBytes : input.physicalBytes(), Math.max(0L, primaryLength));
     }
 
     @Override
@@ -232,7 +226,7 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
             }
 
             PageBuilder pageBuilder = new PageBuilder(handle.scan().page().batchSize(), projectedTypes);
-            long pageStartBytes = bytesWithinPrimary;
+            long pageStartBytes = input.decodedBytes();
             recordLoop:
             while (!pageBuilder.isFull()) {
                 if (!split.isLast() && bytesWithinPrimary >= primaryLength) {
@@ -263,7 +257,7 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
                         }
                     }
                 }
-                if (bytesWithinPrimary - pageStartBytes >= handle.scan().page().targetSizeBytes()) {
+                if (input.decodedBytes() - pageStartBytes >= handle.scan().page().targetSizeBytes()) {
                     break;
                 }
             }
@@ -301,9 +295,13 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
         }
     }
 
+    // Partial retained-heap accounting: reader/stream wrappers and known buffers only.
+    // Shared handle metadata, opaque codec/parser/AWS state (including native memory)
+    // and transient records/page builders are excluded; emitted pages belong to Trino.
     @Override
     public long getMemoryUsage() {
-        return instanceSize + (reader == null ? 0 : BUFFERED_READER_MEMORY);
+        return instanceSize + (reader == null ? 0 : BUFFERED_READER_MEMORY)
+                + (input == null ? 0 : input.getRetainedSizeInBytes());
     }
 
     @Override

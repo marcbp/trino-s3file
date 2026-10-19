@@ -15,23 +15,24 @@ import io.trino.spi.type.BooleanType;
 import io.trino.spi.type.DoubleType;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
+import marcbp.trino.s3file.file.Compression;
+import marcbp.trino.s3file.file.FileSelection;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.file.S3ObjectRef;
 import marcbp.trino.s3file.file.ScanSettings;
-import marcbp.trino.s3file.s3.S3ClientBuilder;
 import marcbp.trino.s3file.s3.S3ClientBuilder.ObjectMetadata;
+import marcbp.trino.s3file.s3.S3ClientBuilder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.StringReader;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -58,11 +59,11 @@ class JsonTableFunctionTest {
 
     @Test
     void analyzeInfersTypesFromSampleRows() {
-        when(sessionClient.openReader(eq(PATH), any(Charset.class), any(), any())).thenAnswer(invocation ->
-                new BufferedReader(new StringReader("""
+        when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenAnswer(invocation ->
+                new ByteArrayInputStream(("""
                         {"event_id":1,"active":true,"amount":12.5,"meta":{"source":"app"}}
                         {"event_id":2,"active":false,"amount":7.0,"note":"bye"}
-                        """)));
+                        """).getBytes(StandardCharsets.UTF_8)));
         when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(512L, Optional.of("etag-json"), Optional.empty()));
 
         Map<String, Argument> arguments = Map.of(
@@ -98,17 +99,17 @@ class JsonTableFunctionTest {
         assertEquals(StandardCharsets.UTF_8.name(), handle.scan().charsetName());
 
         verify(sessionClient).getObjectMetadata(eq(PATH));
-        verify(sessionClient).openReader(eq(PATH), any(Charset.class), eq(Optional.empty()), eq(Optional.of("etag-json")));
+        verify(sessionClient).openStream(eq(PATH), eq(0L), any(), eq(Optional.empty()), eq(Optional.of("etag-json")));
         verify(sessionClient).close();
     }
 
     @Test
     void analyzeHonorsSchemaSampleRowLimit() {
-        when(sessionClient.openReader(eq(PATH), any(Charset.class), any(), any())).thenAnswer(invocation ->
-                new BufferedReader(new StringReader("""
+        when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenAnswer(invocation ->
+                new ByteArrayInputStream(("""
                         {"event_id":1,"active":true}
                         {"event_id":2,"active":false,"note":"later"}
-                        """)));
+                        """).getBytes(StandardCharsets.UTF_8)));
         when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(128L, Optional.empty(), Optional.empty()));
 
         Map<String, Argument> arguments = Map.of(
@@ -133,11 +134,11 @@ class JsonTableFunctionTest {
 
     @Test
     void analyzeAllowsSplitSizeOverridePerRequest() {
-        when(sessionClient.openReader(eq(PATH), any(Charset.class), any(), any())).thenAnswer(invocation ->
-                new BufferedReader(new StringReader("""
+        when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenAnswer(invocation ->
+                new ByteArrayInputStream(("""
                         {"event_id":1}
                         {"event_id":2}
-                        """)));
+                        """).getBytes(StandardCharsets.UTF_8)));
         when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(128L, Optional.empty(), Optional.empty()));
 
         Map<String, Argument> arguments = Map.of(
@@ -157,11 +158,11 @@ class JsonTableFunctionTest {
 
     @Test
     void analyzeAppliesAdditionalColumns() {
-        when(sessionClient.openReader(eq(PATH), any(Charset.class), any(), any())).thenAnswer(invocation ->
-                new BufferedReader(new StringReader("""
+        when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenAnswer(invocation ->
+                new ByteArrayInputStream(("""
                         {"event_id":1}
                         {"event_id":2,"campaign":"spring","score":42.5}
-                        """)));
+                        """).getBytes(StandardCharsets.UTF_8)));
         when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(256L, Optional.empty(), Optional.of("v2")));
 
         Map<String, Argument> arguments = Map.of(
@@ -195,7 +196,7 @@ class JsonTableFunctionTest {
         assertEquals(Optional.of("v2"), handle.selection().objects().getFirst().versionIdRef());
 
         verify(sessionClient).getObjectMetadata(eq(PATH));
-        verify(sessionClient).openReader(eq(PATH), any(Charset.class), eq(Optional.of("v2")), eq(Optional.empty()));
+        verify(sessionClient).openStream(eq(PATH), eq(0L), any(), eq(Optional.of("v2")), eq(Optional.empty()));
         verify(sessionClient).close();
     }
 
@@ -408,7 +409,7 @@ class JsonTableFunctionTest {
     }
 
     private static List<S3FileColumnHandle> allColumns(JsonTableFunction.Handle handle) {
-        return java.util.stream.IntStream.range(0, handle.schema().columns().size())
+        return IntStream.range(0, handle.schema().columns().size())
                 .mapToObj(index -> new S3FileColumnHandle(handle.schema().columns().get(index), index))
                 .toList();
     }
@@ -424,7 +425,7 @@ class JsonTableFunctionTest {
             int splitSizeBytes,
             Charset charset) {
         return new JsonTableFunction.Handle(
-                new marcbp.trino.s3file.file.FileSelection(List.of(new S3ObjectRef(PATH, fileSize, null, null)), ""),
+                new FileSelection(List.of(new S3ObjectRef(PATH, fileSize, null, null, Compression.NONE)), ""),
                 new ScanSettings(splitSizeBytes, new marcbp.trino.s3file.file.PageSettings(JsonTableFunction.Handle.DEFAULT_BATCH_SIZE, 8L * 1024L * 1024L), charset.name()),
                 new JsonTableFunction.JsonSchema(columns, columnTypes));
     }

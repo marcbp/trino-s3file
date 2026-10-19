@@ -1,5 +1,6 @@
 package marcbp.trino.s3file.file;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.airlift.slice.Slices;
 import io.trino.spi.TrinoException;
 import io.trino.spi.function.table.ScalarArgument;
@@ -8,8 +9,7 @@ import marcbp.trino.s3file.s3.S3ClientBuilder;
 import marcbp.trino.s3file.txt.TextTableFunction;
 import org.junit.jupiter.api.Test;
 
-import java.io.BufferedReader;
-import java.io.StringReader;
+import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
@@ -48,31 +48,31 @@ class FileSelectionTest {
     @Test
     void inferenceSkipsEmptyObjectsAndStopsAtFirstUsableSchema() throws Exception {
         var client = mock(S3ClientBuilder.SessionClient.class);
-        var empty = new S3ObjectRef("s3://bucket/a", 0, "a", null);
-        var noRows = new S3ObjectRef("s3://bucket/b", 3, "b", null);
-        var reference = new S3ObjectRef("s3://bucket/c", 10, "c", null);
-        var later = new S3ObjectRef("s3://bucket/d", 10, "d", null);
-        when(client.openReader(noRows.path(), StandardCharsets.UTF_8, Optional.empty(), Optional.of("b")))
-                .thenReturn(new BufferedReader(new StringReader("")));
-        when(client.openReader(reference.path(), StandardCharsets.UTF_8, Optional.empty(), Optional.of("c")))
-                .thenReturn(new BufferedReader(new StringReader("schema")));
+        var empty = new S3ObjectRef("s3://bucket/a", 0, "a", null, Compression.NONE);
+        var noRows = new S3ObjectRef("s3://bucket/b", 3, "b", null, Compression.NONE);
+        var reference = new S3ObjectRef("s3://bucket/c", 10, "c", null, Compression.NONE);
+        var later = new S3ObjectRef("s3://bucket/d", 10, "d", null, Compression.NONE);
+        when(client.openStream(noRows.path(), 0, null, Optional.empty(), Optional.of("b")))
+                .thenReturn(new ByteArrayInputStream(new byte[0]));
+        when(client.openStream(reference.path(), 0, null, Optional.empty(), Optional.of("c")))
+                .thenReturn(new ByteArrayInputStream("schema".getBytes(StandardCharsets.UTF_8)));
         var selection = new FileSelection(List.of(empty, noRows, reference, later), "");
         assertEquals("schema", selection.infer(client, StandardCharsets.UTF_8, (reader, object) -> reader.readLine()));
-        verify(client, never()).openReader(eq(later.path()), any(), any(), any());
-        verify(client, never()).openReader(eq(empty.path()), any(), any(), any());
+        verify(client, never()).openStream(eq(later.path()), eq(0L), any(), any(), any());
+        verify(client, never()).openStream(eq(empty.path()), eq(0L), any(), any(), any());
     }
 
     @Test
     void malformedReferenceIsNotSilentlyReplacedByAnotherFile() throws Exception {
         var client = mock(S3ClientBuilder.SessionClient.class);
-        var first = new S3ObjectRef("s3://bucket/a", 10, null, null);
-        var later = new S3ObjectRef("s3://bucket/b", 10, null, null);
-        when(client.openReader(first.path(), StandardCharsets.UTF_8, Optional.empty(), Optional.empty()))
-                .thenReturn(new BufferedReader(new StringReader("malformed")));
+        var first = new S3ObjectRef("s3://bucket/a", 10, null, null, Compression.NONE);
+        var later = new S3ObjectRef("s3://bucket/b", 10, null, null, Compression.NONE);
+        when(client.openStream(first.path(), 0, null, Optional.empty(), Optional.empty()))
+                .thenReturn(new ByteArrayInputStream("malformed".getBytes(StandardCharsets.UTF_8)));
         var selection = new FileSelection(List.of(first, later), "");
         assertThrows(IllegalArgumentException.class, () -> selection.infer(client, StandardCharsets.UTF_8,
                 (reader, object) -> { throw new IllegalArgumentException("Invalid record"); }));
-        verify(client, never()).openReader(eq(later.path()), any(), any(), any());
+        verify(client, never()).openStream(eq(later.path()), eq(0L), any(), any(), any());
     }
 
     @Test
@@ -93,7 +93,7 @@ class FileSelectionTest {
         when(client.listObjects("bucket", "", true, Optional.empty())).thenReturn(
                 new S3ClientBuilder.ListObjectsPage(List.of(), List.of(), Optional.empty()));
         assertThrows(TrinoException.class, () -> FileSelection.resolve(client, "s3://bucket/*.txt", Map.of()));
-        var selection = new FileSelection(List.of(new S3ObjectRef("s3://bucket/empty", 0, null, null)), "");
+        var selection = new FileSelection(List.of(new S3ObjectRef("s3://bucket/empty", 0, null, null, Compression.NONE)), "");
         assertThrows(TrinoException.class, () -> selection.infer(client, StandardCharsets.UTF_8, (reader, object) -> "unused"));
     }
 
@@ -144,7 +144,7 @@ class FileSelectionTest {
             String path = "s3://bucket/" + key;
             var selection = FileSelection.resolve(client, path, Map.of(
                     "GLOB", new ScalarArgument(io.trino.spi.type.BooleanType.BOOLEAN, false)));
-            assertEquals(List.of(new S3ObjectRef(path, 10, "etag", null)), selection.objects());
+            assertEquals(List.of(new S3ObjectRef(path, 10, "etag", null, Compression.NONE)), selection.objects());
             assertEquals("", selection.pathColumn());
             verify(client).getObjectMetadata(path);
         }
@@ -184,6 +184,40 @@ class FileSelectionTest {
         var error = assertThrows(TrinoException.class,
                 () -> FileSelection.resolve(client, "s3://bucket/*.txt", Map.of()));
         assertTrue(error.getMessage().contains("more than 2 objects"));
+    }
+
+    @Test
+    void compressionIsResolvedPerObjectAndSurvivesHandleSerialization() throws Exception {
+        var client = mock(S3ClientBuilder.SessionClient.class);
+        when(client.maxGlobFiles()).thenReturn(10_000);
+        when(client.listObjects("bucket", "", true, Optional.empty())).thenReturn(
+                new S3ClientBuilder.ListObjectsPage(List.of(listed("a.txt", 12), listed("b.txt.gz", 12)), List.of(), Optional.empty()));
+        var selection = FileSelection.resolve(client, "s3://bucket/*", Map.of());
+        assertEquals(List.of(Compression.NONE, Compression.GZIP), selection.objects().stream().map(S3ObjectRef::compression).toList());
+        var mapper = new ObjectMapper();
+        assertEquals(selection, mapper.readValue(mapper.writeValueAsBytes(selection), FileSelection.class));
+        var handle = new TextTableFunction.Handle(selection, new ScanSettings(4, new PageSettings(10, 1024), "UTF-8"),
+                new TextTableFunction.TextOptions("\n"));
+        assertEquals(4, handle.createSplits(true).size());
+        assertTrue(handle.createSplits(true).getLast().isWholeFile());
+        for (String mode : List.of("none", "gzip")) {
+            var forced = FileSelection.resolve(client, "s3://bucket/*", Map.of("COMPRESSION",
+                    new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(mode))));
+            assertTrue(forced.objects().stream().allMatch(o -> o.compression() == Compression.resolve(mode, o.path())));
+        }
+    }
+
+    @Test
+    void inferenceSkipsAnEmptyGzipAndUsesTheNextCompressedObject() throws Exception {
+        byte[] empty = FileInputTest.gzip(new byte[0]);
+        byte[] data = FileInputTest.gzip("schema".getBytes(StandardCharsets.UTF_8));
+        var first = new S3ObjectRef("s3://bucket/a.gz", empty.length, "first", null, Compression.GZIP);
+        var second = new S3ObjectRef("s3://bucket/b.gz", data.length, "second", null, Compression.GZIP);
+        var client = mock(S3ClientBuilder.SessionClient.class);
+        when(client.openStream(first.path(), 0, null, Optional.empty(), Optional.of("first"))).thenReturn(new ByteArrayInputStream(empty));
+        when(client.openStream(second.path(), 0, null, Optional.empty(), Optional.of("second"))).thenReturn(new ByteArrayInputStream(data));
+        assertEquals("schema", new FileSelection(List.of(first, second), "")
+                .infer(client, StandardCharsets.UTF_8, (reader, object) -> reader.readLine()));
     }
 
     private static S3ClientBuilder.ListedObject listed(String key, long size) {

@@ -3,10 +3,6 @@ package marcbp.trino.s3file.xml;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-import javax.xml.stream.XMLInputFactory;
-import javax.xml.stream.XMLStreamConstants;
-import javax.xml.stream.XMLStreamException;
-import javax.xml.stream.XMLStreamReader;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.util.ArrayDeque;
@@ -18,6 +14,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import javax.xml.stream.XMLInputFactory;
+import javax.xml.stream.XMLStreamConstants;
+import javax.xml.stream.XMLStreamException;
+import javax.xml.stream.XMLStreamReader;
 
 import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static java.util.Objects.requireNonNull;
@@ -32,6 +32,9 @@ public final class XmlFormatSupport {
         requireNonNull(reader, "reader is null");
         try {
             XMLStreamReader xmlReader = newXmlReader(reader);
+            if (xmlReader == null) {
+                return null;
+            }
             try {
                 return collectSchema(xmlReader, sourceDescription, rowElement);
             }
@@ -53,7 +56,12 @@ public final class XmlFormatSupport {
         return new Schema(columns);
     }
 
-    public static XMLStreamReader newXmlReader(BufferedReader reader) throws XMLStreamException {
+    public static XMLStreamReader newXmlReader(BufferedReader reader) throws XMLStreamException, IOException {
+        reader.mark(1);
+        if (reader.read() < 0) {
+            return null;
+        }
+        reader.reset();
         XMLInputFactory factory = XMLInputFactory.newFactory();
         factory.setProperty(XMLInputFactory.IS_COALESCING, true);
         factory.setProperty(XMLInputFactory.IS_NAMESPACE_AWARE, false);

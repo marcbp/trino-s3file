@@ -22,23 +22,22 @@ import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
 import marcbp.trino.s3file.file.AbstractTextFilePageSource;
 import marcbp.trino.s3file.file.BaseTextFileHandle;
-import marcbp.trino.s3file.file.PageSettings;
-import marcbp.trino.s3file.file.FileSplit;
+import marcbp.trino.s3file.file.Compression;
 import marcbp.trino.s3file.file.FileSelection;
+import marcbp.trino.s3file.file.FileSplit;
+import marcbp.trino.s3file.file.PageSettings;
 import marcbp.trino.s3file.file.ScanSettings;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
 
-import javax.xml.stream.XMLStreamException;
-import javax.xml.stream.XMLStreamReader;
 import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.FilterInputStream;
-import java.io.InputStreamReader;
 import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import javax.xml.stream.XMLStreamException;
+import javax.xml.stream.XMLStreamReader;
 
 import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static java.util.Objects.requireNonNull;
@@ -74,6 +73,7 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
                         pathArgumentSpecification(),
                         FileSelection.pathColumnArgument(),
                         FileSelection.globArgument(),
+                        Compression.argument(),
                         encodingArgumentSpecification(),
                         ScalarArgumentSpecification.builder()
                                 .name(ROW_ELEMENT_ARGUMENT)
@@ -250,32 +250,6 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
                 FileSplit split,
                 List<S3FileColumnHandle> projectedColumns) {
             super(session, s3ClientBuilder, handle, split, projectedColumns);
-        }
-
-        @Override
-        protected void openSource() throws IOException {
-            // Count the original bytes, including parser read-ahead, before decoding characters.
-            var stream = new FilterInputStream(openStream()) {
-                @Override
-                public int read() throws IOException {
-                    int value = in.read();
-                    if (value >= 0) {
-                        addBytesWithinPrimary(1);
-                    }
-                    return value;
-                }
-
-                @Override
-                public int read(byte[] bytes, int offset, int length) throws IOException {
-                    int count = in.read(bytes, offset, length);
-                    if (count > 0) {
-                        addBytesWithinPrimary(count);
-                    }
-                    return count;
-                }
-            };
-            reader = new BufferedReader(new InputStreamReader(stream, charset), READER_BUFFER_SIZE);
-            afterReaderOpened(reader);
         }
 
         @Override

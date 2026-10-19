@@ -8,19 +8,20 @@ import io.trino.spi.function.table.Descriptor;
 import io.trino.spi.function.table.ScalarArgument;
 import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.type.VarcharType;
+import marcbp.trino.s3file.file.Compression;
+import marcbp.trino.s3file.file.FileSelection;
 import marcbp.trino.s3file.file.FileSplit;
-import marcbp.trino.s3file.s3.S3ClientBuilder;
+import marcbp.trino.s3file.file.PageSettings;
+import marcbp.trino.s3file.file.S3ObjectRef;
+import marcbp.trino.s3file.file.ScanSettings;
 import marcbp.trino.s3file.s3.S3ClientBuilder.ObjectMetadata;
+import marcbp.trino.s3file.s3.S3ClientBuilder;
 import marcbp.trino.s3file.xml.XmlFormatSupport.Column;
 import marcbp.trino.s3file.xml.XmlFormatSupport.ColumnSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
-import marcbp.trino.s3file.file.FileSelection;
-import marcbp.trino.s3file.file.PageSettings;
-import marcbp.trino.s3file.file.ScanSettings;
-import marcbp.trino.s3file.file.S3ObjectRef;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
@@ -61,7 +62,7 @@ class XmlTableFunctionTest {
         byte[] bytes = ("<items>" + "<item><name>été</name></item>".repeat(10_000) + "</items>  ").getBytes(charset);
         var stream = spy(new ByteArrayInputStream(bytes));
         when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenReturn(stream);
-        var object = new S3ObjectRef(PATH, bytes.length, null, null);
+        var object = new S3ObjectRef(PATH, bytes.length, null, null, Compression.NONE);
         var handle = new XmlTableFunction.Handle(new FileSelection(List.of(object), ""),
                 new ScanSettings(1, new PageSettings(2, 1024), encoding),
                 new XmlFormatSupport.Schema(List.of(new Column("name", ColumnSource.ELEMENT, "name"))),
@@ -98,7 +99,7 @@ class XmlTableFunctionTest {
         byte[] bytes = "<items>été</items>".getBytes(StandardCharsets.UTF_8);
         var stream = spy(new ByteArrayInputStream(bytes));
         when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenReturn(stream);
-        var object = new S3ObjectRef(PATH, bytes.length, null, null);
+        var object = new S3ObjectRef(PATH, bytes.length, null, null, Compression.NONE);
         var handle = new XmlTableFunction.Handle(new FileSelection(List.of(object), ""),
                 new ScanSettings(1, new PageSettings(2, 1024), "UTF-8"), new XmlFormatSupport.Schema(List.of()),
                 new XmlTableFunction.XmlOptions("item", false, ""));
@@ -112,8 +113,8 @@ class XmlTableFunctionTest {
 
     @Test
     void analyzeInfersAttributesAndElements() {
-        when(sessionClient.openReader(eq(PATH), any(Charset.class), any(), any())).thenAnswer(invocation ->
-                new BufferedReader(new StringReader("""
+        when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenAnswer(invocation ->
+                new ByteArrayInputStream(("""
                         <catalog>
                           <book id="bk101">
                             <author>Gambardella, Matthew</author>
@@ -126,7 +127,7 @@ class XmlTableFunctionTest {
                             <genre>Fantasy</genre>
                           </book>
                         </catalog>
-                        """)));
+                        """).getBytes(StandardCharsets.UTF_8)));
         when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(512L, Optional.of("etag-xml"), Optional.empty()));
 
         Map<String, Argument> arguments = Map.of(
@@ -166,19 +167,19 @@ class XmlTableFunctionTest {
         assertTrue(splits.get(0).isWholeFile());
 
         verify(sessionClient).getObjectMetadata(eq(PATH));
-        verify(sessionClient).openReader(eq(PATH), any(Charset.class), eq(Optional.empty()), eq(Optional.of("etag-xml")));
+        verify(sessionClient).openStream(eq(PATH), eq(0L), any(), eq(Optional.empty()), eq(Optional.of("etag-xml")));
         verify(sessionClient).close();
     }
 
     @Test
     void analyzeKeepsTextColumnWhenRequested() {
-        when(sessionClient.openReader(eq(PATH), any(Charset.class), any(), any())).thenAnswer(invocation ->
-                new BufferedReader(new StringReader("""
+        when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenAnswer(invocation ->
+                new ByteArrayInputStream(("""
                         <feed>
                           <entry status="new">Note<message>Hello</message></entry>
                           <entry status="done"><message>Bye</message></entry>
                         </feed>
-                        """)));
+                        """).getBytes(StandardCharsets.ISO_8859_1)));
         when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(1024L, Optional.empty(), Optional.of("version-text")));
 
         Map<String, Argument> arguments = Map.of(
@@ -214,14 +215,14 @@ class XmlTableFunctionTest {
         assertEquals("", handle.options().invalidRowColumn());
 
         verify(sessionClient).getObjectMetadata(eq(PATH));
-        verify(sessionClient).openReader(eq(PATH), any(Charset.class), eq(Optional.of("version-text")), eq(Optional.empty()));
+        verify(sessionClient).openStream(eq(PATH), eq(0L), any(), eq(Optional.of("version-text")), eq(Optional.empty()));
         verify(sessionClient).close();
     }
 
     @Test
     void analyzeMergesColumnsAcrossMultipleRows() {
-        when(sessionClient.openReader(eq(PATH), any(Charset.class), any(), any())).thenAnswer(invocation ->
-                new BufferedReader(new StringReader("""
+        when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenAnswer(invocation ->
+                new ByteArrayInputStream(("""
                         <employees>
                           <employee id="1">
                             <firstname>André</firstname>
@@ -233,7 +234,7 @@ class XmlTableFunctionTest {
                             <nickname>Moïse</nickname>
                           </employee>
                         </employees>
-                        """)));
+                        """).getBytes(StandardCharsets.UTF_8)));
         when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(768L, Optional.empty(), Optional.empty()));
 
         Map<String, Argument> arguments = Map.of(
@@ -253,14 +254,14 @@ class XmlTableFunctionTest {
 
     @Test
     void analyzeHonoursEmptyAsNullFlag() {
-        when(sessionClient.openReader(eq(PATH), any(Charset.class), any(), any())).thenAnswer(invocation ->
-                new BufferedReader(new StringReader("""
+        when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenAnswer(invocation ->
+                new ByteArrayInputStream(("""
                         <items>
                           <item code="">
                             <name></name>
                           </item>
                         </items>
-                        """)));
+                        """).getBytes(StandardCharsets.UTF_8)));
         when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(128L, Optional.empty(), Optional.empty()));
 
         Map<String, Argument> arguments = Map.of(
@@ -281,18 +282,18 @@ class XmlTableFunctionTest {
         assertEquals("", handle.options().invalidRowColumn());
 
         verify(sessionClient).getObjectMetadata(eq(PATH));
-        verify(sessionClient).openReader(eq(PATH), any(Charset.class), eq(Optional.empty()), eq(Optional.empty()));
+        verify(sessionClient).openStream(eq(PATH), eq(0L), any(), eq(Optional.empty()), eq(Optional.empty()));
         verify(sessionClient).close();
     }
 
     @Test
     void analyzeAddsInvalidRowColumnWhenRequested() {
-        when(sessionClient.openReader(eq(PATH), any(Charset.class), any(), any())).thenAnswer(invocation ->
-                new BufferedReader(new StringReader("""
+        when(sessionClient.openStream(eq(PATH), eq(0L), any(), any(), any())).thenAnswer(invocation ->
+                new ByteArrayInputStream(("""
                         <items>
                           <item code="1"><name>Valid</name></item>
                         </items>
-                        """)));
+                        """).getBytes(StandardCharsets.UTF_8)));
         when(sessionClient.getObjectMetadata(eq(PATH))).thenReturn(new ObjectMetadata(256L, Optional.empty(), Optional.empty()));
 
         Map<String, Argument> arguments = Map.of(
