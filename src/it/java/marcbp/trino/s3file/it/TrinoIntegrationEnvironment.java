@@ -132,6 +132,16 @@ final class TrinoIntegrationEnvironment implements AutoCloseable {
 
     void seedSampleData() throws Exception {
         createBucket(BUCKET);
+        for (String separator : List.of("||", "\r\n")) {
+            putObject("boundary/" + (separator.equals("||") ? "pipes" : "crlf") + ".txt",
+                    "x".repeat(1024 * 1024 - 1) + separator + "tail" + separator);
+        }
+        for (var encoding : List.of(StandardCharsets.UTF_16LE, StandardCharsets.UTF_16BE)) {
+            String prefix = "utf16/" + encoding.name();
+            putObject(prefix + ".txt", "\ufeffé\n終\n".getBytes(encoding));
+            putObject(prefix + ".csv", "\ufeffvalue\r\né\r\n終\r\n".getBytes(encoding));
+            putObject(prefix + ".jsonl", "\ufeff{\"value\":\"é\"}\r\n{\"value\":\"終\"}\r\n".getBytes(encoding));
+        }
         putObject("data.csv", CSV_DATA);
         putObject("data.jsonl", JSON_DATA);
         putObject("data.txt", TXT_DATA);

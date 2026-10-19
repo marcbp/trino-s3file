@@ -172,6 +172,30 @@ class ReadmeExamplesIT {
         ), rows);
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"pipes", "crlf"})
+    void splitInsideSeparatorKeepsFollowingRecord(String name) throws Exception {
+        String separator = name.equals("pipes") ? "||" : "\\r\\n";
+        var rows = environment.query("""
+                SELECT length(line), substr(line, 1, 4)
+                FROM TABLE(s3file.txt.load(path => 's3://mybucket/boundary/%s.txt',
+                    line_break => '%s', split_size_mb => 1))
+                ORDER BY length(line)
+                """.formatted(name, separator));
+        assertEquals(List.of(List.of("4", "tail"), List.of("1048575", "xxxx")), rows);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"txt", "csv", "json"})
+    void utf16BomIsResolvedSeparatelyForEachFile(String format) throws Exception {
+        var rows = environment.query("""
+                SELECT %s FROM TABLE(s3file.%s.load(
+                    path => 's3://mybucket/utf16/*.%s', encoding => 'UTF-16'))
+                ORDER BY 1
+                """.formatted(format.equals("txt") ? "line" : "value", format, format.equals("json") ? "jsonl" : format));
+        assertEquals(List.of(List.of("é"), List.of("é"), List.of("終"), List.of("終")), rows);
+    }
+
     @Test
     void tinySplitsReadEveryTextRecordExactlyOnce() throws Exception {
         List<List<String>> rows = environment.query("""

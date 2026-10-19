@@ -22,16 +22,42 @@ public final class ByteDelimitedRecordReader implements Closeable {
     private byte[] buffer = new byte[8192];
     private final Charset charset;
     private final byte[] delimiter;
+    private final Charset recordCharset;
+    private final int characterWidth;
+    private int pendingFirst = -1;
+    private int pendingSecond = -1;
+    private int bomBytes;
     private final boolean trimCarriageReturnBeforeLineFeed;
 
     public ByteDelimitedRecordReader(
             InputStream input,
             Charset charset,
             byte[] delimiter,
-            boolean trimCarriageReturnBeforeLineFeed) {
+            boolean trimCarriageReturnBeforeLineFeed) throws IOException {
         this.input = requireNonNull(input, "input is null");
         this.charset = requireNonNull(charset, "charset is null");
-        this.delimiter = requireNonNull(delimiter, "delimiter is null").clone();
+        requireNonNull(delimiter, "delimiter is null");
+        Charset encoding = charset;
+        if (StandardCharsets.UTF_16.equals(charset)) {
+            int first = input.read();
+            int second = input.read();
+            encoding = StandardCharsets.UTF_16BE;
+            if (first == 0xfe && second == 0xff) {
+                bomBytes = 2;
+            }
+            else if (first == 0xff && second == 0xfe) {
+                encoding = StandardCharsets.UTF_16LE;
+                bomBytes = 2;
+            }
+            else {
+                pendingFirst = first;
+                pendingSecond = second;
+            }
+        }
+        this.recordCharset = encoding;
+        this.characterWidth = characterWidth(encoding);
+        this.delimiter = StandardCharsets.UTF_16.equals(charset)
+                ? new String(delimiter, charset).getBytes(encoding) : delimiter.clone();
         if (this.delimiter.length == 0) {
             throw new IllegalArgumentException("delimiter must not be empty");
         }
@@ -41,17 +67,17 @@ public final class ByteDelimitedRecordReader implements Closeable {
     public Optional<Record> readNext() throws IOException {
         int size = 0;
         int next;
-        while ((next = input.read()) != -1) {
+        while ((next = readByte()) != -1) {
             if (size == buffer.length) {
                 buffer = Arrays.copyOf(buffer, buffer.length * 2);
             }
             buffer[size] = (byte) next;
             size++;
-            if (endsWith(buffer, size, delimiter)) {
+            if (size % characterWidth == 0 && endsWith(buffer, size, delimiter)) {
                 int contentLength = size - delimiter.length;
                 byte[] content = Arrays.copyOf(buffer, contentLength);
                 content = trimCarriageReturnBeforeLineFeed(content);
-                return Optional.of(new Record(content, size, true));
+                return Optional.of(record(content, size, true));
             }
         }
 
@@ -59,14 +85,38 @@ public final class ByteDelimitedRecordReader implements Closeable {
             return Optional.empty();
         }
         byte[] remaining = Arrays.copyOf(buffer, size);
-        return Optional.of(new Record(remaining, remaining.length, false));
+        return Optional.of(record(remaining, remaining.length, false));
+    }
+
+    static int characterWidth(Charset charset) {
+        return StandardCharsets.UTF_16LE.equals(charset) || StandardCharsets.UTF_16BE.equals(charset) ? 2 : 1;
+    }
+
+    private int readByte() throws IOException {
+        if (pendingFirst >= 0) {
+            int value = pendingFirst;
+            pendingFirst = pendingSecond;
+            pendingSecond = -1;
+            return value;
+        }
+        return input.read();
+    }
+
+    private Record record(byte[] content, int size, boolean terminated) {
+        long consumed = (long) size + bomBytes;
+        bomBytes = 0;
+        // Keep the caller's encoding contract, including little-endian BOM input.
+        if (!recordCharset.equals(charset)) {
+            content = new String(content, recordCharset).getBytes(charset);
+        }
+        return new Record(content, consumed, terminated);
     }
 
     private byte[] trimCarriageReturnBeforeLineFeed(byte[] content) {
-        if (!trimCarriageReturnBeforeLineFeed || delimiter.length == 0 || delimiter[delimiter.length - 1] != '\n') {
+        if (!trimCarriageReturnBeforeLineFeed || !new String(delimiter, recordCharset).endsWith("\n")) {
             return content;
         }
-        byte[] carriageReturn = "\r".getBytes(charset);
+        byte[] carriageReturn = "\r".getBytes(recordCharset);
         if (!endsWith(content, content.length, carriageReturn)) {
             return content;
         }

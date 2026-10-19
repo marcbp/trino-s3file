@@ -32,16 +32,63 @@ public abstract class AbstractDelimitedFilePageSource<H extends BaseTextFileHand
 
     @Override
     protected final void openSource() throws IOException {
-        // Probe before opening the long-lived GET, so alignment cannot exhaust the S3 pool.
-        boolean skipFragment = !startsAfterDelimiter();
-        recordReader = new ByteDelimitedRecordReader(openStream(), charset, delimiter, trimCarriageReturn);
-        if (skipFragment) {
-            var fragment = readLine();
-            if (fragment.isPresent()) {
+        if (!split.first() && delimiter.length > 1) {
+            long start = alignmentStart();
+            recordReader = new ByteDelimitedRecordReader(openStream(start), charset, delimiter, trimCarriageReturn);
+            addBytesWithinPrimary(start - split.startOffset());
+            while (bytesWithinPrimary < 0) {
+                var fragment = readLine();
+                if (fragment.isEmpty()) {
+                    break;
+                }
                 addBytesWithinPrimary(fragment.orElseThrow().bytesConsumed());
             }
         }
+        else {
+            // Probe before opening the long-lived GET, so alignment cannot exhaust the S3 pool.
+            boolean skipFragment = !startsAfterDelimiter();
+            recordReader = new ByteDelimitedRecordReader(openStream(), charset, delimiter, trimCarriageReturn);
+            if (skipFragment) {
+                var fragment = readLine();
+                if (fragment.isPresent()) {
+                    addBytesWithinPrimary(fragment.orElseThrow().bytesConsumed());
+                }
+            }
+        }
         afterSourceOpened();
+    }
+
+    private long alignmentStart() throws IOException {
+        int width = ByteDelimitedRecordReader.characterWidth(charset);
+        long start = Math.max(0, split.startOffset() - delimiter.length);
+        start -= start % width;
+        boolean overlapping = false;
+        for (int shift = width; shift < delimiter.length; shift += width) {
+            overlapping |= Arrays.equals(delimiter, shift, delimiter.length, delimiter, 0, delimiter.length - shift);
+        }
+        if (!overlapping) {
+            return start;
+        }
+        // A self-overlapping delimiter needs a known framing origin. Search backwards
+        // in bounded blocks for a code unit that cannot be part of the delimiter.
+        // This avoids rescanning the file from zero for ordinary custom separators.
+        long end = start;
+        while (end > 0) {
+            long begin = Math.max(0, end - 8192);
+            byte[] preceding = sessionClient.readBytes(split.object().path(), begin, end,
+                    split.object().versionIdRef(), split.object().eTagRef());
+            for (int i = preceding.length - width; i >= 0; i -= width) {
+                boolean inDelimiter = false;
+                for (int j = 0; j < delimiter.length; j += width) {
+                    inDelimiter |= Arrays.equals(preceding, i, i + width, delimiter, j, j + width);
+                }
+                if (!inDelimiter) {
+                    return begin + i;
+                }
+            }
+            end = begin;
+        }
+        return 0;
     }
 
     private boolean startsAfterDelimiter() throws IOException {

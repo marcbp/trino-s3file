@@ -8,6 +8,7 @@ import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.util.CharsetUtils;
 
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -59,8 +60,9 @@ public abstract class BaseTextFileHandle implements RuntimeTableHandle {
     }
 
     public final List<FileSplit> createSplits() {
+        // UTF-16 derives byte order from the file BOM; independent ranges lack that context.
         return selection().objects().stream()
-                .flatMap(object -> (splittable() && object.compression() == Compression.NONE
+                .flatMap(object -> (splittable() && !StandardCharsets.UTF_16.equals(charset()) && object.compression() == Compression.NONE
                         ? SplitPlanner.planSplits(object, scan.splitSizeBytes())
                         : List.of(FileSplit.forWholeFile(object))).stream())
                 .toList();

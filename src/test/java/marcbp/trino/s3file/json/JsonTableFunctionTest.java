@@ -391,10 +391,8 @@ class JsonTableFunctionTest {
         long firstRecordBytes = firstRecord.getBytes(StandardCharsets.UTF_16LE).length;
         long contentBytes = content.getBytes(StandardCharsets.UTF_16LE).length;
 
-        when(sessionClient.readBytes(eq(PATH), eq(firstRecordBytes - 2), eq(firstRecordBytes), any(), any()))
-                .thenReturn("\n".getBytes(StandardCharsets.UTF_16LE));
-        when(sessionClient.openStream(eq(PATH), eq(firstRecordBytes), eq(contentBytes), any(), any())).thenAnswer(invocation ->
-                stream(secondRecord + thirdRecord, StandardCharsets.UTF_16LE));
+        when(sessionClient.openStream(eq(PATH), eq(firstRecordBytes - 2), eq(contentBytes), any(), any())).thenAnswer(invocation ->
+                stream("\n" + secondRecord + thirdRecord, StandardCharsets.UTF_16LE));
 
         JsonTableFunction.Handle handle = handle(
                 List.of("event_id"),

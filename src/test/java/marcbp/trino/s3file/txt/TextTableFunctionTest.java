@@ -23,6 +23,9 @@ import marcbp.trino.s3file.s3.S3ClientBuilder.ObjectMetadata;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -30,10 +33,13 @@ import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -41,6 +47,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.mock;
@@ -176,6 +183,69 @@ class TextTableFunctionTest {
         assertEquals("last", VarcharType.createUnboundedVarcharType().getObjectValue(secondPage.getBlock(0), 0));
         assertEquals(null, firstSource.getNextSourcePage());
         assertEquals(null, secondSource.getNextSourcePage());
+    }
+
+    @ParameterizedTest(name = "delimiter={0}, boundary={1}, encoding={2}")
+    @MethodSource("splitBoundaries")
+    void everySplitBoundaryPreservesWholeFileRows(String delimiter, int boundary, Charset charset) throws IOException {
+        List<String> expected = List.of("é", "", "bravo", "", "終");
+        byte[] data = (String.join(delimiter, expected) + delimiter).getBytes(charset);
+        when(sessionClient.openStream(eq(PATH), anyLong(), any(), any(), any())).thenAnswer(invocation -> {
+            int start = Math.toIntExact(invocation.getArgument(1, Long.class));
+            Long end = invocation.getArgument(2);
+            return new ByteArrayInputStream(Arrays.copyOfRange(data, start, end == null ? data.length : Math.toIntExact(end)));
+        });
+        when(sessionClient.readBytes(eq(PATH), anyLong(), any(), any(), any())).thenAnswer(invocation ->
+                Arrays.copyOfRange(data, Math.toIntExact(invocation.getArgument(1, Long.class)),
+                        Math.toIntExact(invocation.getArgument(2, Long.class))));
+        var handle = handle(delimiter, data.length, data.length, charset, null, null);
+        var object = handle.selection().objects().getFirst();
+
+        assertEquals(expected, readRows(handle, List.of(FileSplit.forWholeFile(object))), "whole-file reference");
+        assertEquals(expected, readRows(handle, List.of(
+                new FileSplit(object, "first", 0, boundary, data.length, true, false),
+                new FileSplit(object, "last", boundary, data.length, data.length, false, true))));
+    }
+
+    private static Stream<Arguments> splitBoundaries() {
+        return Stream.of(StandardCharsets.UTF_8, StandardCharsets.UTF_16LE, StandardCharsets.UTF_16BE)
+                .flatMap(charset -> Stream.of("\n", "\r\n", "||", "aba").flatMap(delimiter -> {
+                    int size = (String.join(delimiter, "é", "", "bravo", "", "終") + delimiter).getBytes(charset).length;
+                    return IntStream.range(1, size).mapToObj(boundary -> Arguments.of(delimiter, boundary, charset));
+                }));
+    }
+
+    @Test
+    void bomDependentEncodingKeepsOneSplitPerFile() throws IOException {
+        byte[] data = "é\n終\n".getBytes(StandardCharsets.UTF_16);
+        when(sessionClient.openStream(any(), eq(0L), any(), any(), any()))
+                .thenAnswer(invocation -> new ByteArrayInputStream(data));
+        var handle = new TextTableFunction.Handle(
+                new FileSelection(List.of(
+                        new S3ObjectRef(PATH, data.length, null, null, Compression.NONE),
+                        new S3ObjectRef("s3://bucket/second.txt", data.length, null, null, Compression.NONE)), ""),
+                new ScanSettings(1, PageSettings.DEFAULT, "UTF-16"), new TextTableFunction.TextOptions("\n"));
+        var splits = handle.createSplits();
+        assertEquals(2, splits.size());
+        assertTrue(splits.stream().allMatch(FileSplit::isWholeFile));
+        assertEquals(List.of("é", "終", "é", "終"), readRows(handle, splits));
+    }
+
+    private List<String> readRows(TextTableFunction.Handle handle, List<FileSplit> splits) throws IOException {
+        List<String> rows = new ArrayList<>();
+        for (FileSplit split : splits) {
+            try (var source = function.createPageSource(mock(ConnectorSession.class), handle, split, allColumns(handle))) {
+                SourcePage page;
+                while ((page = source.getNextSourcePage()) != null) {
+                    for (int position = 0; position < page.getPositionCount(); position++) {
+                        rows.add((String) VarcharType.VARCHAR.getObjectValue(page.getBlock(0), position));
+                    }
+                }
+                assertTrue(source.isFinished());
+                assertEquals(split.primaryLength(), source.getCompletedBytes());
+            }
+        }
+        return rows;
     }
 
     @Test

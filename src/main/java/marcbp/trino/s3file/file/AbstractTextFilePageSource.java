@@ -40,6 +40,7 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle, T
 
     private FileInput input;
     private long physicalBytes;
+    private long alignmentBytes;
     private boolean finished;
     protected long bytesWithinPrimary;
     protected long completedPositions;
@@ -88,14 +89,19 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle, T
     protected abstract void closeReader() throws IOException;
 
     protected final InputStream openStream() throws IOException {
-        input = FileInput.open(sessionClient, split.object(), split.startOffset(),
+        return openStream(split.startOffset());
+    }
+
+    protected final InputStream openStream(long start) throws IOException {
+        alignmentBytes = split.startOffset() - start;
+        input = FileInput.open(sessionClient, split.object(), start,
                 split.isWholeFile() ? null : split.rangeEndExclusive());
         return input;
     }
 
     @Override
     public final long getCompletedBytes() {
-        return Math.min(input == null ? physicalBytes : input.physicalBytes(), Math.max(0L, primaryLength));
+        return Math.min(Math.max(0L, (input == null ? physicalBytes : input.physicalBytes()) - alignmentBytes), Math.max(0L, primaryLength));
     }
 
     @Override
