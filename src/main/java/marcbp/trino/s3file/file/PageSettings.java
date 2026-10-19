@@ -7,6 +7,8 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 public record PageSettings(
         @JsonProperty("batchSize") int batchSize,
         @JsonProperty("targetSizeBytes") long targetSizeBytes) {
+    public static final PageSettings DEFAULT = new PageSettings(1024, 8L * 1024 * 1024);
+
     @JsonCreator
     public PageSettings {
         if (batchSize <= 0) {

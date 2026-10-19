@@ -9,11 +9,13 @@ import io.trino.spi.function.table.Argument;
 import io.trino.spi.function.table.Descriptor;
 import io.trino.spi.function.table.ScalarArgument;
 import io.trino.spi.function.table.TableFunctionAnalysis;
+import io.trino.spi.type.BigintType;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
 import marcbp.trino.s3file.file.Compression;
 import marcbp.trino.s3file.file.FileSelection;
 import marcbp.trino.s3file.file.FileSplit;
+import marcbp.trino.s3file.file.PageSettings;
 import marcbp.trino.s3file.file.S3ObjectRef;
 import marcbp.trino.s3file.file.ScanSettings;
 import marcbp.trino.s3file.s3.S3ClientBuilder.ObjectMetadata;
@@ -138,7 +140,7 @@ class CsvTableFunctionTest {
 
         Map<String, Argument> arguments = Map.of(
                 "PATH", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PATH)),
-                "SPLIT_SIZE_MB", new ScalarArgument(io.trino.spi.type.BigintType.BIGINT, 4L)
+                "SPLIT_SIZE_MB", new ScalarArgument(BigintType.BIGINT, 4L)
         );
 
         TableFunctionAnalysis analysis = function.analyze(
@@ -155,7 +157,7 @@ class CsvTableFunctionTest {
     void multilineCsvUsesOneWholeFileSplit() {
         CsvTableFunction.Handle handle = handle(List.of("c1", "c2"), true, true, 25 * 1024 * 1024L, 8 * 1024 * 1024);
 
-        List<FileSplit> splits = function.createSplits(handle);
+        List<FileSplit> splits = handle.createSplits();
 
         assertEquals(1, splits.size());
         assertTrue(splits.get(0).isWholeFile());
@@ -179,7 +181,7 @@ class CsvTableFunctionTest {
 
         assertTrue(handle.options().multiline());
         assertEquals(List.of("first\nname", "second"), handle.schema().columns());
-        assertTrue(function.createSplits(handle).get(0).isWholeFile());
+        assertTrue(handle.createSplits().get(0).isWholeFile());
     }
 
     @Test
@@ -211,7 +213,7 @@ class CsvTableFunctionTest {
         ConnectorPageSource pageSource = function.createPageSource(
                 mock(ConnectorSession.class),
                 handle,
-                handle.createSplits(false).getFirst(),
+                FileSplit.forWholeFile(handle.selection().objects().getFirst()),
                 allColumns(handle));
         SourcePage page = nextPage(pageSource);
 
@@ -235,7 +237,7 @@ class CsvTableFunctionTest {
             int splitSizeBytes) {
         return new CsvTableFunction.Handle(
                 new FileSelection(List.of(new S3ObjectRef(PATH, fileSize, null, null, Compression.NONE)), ""),
-                new ScanSettings(splitSizeBytes, new marcbp.trino.s3file.file.PageSettings(CsvTableFunction.Handle.DEFAULT_BATCH_SIZE, 8L * 1024L * 1024L), StandardCharsets.UTF_8.name()),
+                new ScanSettings(splitSizeBytes, new PageSettings(PageSettings.DEFAULT.batchSize(), 8L * 1024L * 1024L), StandardCharsets.UTF_8.name()),
                 new CsvTableFunction.CsvSchema(columns),
                 new CsvTableFunction.CsvOptions(';', headerPresent, multiline));
     }

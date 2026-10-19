@@ -1,9 +1,6 @@
 package marcbp.trino.s3file.file;
 
-import io.airlift.slice.Slices;
 import io.trino.spi.TrinoException;
-import io.trino.spi.function.table.ScalarArgumentSpecification;
-import io.trino.spi.type.VarcharType;
 import org.apache.commons.compress.compressors.CompressorException;
 import org.apache.commons.compress.compressors.CompressorStreamFactory;
 
@@ -38,14 +35,6 @@ public enum Compression {
     Compression(String format, String... extensions) {
         this.format = format;
         this.extensions = extensions;
-    }
-
-    public static ScalarArgumentSpecification argument() {
-        return ScalarArgumentSpecification.builder()
-                .name("COMPRESSION")
-                .type(VarcharType.VARCHAR)
-                .defaultValue(Slices.utf8Slice("auto"))
-                .build();
     }
 
     public static Compression resolve(String mode, String path) {

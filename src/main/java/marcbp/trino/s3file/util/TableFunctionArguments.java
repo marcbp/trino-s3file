@@ -4,12 +4,18 @@ import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
 import io.trino.spi.TrinoException;
 import io.trino.spi.function.table.Argument;
+import io.trino.spi.function.table.ArgumentSpecification;
 import io.trino.spi.function.table.ScalarArgument;
 import io.trino.spi.function.table.ScalarArgumentSpecification;
 import io.trino.spi.type.BigintType;
+import io.trino.spi.type.BooleanType;
 import io.trino.spi.type.VarcharType;
+
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
@@ -24,6 +30,39 @@ public final class TableFunctionArguments {
     private static final long USE_CONNECTOR_DEFAULT_SPLIT_SIZE_MB = -1L;
 
     private TableFunctionArguments() {}
+
+    public static List<ArgumentSpecification> fileArguments(ScalarArgumentSpecification... formatArguments) {
+        var arguments = new ArrayList<ArgumentSpecification>(List.of(
+                pathArgumentSpecification(),
+                ScalarArgumentSpecification.builder().name("PATH_COLUMN").type(VarcharType.VARCHAR).defaultValue(null).build(),
+                ScalarArgumentSpecification.builder().name("GLOB").type(BooleanType.BOOLEAN).defaultValue(true).build(),
+                ScalarArgumentSpecification.builder().name("COMPRESSION").type(VarcharType.VARCHAR).defaultValue(Slices.utf8Slice("auto")).build()));
+        arguments.addAll(List.of(formatArguments));
+        return List.copyOf(arguments);
+    }
+
+    public static boolean globEnabled(Map<String, Argument> arguments) {
+        ScalarArgument argument = scalarArgument(arguments, "GLOB");
+        if (argument == null) {
+            return true;
+        }
+        if (!(argument.getValue() instanceof Boolean enabled)) {
+            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "GLOB must be true or false");
+        }
+        return enabled;
+    }
+
+    public static String resolvePathColumn(Map<String, Argument> arguments, boolean glob) {
+        ScalarArgument argument = scalarArgument(arguments, "PATH_COLUMN");
+        if (argument == null || argument.getValue() == null) {
+            return glob ? "$path" : "";
+        }
+        String column = stringValue(argument, "PATH_COLUMN");
+        if (!column.isEmpty() && column.isBlank()) {
+            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "PATH_COLUMN cannot be blank; use '' to disable it");
+        }
+        return column;
+    }
 
     public static ScalarArgumentSpecification pathArgumentSpecification() {
         return ScalarArgumentSpecification.builder()
@@ -81,7 +120,7 @@ public final class TableFunctionArguments {
         if (text.isEmpty()) {
             return defaultValue;
         }
-        return switch (text.toLowerCase(java.util.Locale.ROOT)) {
+        return switch (text.toLowerCase(Locale.ROOT)) {
             case "true" -> true;
             case "false" -> false;
             default -> throw new TrinoException(INVALID_FUNCTION_ARGUMENT, name + " must be true or false");

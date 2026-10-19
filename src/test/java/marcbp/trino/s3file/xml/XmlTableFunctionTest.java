@@ -162,7 +162,7 @@ class XmlTableFunctionTest {
         assertFalse(handle.options().emptyAsNull());
         assertEquals("", handle.options().invalidRowColumn());
 
-        List<FileSplit> splits = function.createSplits(handle);
+        List<FileSplit> splits = handle.createSplits();
         assertEquals(1, splits.size());
         assertTrue(splits.get(0).isWholeFile());
 

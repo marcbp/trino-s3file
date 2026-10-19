@@ -1,7 +1,10 @@
 package marcbp.trino.s3file.file;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.trino.spi.connector.ConnectorPageSource;
 import io.trino.spi.connector.ConnectorSession;
+import io.trino.spi.type.VarcharType;
+import marcbp.trino.s3file.S3FileColumnHandle;
 import marcbp.trino.s3file.csv.CsvTableFunction;
 import marcbp.trino.s3file.json.JsonFormatSupport;
 import marcbp.trino.s3file.json.JsonTableFunction;
@@ -36,6 +39,7 @@ class CompressedPageSourceTest {
         var object = new S3ObjectRef("s3://bucket/file", compressed.length, "etag", null, codec);
         var selection = new FileSelection(List.of(object), "$path");
         var scan = new ScanSettings(1, new PageSettings(10_000, 1024), "UTF-8");
+        String firstValue = CompressedTestData.content("txt").lines().findFirst().orElseThrow();
         var session = mock(ConnectorSession.class);
         for (boolean cancel : new boolean[] {true, false}) {
             var client = mock(S3ClientBuilder.SessionClient.class);
@@ -54,18 +58,26 @@ class CompressedPageSourceTest {
                         new XmlTableFunction.XmlOptions("row", false, ""));
                 default -> throw new AssertionError(format);
             };
-            var splits = handle.createSplits(true);
+            var splits = handle.createSplits();
             assertEquals(1, splits.size(), "Compression must prevent byte-range splitting");
-            ConnectorPageSource source = switch (handle) {
-                case TextTableFunction.Handle h -> new TextTableFunction(builder).createPageSource(session, h, splits.getFirst(), List.of());
-                case CsvTableFunction.Handle h -> new CsvTableFunction(builder).createPageSource(session, h, splits.getFirst(), List.of());
-                case JsonTableFunction.Handle h -> new JsonTableFunction(builder).createPageSource(session, h, splits.getFirst(), List.of());
-                case XmlTableFunction.Handle h -> new XmlTableFunction(builder).createPageSource(session, h, splits.getFirst(), List.of());
+            var mapper = new ObjectMapper();
+            String json = mapper.writeValueAsString(handle);
+            assertFalse(json.contains("selection"));
+            BaseTextFileHandle workerHandle = mapper.readValue(json, handle.getClass());
+            var columns = List.of(new S3FileColumnHandle("$path", 1),
+                    new S3FileColumnHandle(format.equals("txt") ? "line" : "value", 0));
+            ConnectorPageSource source = switch (workerHandle) {
+                case TextTableFunction.Handle h -> new TextTableFunction(builder).createPageSource(session, h, splits.getFirst(), columns);
+                case CsvTableFunction.Handle h -> new CsvTableFunction(builder).createPageSource(session, h, splits.getFirst(), columns);
+                case JsonTableFunction.Handle h -> new JsonTableFunction(builder).createPageSource(session, h, splits.getFirst(), columns);
+                case XmlTableFunction.Handle h -> new XmlTableFunction(builder).createPageSource(session, h, splits.getFirst(), columns);
                 default -> throw new AssertionError(format);
             };
             long initialMemory = source.getMemoryUsage();
             var page = source.getNextSourcePage();
             assertNotNull(page);
+            assertEquals(object.path(), VarcharType.VARCHAR.getObjectValue(page.getBlock(0), 0));
+            assertEquals(firstValue, VarcharType.VARCHAR.getObjectValue(page.getBlock(1), 0));
             assertTrue(page.getPositionCount() > 0 && page.getPositionCount() < 10_000,
                     "The decoded-byte target must flush a page before the row limit");
             assertTrue(raw.available() > 0, "A first page must not require downloading the whole compressed file");

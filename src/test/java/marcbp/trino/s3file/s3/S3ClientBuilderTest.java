@@ -5,6 +5,7 @@ import io.trino.spi.connector.ConnectorPageSource;
 import io.trino.spi.connector.ConnectorSession;
 import marcbp.trino.s3file.file.Compression;
 import marcbp.trino.s3file.file.FileSelection;
+import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.file.PageSettings;
 import marcbp.trino.s3file.file.S3ObjectRef;
 import marcbp.trino.s3file.file.ScanSettings;
@@ -182,7 +183,7 @@ class S3ClientBuilderTest {
                 new ScanSettings(1024, new PageSettings(1024, 1024), "UTF-8"),
                 new TextTableFunction.TextOptions("\n"));
         ConnectorPageSource source = new TextTableFunction(builder, 1024)
-                .createPageSource(session, handle, handle.createSplits(false).getFirst(), List.of());
+                .createPageSource(session, handle, FileSplit.forWholeFile(handle.selection().objects().getFirst()), List.of());
 
         try (source) {
             assertThrows(UncheckedIOException.class, source::getNextSourcePage);

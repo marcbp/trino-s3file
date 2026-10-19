@@ -17,6 +17,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.IntStream;
 
 final class S3FileMetadata implements ConnectorMetadata {
     private static final String RUNTIME_SCHEMA = "runtime";
@@ -96,7 +97,7 @@ final class S3FileMetadata implements ConnectorMetadata {
 
     static List<S3FileColumnHandle> buildColumnHandles(RuntimeTableHandle handle) {
         List<String> columnNames = handle.columnNames();
-        return java.util.stream.IntStream.range(0, columnNames.size())
+        return IntStream.range(0, columnNames.size())
                 .mapToObj(index -> new S3FileColumnHandle(columnNames.get(index), index))
                 .toList();
     }

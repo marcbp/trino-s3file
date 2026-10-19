@@ -1,10 +1,11 @@
 package marcbp.trino.s3file.s3;
 
+import marcbp.trino.s3file.file.PageSettings;
+
 import java.time.Duration;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-
-import marcbp.trino.s3file.file.PageSettings;
 
 /**
  * Configuration holder for building the S3 client.
@@ -38,8 +39,6 @@ public record S3ClientConfig(
     public static final String MAX_CONNECTIONS_KEY = "s3.max-connections-per-worker";
     public static final String CONNECTION_ACQUISITION_TIMEOUT_KEY = "s3.connection-acquisition-timeout-s";
     public static final int DEFAULT_SPLIT_SIZE_BYTES = 32 * 1024 * 1024;
-    public static final int DEFAULT_PAGE_BATCH_SIZE = 1024;
-    public static final long DEFAULT_PAGE_TARGET_SIZE_BYTES = 8L * 1024L * 1024L;
     public static final int DEFAULT_MAX_CONNECTIONS = 5;
     public static final Duration DEFAULT_CONNECTION_ACQUISITION_TIMEOUT = Duration.ofMinutes(5);
 
@@ -71,7 +70,7 @@ public record S3ClientConfig(
                 true,
                 Optional.empty(),
                 DEFAULT_SPLIT_SIZE_BYTES,
-                new PageSettings(DEFAULT_PAGE_BATCH_SIZE, DEFAULT_PAGE_TARGET_SIZE_BYTES),
+                PageSettings.DEFAULT,
                 DEFAULT_MAX_CONNECTIONS,
                 DEFAULT_MAX_GLOB_FILES,
                 DEFAULT_CONNECTION_ACQUISITION_TIMEOUT);
@@ -120,7 +119,7 @@ public record S3ClientConfig(
     private static int parsePageBatchSize(String configuredPageBatchSize) {
         Optional<String> pageBatchSize = optionalValue(configuredPageBatchSize);
         if (pageBatchSize.isEmpty()) {
-            return DEFAULT_PAGE_BATCH_SIZE;
+            return PageSettings.DEFAULT.batchSize();
         }
         try {
             int rows = Integer.parseInt(pageBatchSize.get());
@@ -137,7 +136,7 @@ public record S3ClientConfig(
     private static long parsePageTargetSizeBytes(String configuredPageTargetSizeMb) {
         Optional<String> pageTargetSizeMb = optionalValue(configuredPageTargetSizeMb);
         if (pageTargetSizeMb.isEmpty()) {
-            return DEFAULT_PAGE_TARGET_SIZE_BYTES;
+            return PageSettings.DEFAULT.targetSizeBytes();
         }
         try {
             long megabytes = Long.parseLong(pageTargetSizeMb.get());
@@ -174,7 +173,7 @@ public record S3ClientConfig(
         if (value.isEmpty()) {
             return defaultValue;
         }
-        return switch (value.get().toLowerCase(java.util.Locale.ROOT)) {
+        return switch (value.get().toLowerCase(Locale.ROOT)) {
             case "true" -> true;
             case "false" -> false;
             default -> throw new IllegalArgumentException("Connector property " + key + " must be true or false");

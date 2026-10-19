@@ -12,9 +12,9 @@ import io.trino.spi.function.table.Descriptor;
 import io.trino.spi.function.table.ReturnTypeSpecification;
 import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.type.DateTimeEncoding;
+import io.trino.spi.type.TimeZoneKey;
 import io.trino.spi.type.TimestampWithTimeZoneType;
 import io.trino.spi.type.Type;
-import io.trino.spi.type.TimeZoneKey;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
 import marcbp.trino.s3file.file.PageSettings;
@@ -45,7 +45,7 @@ public final class BucketsTableFunction extends AbstractConnectorTableFunction {
     private final Logger logger = Logger.get(BucketsTableFunction.class);
 
     public BucketsTableFunction(S3ClientBuilder s3ClientBuilder) {
-        this(s3ClientBuilder, new PageSettings(marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_PAGE_BATCH_SIZE, marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_PAGE_TARGET_SIZE_BYTES));
+        this(s3ClientBuilder, PageSettings.DEFAULT);
     }
 
     public BucketsTableFunction(S3ClientBuilder s3ClientBuilder, PageSettings pageSettings) {

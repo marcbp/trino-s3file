@@ -18,19 +18,34 @@ import static java.util.Objects.requireNonNull;
  * Common connector table function handle metadata shared by text-backed functions.
  */
 public abstract class BaseTextFileHandle implements RuntimeTableHandle {
-    public static final int DEFAULT_BATCH_SIZE = 1024;
-
     private final FileSelection selection;
     private final ScanSettings scan;
+    private final String pathColumn;
 
     protected BaseTextFileHandle(FileSelection selection, ScanSettings scan) {
         this.selection = requireNonNull(selection, "selection is null");
+        this.pathColumn = selection.pathColumn();
         this.scan = requireNonNull(scan, "scan is null");
     }
 
-    @JsonProperty("selection")
+    // Worker handles only need the schema/options and the current split's object.
+    protected BaseTextFileHandle(String pathColumn, ScanSettings scan) {
+        this.selection = null;
+        this.pathColumn = requireNonNull(pathColumn, "pathColumn is null");
+        this.scan = requireNonNull(scan, "scan is null");
+    }
+
+    @JsonIgnore
     public FileSelection selection() {
+        if (selection == null) {
+            throw new IllegalStateException("File selection is only available on the planning coordinator");
+        }
         return selection;
+    }
+
+    @JsonProperty("pathColumn")
+    public String pathColumn() {
+        return pathColumn;
     }
 
     @JsonProperty("scan")
@@ -43,23 +58,27 @@ public abstract class BaseTextFileHandle implements RuntimeTableHandle {
         return CharsetUtils.resolve(scan.charsetName());
     }
 
-    public List<FileSplit> createSplits(boolean splittable) {
-        return selection.objects().stream()
-                .flatMap(object -> (splittable && object.compression() == Compression.NONE
+    public final List<FileSplit> createSplits() {
+        return selection().objects().stream()
+                .flatMap(object -> (splittable() && object.compression() == Compression.NONE
                         ? SplitPlanner.planSplits(object, scan.splitSizeBytes())
                         : List.of(FileSplit.forWholeFile(object))).stream())
                 .toList();
     }
 
+    protected boolean splittable() {
+        return true;
+    }
+
     @JsonIgnore
     public final List<String> columnNames() {
         var names = new ArrayList<>(dataColumnNames());
-        if (!selection.pathColumn().isEmpty()) {
-            if (names.stream().anyMatch(name -> name.equalsIgnoreCase(selection.pathColumn()))) {
+        if (!pathColumn().isEmpty()) {
+            if (names.stream().anyMatch(name -> name.equalsIgnoreCase(pathColumn()))) {
                 throw new TrinoException(INVALID_FUNCTION_ARGUMENT,
-                        "PATH_COLUMN conflicts with a data column: " + selection.pathColumn());
+                        "PATH_COLUMN conflicts with a data column: " + pathColumn());
             }
-            names.add(selection.pathColumn());
+            names.add(pathColumn());
         }
         return List.copyOf(names);
     }
@@ -67,7 +86,7 @@ public abstract class BaseTextFileHandle implements RuntimeTableHandle {
     @JsonIgnore
     public final List<Type> resolveColumnTypes() {
         var types = new ArrayList<>(dataColumnTypes());
-        if (!selection.pathColumn().isEmpty()) {
+        if (!pathColumn().isEmpty()) {
             types.add(VarcharType.VARCHAR);
         }
         return List.copyOf(types);

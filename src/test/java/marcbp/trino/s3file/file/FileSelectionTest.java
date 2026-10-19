@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.airlift.slice.Slices;
 import io.trino.spi.TrinoException;
 import io.trino.spi.function.table.ScalarArgument;
+import io.trino.spi.type.BooleanType;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
 import marcbp.trino.s3file.txt.TextTableFunction;
@@ -14,11 +15,30 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class FileSelectionTest {
+    @Test
+    void workerHandleSizeDoesNotGrowWithTheListing() throws Exception {
+        var objects = IntStream.range(0, 10_000)
+                .mapToObj(i -> new S3ObjectRef("s3://bucket/partition/" + i + ".txt", 100, "etag-" + i, null, Compression.NONE))
+                .toList();
+        var scan = new ScanSettings(32, PageSettings.DEFAULT, "UTF-8");
+        var options = new TextTableFunction.TextOptions("\n");
+        var small = new TextTableFunction.Handle(new FileSelection(List.of(objects.getFirst()), "$path"), scan, options);
+        var large = new TextTableFunction.Handle(new FileSelection(objects, "$path"), scan, options);
+        var mapper = new ObjectMapper();
+        assertEquals(mapper.writeValueAsString(small), mapper.writeValueAsString(large));
+        assertEquals(40_000, large.createSplits().size());
+        var worker = mapper.readValue(mapper.writeValueAsBytes(large), TextTableFunction.Handle.class);
+        assertEquals(large.columnNames(), worker.columnNames());
+        assertEquals(large.options(), worker.options());
+        assertThrows(IllegalStateException.class, worker::createSplits);
+    }
+
     @Test
     void paginatedListingFiltersSortsAndPinsObjects() {
         var client = mock(S3ClientBuilder.SessionClient.class);
@@ -38,11 +58,10 @@ class FileSelectionTest {
 
         var handle = new TextTableFunction.Handle(selection, new ScanSettings(4, new PageSettings(10, 1024), "UTF-8"),
                 new TextTableFunction.TextOptions("\n"));
-        var splits = handle.createSplits(true);
+        var splits = handle.createSplits();
         assertEquals(5, splits.size());
         assertEquals(List.of(0L, 4L, 8L, 0L, 4L), splits.stream().map(FileSplit::startOffset).toList());
         assertEquals(List.of(a.path(), a.path(), a.path(), b.path(), b.path()), splits.stream().map(s -> s.object().path()).toList());
-        assertEquals(2, handle.createSplits(false).size());
     }
 
     @Test
@@ -143,7 +162,7 @@ class FileSelectionTest {
         for (String key : List.of("file[2026]*?.txt", "unclosed[", "folder\\name.txt", "trailing\\")) {
             String path = "s3://bucket/" + key;
             var selection = FileSelection.resolve(client, path, Map.of(
-                    "GLOB", new ScalarArgument(io.trino.spi.type.BooleanType.BOOLEAN, false)));
+                    "GLOB", new ScalarArgument(BooleanType.BOOLEAN, false)));
             assertEquals(List.of(new S3ObjectRef(path, 10, "etag", null, Compression.NONE)), selection.objects());
             assertEquals("", selection.pathColumn());
             verify(client).getObjectMetadata(path);
@@ -198,8 +217,8 @@ class FileSelectionTest {
         assertEquals(selection, mapper.readValue(mapper.writeValueAsBytes(selection), FileSelection.class));
         var handle = new TextTableFunction.Handle(selection, new ScanSettings(4, new PageSettings(10, 1024), "UTF-8"),
                 new TextTableFunction.TextOptions("\n"));
-        assertEquals(4, handle.createSplits(true).size());
-        assertTrue(handle.createSplits(true).getLast().isWholeFile());
+        assertEquals(4, handle.createSplits().size());
+        assertTrue(handle.createSplits().getLast().isWholeFile());
         for (String mode : List.of("none", "gzip")) {
             var forced = FileSelection.resolve(client, "s3://bucket/*", Map.of("COMPRESSION",
                     new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(mode))));

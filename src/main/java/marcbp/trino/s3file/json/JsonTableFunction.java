@@ -5,6 +5,8 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import io.airlift.log.Logger;
 import io.airlift.slice.Slices;
 import io.trino.spi.PageBuilder;
+import io.trino.spi.StandardErrorCode;
+import io.trino.spi.TrinoException;
 import io.trino.spi.block.BlockBuilder;
 import io.trino.spi.connector.ConnectorAccessControl;
 import io.trino.spi.connector.ConnectorPageSource;
@@ -21,32 +23,30 @@ import io.trino.spi.type.BigintType;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
-import marcbp.trino.s3file.file.AbstractTextFilePageSource;
+import marcbp.trino.s3file.file.AbstractDelimitedFilePageSource;
 import marcbp.trino.s3file.file.BaseTextFileHandle;
 import marcbp.trino.s3file.file.ByteDelimitedRecordReader;
-import marcbp.trino.s3file.file.Compression;
 import marcbp.trino.s3file.file.FileSelection;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.file.PageSettings;
 import marcbp.trino.s3file.file.ScanSettings;
-import marcbp.trino.s3file.file.TextSplitBoundarySupport;
 import marcbp.trino.s3file.json.JsonFormatSupport.ColumnType;
 import marcbp.trino.s3file.json.JsonFormatSupport.ColumnsMetadata;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
+import marcbp.trino.s3file.s3.S3ClientConfig;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
-import static io.airlift.slice.SizeOf.sizeOf;
 import static java.util.Objects.requireNonNull;
 import static marcbp.trino.s3file.util.TableFunctionArguments.encodingArgumentSpecification;
-import static marcbp.trino.s3file.util.TableFunctionArguments.pathArgumentSpecification;
+import static marcbp.trino.s3file.util.TableFunctionArguments.fileArguments;
 import static marcbp.trino.s3file.util.TableFunctionArguments.requirePath;
 import static marcbp.trino.s3file.util.TableFunctionArguments.resolveEncoding;
 import static marcbp.trino.s3file.util.TableFunctionArguments.resolveSplitSizeBytes;
@@ -65,22 +65,18 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
     private final Logger logger = Logger.get(JsonTableFunction.class);
 
     public JsonTableFunction(S3ClientBuilder s3ClientBuilder) {
-        this(s3ClientBuilder, marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_SPLIT_SIZE_BYTES, new PageSettings(marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_PAGE_BATCH_SIZE, marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_PAGE_TARGET_SIZE_BYTES));
+        this(s3ClientBuilder, S3ClientConfig.DEFAULT_SPLIT_SIZE_BYTES, PageSettings.DEFAULT);
     }
 
     public JsonTableFunction(S3ClientBuilder s3ClientBuilder, int defaultSplitSizeBytes) {
-        this(s3ClientBuilder, defaultSplitSizeBytes, new PageSettings(marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_PAGE_BATCH_SIZE, marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_PAGE_TARGET_SIZE_BYTES));
+        this(s3ClientBuilder, defaultSplitSizeBytes, PageSettings.DEFAULT);
     }
 
     public JsonTableFunction(S3ClientBuilder s3ClientBuilder, int defaultSplitSizeBytes, PageSettings pageSettings) {
         super(
                 "json",
                 "load",
-                List.of(
-                        pathArgumentSpecification(),
-                        FileSelection.pathColumnArgument(),
-                        FileSelection.globArgument(),
-                        Compression.argument(),
+                fileArguments(
                         encodingArgumentSpecification(),
                         splitSizeMbArgumentSpecification(),
                         ScalarArgumentSpecification.builder()
@@ -147,21 +143,17 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
 
         Object rawValue = sampleRowsArgument.getValue();
         if (!(rawValue instanceof Number sampleRowsValue)) {
-            throw new io.trino.spi.TrinoException(io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT, "SCHEMA_SAMPLE_ROWS must be an integer");
+            throw new TrinoException(StandardErrorCode.INVALID_FUNCTION_ARGUMENT, "SCHEMA_SAMPLE_ROWS must be an integer");
         }
 
         long sampleRows = sampleRowsValue.longValue();
         if (sampleRows <= 0) {
-            throw new io.trino.spi.TrinoException(io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT, "SCHEMA_SAMPLE_ROWS must be a positive integer");
+            throw new TrinoException(StandardErrorCode.INVALID_FUNCTION_ARGUMENT, "SCHEMA_SAMPLE_ROWS must be a positive integer");
         }
         if (sampleRows > Integer.MAX_VALUE) {
-            throw new io.trino.spi.TrinoException(io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT, "SCHEMA_SAMPLE_ROWS is too large");
+            throw new TrinoException(StandardErrorCode.INVALID_FUNCTION_ARGUMENT, "SCHEMA_SAMPLE_ROWS is too large");
         }
         return (int) sampleRows;
-    }
-
-    public List<FileSplit> createSplits(Handle handle) {
-        return handle.createSplits(true);
     }
 
     public ConnectorPageSource createPageSource(ConnectorSession session, Handle handle, FileSplit split, List<S3FileColumnHandle> columns) {
@@ -181,12 +173,20 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
     public static final class Handle extends BaseTextFileHandle {
         private final JsonSchema schema;
 
+        public Handle(
+                FileSelection selection,
+                ScanSettings scan,
+                JsonSchema schema) {
+            super(selection, scan);
+            this.schema = requireNonNull(schema, "schema is null");
+        }
+
         @JsonCreator
         public Handle(
-                @JsonProperty("selection") FileSelection selection,
+                @JsonProperty("pathColumn") String pathColumn,
                 @JsonProperty("scan") ScanSettings scan,
                 @JsonProperty("schema") JsonSchema schema) {
-            super(selection, scan);
+            super(pathColumn, scan);
             this.schema = requireNonNull(schema, "schema is null");
         }
 
@@ -215,14 +215,11 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
         }
     }
 
-    private static final class PageSource extends AbstractTextFilePageSource<Handle> {
+    private static final class PageSource extends AbstractDelimitedFilePageSource<Handle, Object[]> {
         private final List<String> columnNames;
         private final List<ColumnType> columnKinds;
         private final List<ColumnType> projectedColumnKinds;
         private final Map<String, Integer> columnIndexes;
-        private final byte[] lineBreakBytes;
-        private ByteDelimitedRecordReader recordReader;
-        private boolean skipFirstRecord;
 
         private PageSource(
                 ConnectorSession session,
@@ -230,15 +227,13 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
                 Handle handle,
                 FileSplit split,
                 List<S3FileColumnHandle> projectedColumns) {
-            super(session, s3ClientBuilder, handle, split, projectedColumns);
+            super(session, s3ClientBuilder, handle, split, projectedColumns, "\n", true);
             this.columnNames = handle.schema().columns();
             this.columnKinds = handle.schema().columnTypes();
             this.projectedColumnKinds = this.projectedColumns.stream()
                     .map(column -> columnKinds.get(column.getOrdinalPosition()))
                     .toList();
             this.columnIndexes = buildColumnIndexes();
-            this.lineBreakBytes = "\n".getBytes(charset);
-            this.skipFirstRecord = split.getStartOffset() > 0;
         }
 
         private Map<String, Integer> buildColumnIndexes() {
@@ -250,70 +245,27 @@ public final class JsonTableFunction extends AbstractConnectorTableFunction {
         }
 
         @Override
-        protected boolean finishWhenEmptySplit() {
-            return primaryLength == 0 && split.getStartOffset() > 0;
-        }
-
-        @Override
-        protected void openSource() throws IOException {
-            if (skipFirstRecord) {
-                recordS3Request();
-                skipFirstRecord = !TextSplitBoundarySupport.startsAfterDelimiter(sessionClient, split, lineBreakBytes);
-            }
-            InputStream stream = openStream();
-            recordReader = new ByteDelimitedRecordReader(stream, charset, lineBreakBytes, true);
-        }
-
-        @Override
-        protected RecordReadResult<?> readNextRecord() throws IOException {
-            java.util.Optional<ByteDelimitedRecordReader.Record> record = recordReader.readNext();
+        protected RecordReadResult<Object[]> readNextRecord() throws IOException {
+            Optional<ByteDelimitedRecordReader.Record> record = readLine();
             if (record.isEmpty()) {
                 return RecordReadResult.finished();
             }
             ByteDelimitedRecordReader.Record lineRecord = record.orElseThrow();
             long lineBytes = lineRecord.bytesConsumed();
-            if (skipFirstRecord) {
-                skipFirstRecord = false;
-                return RecordReadResult.skip(lineBytes);
-            }
             if (lineRecord.isBlank(charset)) {
                 return RecordReadResult.skip(lineBytes);
             }
-            boolean finishesSplit = !split.isLast() && bytesWithinPrimary + lineBytes > primaryLength;
             Object[] values = JsonFormatSupport.parseRecord(
                     lineRecord.valueBytes(),
                     charset,
                     split.object().path(),
                     columnIndexes,
                     columnKinds);
-            return RecordReadResult.produce(values, lineBytes, finishesSplit);
+            return RecordReadResult.produce(values, lineBytes);
         }
 
         @Override
-        public long getMemoryUsage() {
-            return super.getMemoryUsage() + sizeOf(lineBreakBytes)
-                    + (recordReader == null ? 0 : recordReader.getRetainedSizeInBytes());
-        }
-
-        @Override
-        protected void closeReader() {
-            if (recordReader == null) {
-                return;
-            }
-            try {
-                recordReader.close();
-            }
-            catch (IOException e) {
-                logger.warn(e, "Failed to close reader for %s", split.object().path());
-            }
-            finally {
-                recordReader = null;
-            }
-        }
-
-        @Override
-        protected void appendRecord(PageBuilder pageBuilder, Object payload) {
-            Object[] values = (Object[]) payload;
+        protected void appendRecord(PageBuilder pageBuilder, Object[] values) {
             for (int outputIndex = 0; outputIndex < projectedColumns.size(); outputIndex++) {
                 BlockBuilder blockBuilder = pageBuilder.getBlockBuilder(outputIndex);
                 projectedColumnKinds.get(outputIndex).writeValue(blockBuilder, values[projectedColumns.get(outputIndex).getOrdinalPosition()]);

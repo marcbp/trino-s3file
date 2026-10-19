@@ -5,6 +5,7 @@ import io.trino.spi.PageBuilder;
 import io.trino.spi.block.BlockBuilder;
 import io.trino.spi.connector.ConnectorPageSource;
 import io.trino.spi.connector.ConnectorSession;
+import io.trino.spi.connector.SourcePage;
 import io.trino.spi.type.BigintType;
 import io.trino.spi.type.TimestampWithTimeZoneType;
 import io.trino.spi.type.Type;
@@ -74,7 +75,7 @@ public final class ListingPageSource implements ConnectorPageSource {
     }
 
     @Override
-    public io.trino.spi.connector.SourcePage getNextSourcePage() {
+    public SourcePage getNextSourcePage() {
         long startNanos = System.nanoTime();
         try {
             if (finished) {
@@ -105,7 +106,7 @@ public final class ListingPageSource implements ConnectorPageSource {
                 return null;
             }
 
-            return io.trino.spi.connector.SourcePage.create(pageBuilder.build());
+            return SourcePage.create(pageBuilder.build());
         }
         catch (RuntimeException e) {
             closeSession();

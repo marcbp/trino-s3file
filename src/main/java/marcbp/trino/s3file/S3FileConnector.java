@@ -1,9 +1,10 @@
 package marcbp.trino.s3file;
 
 import io.airlift.log.Logger;
+import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.Connector;
-import io.trino.spi.connector.ConnectorPageSourceProvider;
 import io.trino.spi.connector.ConnectorMetadata;
+import io.trino.spi.connector.ConnectorPageSourceProvider;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorSplitManager;
 import io.trino.spi.connector.ConnectorSplitSource;
@@ -12,20 +13,22 @@ import io.trino.spi.connector.ConnectorTransactionHandle;
 import io.trino.spi.connector.Constraint;
 import io.trino.spi.connector.FixedSplitSource;
 import io.trino.spi.function.table.ConnectorTableFunction;
+import io.trino.spi.function.table.ConnectorTableFunctionHandle;
 import io.trino.spi.transaction.IsolationLevel;
 import marcbp.trino.s3file.csv.CsvTableFunction;
+import marcbp.trino.s3file.file.BaseTextFileHandle;
+import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.json.JsonTableFunction;
 import marcbp.trino.s3file.list.BucketsTableFunction;
 import marcbp.trino.s3file.list.ListingSplit;
 import marcbp.trino.s3file.list.ObjectsTableFunction;
-import marcbp.trino.s3file.txt.TextTableFunction;
-import marcbp.trino.s3file.xml.XmlTableFunction;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
 import marcbp.trino.s3file.s3.S3ClientConfig;
-import marcbp.trino.s3file.file.FileSplit;
+import marcbp.trino.s3file.txt.TextTableFunction;
+import marcbp.trino.s3file.xml.XmlTableFunction;
 
-import java.util.Set;
 import java.util.List;
+import java.util.Set;
 
 import static java.util.Objects.requireNonNull;
 
@@ -99,7 +102,7 @@ public final class S3FileConnector implements Connector {
 
     private final class InlineSplitManager implements ConnectorSplitManager {
         @Override
-        public ConnectorSplitSource getSplits(ConnectorTransactionHandle transactionHandle, ConnectorSession session, io.trino.spi.function.table.ConnectorTableFunctionHandle functionHandle) {
+        public ConnectorSplitSource getSplits(ConnectorTransactionHandle transactionHandle, ConnectorSession session, ConnectorTableFunctionHandle functionHandle) {
             return getSplitsForHandle(functionHandle);
         }
 
@@ -108,25 +111,15 @@ public final class S3FileConnector implements Connector {
                 ConnectorTransactionHandle transactionHandle,
                 ConnectorSession session,
                 ConnectorTableHandle table,
-                Set<io.trino.spi.connector.ColumnHandle> columns,
+                Set<ColumnHandle> columns,
                 Constraint constraint) {
             return getSplitsForHandle(table);
         }
 
         private ConnectorSplitSource getSplitsForHandle(Object handle) {
             return switch (handle) {
-                case CsvTableFunction.Handle csvHandle -> fixedFileSplits(
-                        csvTableFunction.createSplits(csvHandle),
-                        "CSV",
-                        csvHandle.selection().objects().size());
-                case TextTableFunction.Handle textHandle -> fixedFileSplits(
-                        textTableFunction.createSplits(textHandle),
-                        "text",
-                        textHandle.selection().objects().size());
-                case JsonTableFunction.Handle jsonHandle -> fixedFileSplits(
-                        jsonTableFunction.createSplits(jsonHandle),
-                        "JSON",
-                        jsonHandle.selection().objects().size());
+                case BaseTextFileHandle fileHandle -> fixedFileSplits(fileHandle.createSplits(),
+                        fileHandle.format(), fileHandle.selection().objects().size());
                 case ObjectsTableFunction.Handle objectsHandle -> {
                     LOG.info("Providing 1 objects split for bucket %s and prefix %s", objectsHandle.bucket(), objectsHandle.prefix());
                     yield new FixedSplitSource(List.of(ListingSplit.INSTANCE));
@@ -135,10 +128,6 @@ public final class S3FileConnector implements Connector {
                     LOG.info("Providing 1 buckets split");
                     yield new FixedSplitSource(List.of(ListingSplit.INSTANCE));
                 }
-                case XmlTableFunction.Handle xmlHandle -> fixedFileSplits(
-                        xmlTableFunction.createSplits(xmlHandle),
-                        "XML",
-                        xmlHandle.selection().objects().size());
                 default -> throw new IllegalArgumentException("Unexpected handle type: " + handle.getClass().getName());
             };
         }

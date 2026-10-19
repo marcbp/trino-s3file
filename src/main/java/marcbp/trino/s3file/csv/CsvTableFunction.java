@@ -6,7 +6,10 @@ import com.opencsv.CSVParser;
 import io.airlift.log.Logger;
 import io.airlift.slice.Slices;
 import io.trino.spi.PageBuilder;
+import io.trino.spi.StandardErrorCode;
+import io.trino.spi.TrinoException;
 import io.trino.spi.block.BlockBuilder;
+import io.trino.spi.connector.ConnectorAccessControl;
 import io.trino.spi.connector.ConnectorPageSource;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorTransactionHandle;
@@ -19,19 +22,17 @@ import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
-import marcbp.trino.s3file.file.AbstractTextFilePageSource;
+import marcbp.trino.s3file.file.AbstractDelimitedFilePageSource;
 import marcbp.trino.s3file.file.BaseTextFileHandle;
 import marcbp.trino.s3file.file.ByteDelimitedRecordReader;
-import marcbp.trino.s3file.file.Compression;
 import marcbp.trino.s3file.file.FileSelection;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.file.PageSettings;
 import marcbp.trino.s3file.file.ScanSettings;
-import marcbp.trino.s3file.file.TextSplitBoundarySupport;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
+import marcbp.trino.s3file.s3.S3ClientConfig;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
@@ -39,13 +40,13 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
-import static io.airlift.slice.SizeOf.sizeOf;
 import static java.util.Objects.requireNonNull;
 import static marcbp.trino.s3file.util.TableFunctionArguments.encodingArgumentSpecification;
+import static marcbp.trino.s3file.util.TableFunctionArguments.fileArguments;
 import static marcbp.trino.s3file.util.TableFunctionArguments.optionalBoolean;
 import static marcbp.trino.s3file.util.TableFunctionArguments.optionalString;
-import static marcbp.trino.s3file.util.TableFunctionArguments.pathArgumentSpecification;
 import static marcbp.trino.s3file.util.TableFunctionArguments.requirePath;
 import static marcbp.trino.s3file.util.TableFunctionArguments.resolveEncoding;
 import static marcbp.trino.s3file.util.TableFunctionArguments.resolveSplitSizeBytes;
@@ -54,7 +55,7 @@ import static marcbp.trino.s3file.util.TableFunctionArguments.splitSizeMbArgumen
 /**
  * Table function that reads CSV data from S3-compatible storage, inferring columns on the fly.
  */
-public final class CsvTableFunction extends AbstractConnectorTableFunction {    
+public final class CsvTableFunction extends AbstractConnectorTableFunction {
     private static final String DELIMITER_ARGUMENT = "DELIMITER";
     private static final String MULTILINE_ARGUMENT = "MULTILINE";
 
@@ -64,22 +65,18 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
     private final Logger logger = Logger.get(CsvTableFunction.class);
 
     public CsvTableFunction(S3ClientBuilder s3ClientBuilder) {
-        this(s3ClientBuilder, marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_SPLIT_SIZE_BYTES, new PageSettings(marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_PAGE_BATCH_SIZE, marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_PAGE_TARGET_SIZE_BYTES));
+        this(s3ClientBuilder, S3ClientConfig.DEFAULT_SPLIT_SIZE_BYTES, PageSettings.DEFAULT);
     }
 
     public CsvTableFunction(S3ClientBuilder s3ClientBuilder, int defaultSplitSizeBytes) {
-        this(s3ClientBuilder, defaultSplitSizeBytes, new PageSettings(marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_PAGE_BATCH_SIZE, marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_PAGE_TARGET_SIZE_BYTES));
+        this(s3ClientBuilder, defaultSplitSizeBytes, PageSettings.DEFAULT);
     }
 
     public CsvTableFunction(S3ClientBuilder s3ClientBuilder, int defaultSplitSizeBytes, PageSettings pageSettings) {
         super(
                 "csv",
                 "load",
-                List.of(
-                        pathArgumentSpecification(),
-                        FileSelection.pathColumnArgument(),
-                        FileSelection.globArgument(),
-                        Compression.argument(),
+                fileArguments(
                         ScalarArgumentSpecification.builder()
                                 .name(DELIMITER_ARGUMENT)
                                 .type(VarcharType.VARCHAR)
@@ -108,7 +105,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
     public TableFunctionAnalysis analyze(ConnectorSession session,
                                          ConnectorTransactionHandle transactionHandle,
                                          Map<String, Argument> arguments,
-                                         io.trino.spi.connector.ConnectorAccessControl accessControl) {
+                                         ConnectorAccessControl accessControl) {
         String s3Path = requirePath(arguments);
         Charset charset = resolveEncoding(arguments);
         int splitSizeBytes = resolveSplitSizeBytes(arguments, defaultSplitSizeBytes);
@@ -147,15 +144,11 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
     private static char resolveDelimiter(Map<String, Argument> arguments) {
         String delimiter = optionalString(arguments, DELIMITER_ARGUMENT, ";");
         if (delimiter.length() != 1) {
-            throw new io.trino.spi.TrinoException(
-                    io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT,
+            throw new TrinoException(
+                    StandardErrorCode.INVALID_FUNCTION_ARGUMENT,
                     "DELIMITER must be a single character");
         }
         return delimiter.charAt(0);
-    }
-
-    public List<FileSplit> createSplits(Handle handle) {
-        return handle.createSplits(!handle.options().multiline());
     }
 
     public ConnectorPageSource createPageSource(ConnectorSession session, Handle handle, FileSplit split, List<S3FileColumnHandle> columns) {
@@ -181,15 +174,30 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
         private final CsvSchema schema;
         private final CsvOptions options;
 
-        @JsonCreator
         public Handle(
-                @JsonProperty("selection") FileSelection selection,
-                @JsonProperty("scan") ScanSettings scan,
-                @JsonProperty("schema") CsvSchema schema,
-                @JsonProperty("options") CsvOptions options) {
+                FileSelection selection,
+                ScanSettings scan,
+                CsvSchema schema,
+                CsvOptions options) {
             super(selection, scan);
             this.schema = requireNonNull(schema, "schema is null");
             this.options = requireNonNull(options, "options is null");
+        }
+
+        @JsonCreator
+        public Handle(
+                @JsonProperty("pathColumn") String pathColumn,
+                @JsonProperty("scan") ScanSettings scan,
+                @JsonProperty("schema") CsvSchema schema,
+                @JsonProperty("options") CsvOptions options) {
+            super(pathColumn, scan);
+            this.schema = requireNonNull(schema, "schema is null");
+            this.options = requireNonNull(options, "options is null");
+        }
+
+        @Override
+        protected boolean splittable() {
+            return !options.multiline();
         }
 
         @Override
@@ -214,19 +222,12 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
 
         @Override
         public List<Type> dataColumnTypes() {
-            List<Type> types = new ArrayList<>(schema.columns().size());
-            for (int i = 0; i < schema.columns().size(); i++) {
-                types.add(VarcharType.createUnboundedVarcharType());
-            }
-            return List.copyOf(types);
+            return Collections.nCopies(schema.columns().size(), VarcharType.VARCHAR);
         }
     }
 
-    private static final class PageSource extends AbstractTextFilePageSource<Handle> {
-        private final byte[] lineBreakBytes;
+    private static final class PageSource extends AbstractDelimitedFilePageSource<Handle, String[]> {
         private final CSVParser parser;
-        private ByteDelimitedRecordReader recordReader;
-        private boolean skipFirstLine;
 
         private PageSource(
                 ConnectorSession session,
@@ -234,31 +235,18 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                 Handle handle,
                 FileSplit split,
                 List<S3FileColumnHandle> projectedColumns) {
-            super(session, s3ClientBuilder, handle, split, projectedColumns);
-            this.lineBreakBytes = "\n".getBytes(charset);
+            super(session, s3ClientBuilder, handle, split, projectedColumns, "\n", true);
             this.parser = CsvFormatSupport.newParser(handle.options().delimiter());
-            this.skipFirstLine = split.getStartOffset() > 0;
         }
 
         @Override
-        protected boolean finishWhenEmptySplit() {
-            return primaryLength == 0 && split.getStartOffset() > 0;
-        }
-
-        @Override
-        protected void openSource() throws IOException {
-            if (skipFirstLine) {
-                recordS3Request();
-                skipFirstLine = !TextSplitBoundarySupport.startsAfterDelimiter(sessionClient, split, lineBreakBytes);
-            }
-            InputStream stream = openStream();
-            recordReader = new ByteDelimitedRecordReader(stream, charset, lineBreakBytes, true);
-            if (handle.options().headerPresent() && split.isFirst()) {
+        protected void afterSourceOpened() throws IOException {
+            if (handle.options().headerPresent() && split.first()) {
                 CsvRecord header = readCsvRecord();
                 if (header != null) {
                     List<String> names = Arrays.stream(header.values()).map(String::trim).toList();
                     if (!names.equals(handle.schema().columns())) {
-                        throw new io.trino.spi.TrinoException(io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT, "CSV header does not match inferred schema in " + split.object().path());
+                        throw new TrinoException(StandardErrorCode.INVALID_FUNCTION_ARGUMENT, "CSV header does not match inferred schema in " + split.object().path());
                     }
                     addBytesWithinPrimary(header.bytesConsumed());
                 }
@@ -266,26 +254,21 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
         }
 
         @Override
-        protected RecordReadResult<?> readNextRecord() throws IOException {
+        protected RecordReadResult<String[]> readNextRecord() throws IOException {
             CsvRecord record = readCsvRecord();
             if (record == null) {
                 return RecordReadResult.finished();
             }
 
-            if (skipFirstLine) {
-                skipFirstLine = false;
-                return RecordReadResult.skip(record.bytesConsumed());
-            }
             if (record.blank()) {
                 return RecordReadResult.skip(record.bytesConsumed());
             }
 
             if (record.values().length != handle.schema().columns().size()) {
-                throw new io.trino.spi.TrinoException(io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT, "CSV column count does not match inferred schema in " + split.object().path()
+                throw new TrinoException(StandardErrorCode.INVALID_FUNCTION_ARGUMENT, "CSV column count does not match inferred schema in " + split.object().path()
                         + ": expected " + handle.schema().columns().size() + ", got " + record.values().length);
             }
-            boolean finishesSplit = !split.isLast() && bytesWithinPrimary + record.bytesConsumed() > primaryLength;
-            return RecordReadResult.produce(record.values(), record.bytesConsumed(), finishesSplit);
+            return RecordReadResult.produce(record.values(), record.bytesConsumed());
         }
 
         private CsvRecord readCsvRecord() throws IOException {
@@ -293,7 +276,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
             boolean blank = true;
             List<String> values = new ArrayList<>();
             while (true) {
-                java.util.Optional<ByteDelimitedRecordReader.Record> lineRecord = recordReader.readNext();
+                Optional<ByteDelimitedRecordReader.Record> lineRecord = readLine();
                 if (lineRecord.isEmpty()) {
                     if (parser.isPending()) {
                         throw new IllegalArgumentException("Unterminated CSV record at end of input");
@@ -318,8 +301,7 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
         }
 
         @Override
-        protected void appendRecord(PageBuilder pageBuilder, Object payload) {
-            String[] rawValues = (String[]) payload;
+        protected void appendRecord(PageBuilder pageBuilder, String[] rawValues) {
             for (int outputIndex = 0; outputIndex < projectedColumns.size(); outputIndex++) {
                 S3FileColumnHandle columnHandle = projectedColumns.get(outputIndex);
                 int sourceIndex = columnHandle.getOrdinalPosition();
@@ -333,28 +315,6 @@ public final class CsvTableFunction extends AbstractConnectorTableFunction {
                 }
             }
             pageBuilder.declarePosition();
-        }
-
-        @Override
-        public long getMemoryUsage() {
-            return super.getMemoryUsage() + sizeOf(lineBreakBytes)
-                    + (recordReader == null ? 0 : recordReader.getRetainedSizeInBytes());
-        }
-
-        @Override
-        protected void closeReader() {
-            if (recordReader == null) {
-                return;
-            }
-            try {
-                recordReader.close();
-            }
-            catch (IOException e) {
-                logger.warn(e, "Failed to close reader for %s", split.object().path());
-            }
-            finally {
-                recordReader = null;
-            }
         }
 
         private record CsvRecord(String[] values, long bytesConsumed, boolean blank) {}

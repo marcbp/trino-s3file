@@ -18,9 +18,9 @@ import io.trino.spi.function.table.ScalarArgumentSpecification;
 import io.trino.spi.function.table.TableFunctionAnalysis;
 import io.trino.spi.type.BigintType;
 import io.trino.spi.type.DateTimeEncoding;
+import io.trino.spi.type.TimeZoneKey;
 import io.trino.spi.type.TimestampWithTimeZoneType;
 import io.trino.spi.type.Type;
-import io.trino.spi.type.TimeZoneKey;
 import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
 import marcbp.trino.s3file.file.PageSettings;
@@ -30,7 +30,6 @@ import marcbp.trino.s3file.s3.S3ClientBuilder;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static java.util.Objects.requireNonNull;
@@ -74,7 +73,7 @@ public final class ObjectsTableFunction extends AbstractConnectorTableFunction {
     private final Logger logger = Logger.get(ObjectsTableFunction.class);
 
     public ObjectsTableFunction(S3ClientBuilder s3ClientBuilder) {
-        this(s3ClientBuilder, new PageSettings(marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_PAGE_BATCH_SIZE, marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_PAGE_TARGET_SIZE_BYTES));
+        this(s3ClientBuilder, PageSettings.DEFAULT);
     }
 
     public ObjectsTableFunction(S3ClientBuilder s3ClientBuilder, PageSettings pageSettings) {

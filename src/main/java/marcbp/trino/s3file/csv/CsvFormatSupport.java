@@ -6,8 +6,8 @@ import com.opencsv.CSVParserBuilder;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.nio.charset.Charset;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import static java.util.Objects.requireNonNull;
@@ -17,14 +17,6 @@ import static java.util.Objects.requireNonNull;
  */
 public final class CsvFormatSupport {
     private CsvFormatSupport() {}
-
-    public static long calculateLineBytes(String value, Charset charset, byte[] lineBreakBytes) {
-        return value.getBytes(charset).length + lineBreakBytes.length;
-    }
-
-    public static List<String> inferColumnNames(BufferedReader reader, String sourceDescription, char delimiter, boolean headerPresent) {
-        return inferColumnNames(reader, sourceDescription, delimiter, headerPresent, false);
-    }
 
     public static List<String> inferColumnNames(
             BufferedReader reader,
@@ -73,7 +65,7 @@ public final class CsvFormatSupport {
         while ((line = reader.readLine()) != null) {
             String[] parsed = multiline ? parser.parseLineMulti(line) : parser.parseLine(line);
             if (parsed != null) {
-                java.util.Collections.addAll(values, parsed);
+                Collections.addAll(values, parsed);
             }
             if (!multiline || !parser.isPending()) {
                 return values.toArray(String[]::new);
@@ -89,19 +81,5 @@ public final class CsvFormatSupport {
         return new CSVParserBuilder()
                 .withSeparator(delimiter)
                 .build();
-    }
-
-    public static String[] parseCsvLine(String line, char delimiter) {
-        return parseCsvLine(line, newParser(delimiter));
-    }
-
-    public static String[] parseCsvLine(String line, CSVParser parser) {
-        requireNonNull(parser, "parser is null");
-        try {
-            return parser.parseLine(line);
-        }
-        catch (IOException e) {
-            throw new IllegalArgumentException("Failed to parse CSV line: " + line, e);
-        }
     }
 }

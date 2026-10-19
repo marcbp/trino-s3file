@@ -22,7 +22,6 @@ import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
 import marcbp.trino.s3file.file.AbstractTextFilePageSource;
 import marcbp.trino.s3file.file.BaseTextFileHandle;
-import marcbp.trino.s3file.file.Compression;
 import marcbp.trino.s3file.file.FileSelection;
 import marcbp.trino.s3file.file.FileSplit;
 import marcbp.trino.s3file.file.PageSettings;
@@ -31,20 +30,25 @@ import marcbp.trino.s3file.s3.S3ClientBuilder;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
 
+import static io.airlift.slice.SizeOf.instanceSize;
+import static io.airlift.slice.SizeOf.sizeOfByteArray;
+import static io.airlift.slice.SizeOf.sizeOfCharArray;
 import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static java.util.Objects.requireNonNull;
 import static marcbp.trino.s3file.util.TableFunctionArguments.encodingArgumentSpecification;
+import static marcbp.trino.s3file.util.TableFunctionArguments.fileArguments;
 import static marcbp.trino.s3file.util.TableFunctionArguments.optionalBoolean;
 import static marcbp.trino.s3file.util.TableFunctionArguments.optionalString;
-import static marcbp.trino.s3file.util.TableFunctionArguments.pathArgumentSpecification;
 import static marcbp.trino.s3file.util.TableFunctionArguments.requirePath;
 import static marcbp.trino.s3file.util.TableFunctionArguments.resolveEncoding;
 
@@ -62,18 +66,14 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
     private final PageSettings pageSettings;
 
     public XmlTableFunction(S3ClientBuilder s3ClientBuilder) {
-        this(s3ClientBuilder, new PageSettings(marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_PAGE_BATCH_SIZE, marcbp.trino.s3file.s3.S3ClientConfig.DEFAULT_PAGE_TARGET_SIZE_BYTES));
+        this(s3ClientBuilder, PageSettings.DEFAULT);
     }
 
     public XmlTableFunction(S3ClientBuilder s3ClientBuilder, PageSettings pageSettings) {
         super(
                 "xml",
                 "load",
-                List.of(
-                        pathArgumentSpecification(),
-                        FileSelection.pathColumnArgument(),
-                        FileSelection.globArgument(),
-                        Compression.argument(),
+                fileArguments(
                         encodingArgumentSpecification(),
                         ScalarArgumentSpecification.builder()
                                 .name(ROW_ELEMENT_ARGUMENT)
@@ -176,10 +176,6 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         return new XmlFormatSupport.Schema(filtered);
     }
 
-    public List<FileSplit> createSplits(Handle handle) {
-        return handle.createSplits(false);
-    }
-
     public ConnectorPageSource createPageSource(ConnectorSession session, Handle handle, FileSplit split, List<S3FileColumnHandle> columns) {
         return new PageSource(session, s3ClientBuilder, handle, split, columns);
     }
@@ -199,15 +195,30 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         private final XmlFormatSupport.Schema schema;
         private final XmlOptions options;
 
-        @JsonCreator
         public Handle(
-                @JsonProperty("selection") FileSelection selection,
-                @JsonProperty("scan") ScanSettings scan,
-                @JsonProperty("schema") XmlFormatSupport.Schema schema,
-                @JsonProperty("options") XmlOptions options) {
+                FileSelection selection,
+                ScanSettings scan,
+                XmlFormatSupport.Schema schema,
+                XmlOptions options) {
             super(selection, scan);
             this.schema = requireNonNull(schema, "schema is null");
             this.options = requireNonNull(options, "options is null");
+        }
+
+        @JsonCreator
+        public Handle(
+                @JsonProperty("pathColumn") String pathColumn,
+                @JsonProperty("scan") ScanSettings scan,
+                @JsonProperty("schema") XmlFormatSupport.Schema schema,
+                @JsonProperty("options") XmlOptions options) {
+            super(pathColumn, scan);
+            this.schema = requireNonNull(schema, "schema is null");
+            this.options = requireNonNull(options, "options is null");
+        }
+
+        @Override
+        protected boolean splittable() {
+            return false;
         }
 
         @Override
@@ -232,15 +243,16 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
 
         @Override
         public List<Type> dataColumnTypes() {
-            List<Type> types = new ArrayList<>(schema.columns().size());
-            for (int i = 0; i < schema.columns().size(); i++) {
-                types.add(VarcharType.createUnboundedVarcharType());
-            }
-            return List.copyOf(types);
+            return Collections.nCopies(schema.columns().size(), VarcharType.VARCHAR);
         }
     }
 
-    private static final class PageSource extends AbstractTextFilePageSource<Handle> {
+    private static final class PageSource extends AbstractTextFilePageSource<Handle, String[]> {
+        private static final int READER_BUFFER_SIZE = 8192;
+        // Known shallow reader sizes and fixed arrays; StAX/charset decoder internals are excluded.
+        private static final long READER_MEMORY = instanceSize(BufferedReader.class) + instanceSize(InputStreamReader.class)
+                + sizeOfCharArray(READER_BUFFER_SIZE) + sizeOfByteArray(READER_BUFFER_SIZE);
+        private BufferedReader reader;
         private XMLStreamReader xmlReader;
 
         private PageSource(
@@ -253,7 +265,8 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         }
 
         @Override
-        protected void afterReaderOpened(BufferedReader reader) throws IOException {
+        protected void openSource() throws IOException {
+            reader = new BufferedReader(new InputStreamReader(openStream(), charset), READER_BUFFER_SIZE);
             try {
                 this.xmlReader = XmlFormatSupport.newXmlReader(reader);
             }
@@ -263,7 +276,7 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         }
 
         @Override
-        protected RecordReadResult<?> readNextRecord() throws IOException {
+        protected RecordReadResult<String[]> readNextRecord() throws IOException {
             if (xmlReader == null) {
                 return RecordReadResult.finished();
             }
@@ -272,7 +285,7 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
                 if (row.done()) {
                     return RecordReadResult.finished();
                 }
-                return RecordReadResult.produce(row.values(), 0, false);
+                return RecordReadResult.produce(row.values(), 0);
             }
             catch (XMLStreamException e) {
                 throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "Failed to read XML record for " + split.object().path(), e);
@@ -280,8 +293,7 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         }
 
         @Override
-        protected void appendRecord(PageBuilder pageBuilder, Object payload) {
-            String[] values = (String[]) payload;
+        protected void appendRecord(PageBuilder pageBuilder, String[] values) {
             for (int outputIndex = 0; outputIndex < projectedColumns.size(); outputIndex++) {
                 S3FileColumnHandle columnHandle = projectedColumns.get(outputIndex);
                 int sourceIndex = columnHandle.getOrdinalPosition();
@@ -298,19 +310,31 @@ public final class XmlTableFunction extends AbstractConnectorTableFunction {
         }
 
         @Override
-        protected void closeReader() {
-            if (xmlReader != null) {
-                try {
+        public long getMemoryUsage() {
+            return super.getMemoryUsage() + (reader == null ? 0 : READER_MEMORY);
+        }
+
+        @Override
+        protected void closeReader() throws IOException {
+            try {
+                if (xmlReader != null) {
                     xmlReader.close();
                 }
-                catch (XMLStreamException e) {
-                    logger.warn(e, "Failed to close XML reader for %s", split.object().path());
-                }
-                finally {
-                    xmlReader = null;
+            }
+            catch (XMLStreamException e) {
+                throw new IOException("Failed to close XML reader", e);
+            }
+            finally {
+                xmlReader = null;
+                if (reader != null) {
+                    try {
+                        reader.close();
+                    }
+                    finally {
+                        reader = null;
+                    }
                 }
             }
-            super.closeReader();
         }
     }
 }

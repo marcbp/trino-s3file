@@ -1,13 +1,15 @@
 package marcbp.trino.s3file.json;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.airlift.slice.Slice;
+import io.airlift.slice.Slices;
 import io.trino.spi.TrinoException;
+import io.trino.spi.block.BlockBuilder;
 import io.trino.spi.function.table.Argument;
 import io.trino.spi.function.table.ScalarArgument;
 import io.trino.spi.type.BigintType;
@@ -263,7 +265,7 @@ public final class JsonFormatSupport {
             }
 
             @Override
-            void writeValue(io.trino.spi.block.BlockBuilder blockBuilder, Object value) {
+            void writeValue(BlockBuilder blockBuilder, Object value) {
                 if (!(value instanceof Boolean booleanValue)) {
                     blockBuilder.appendNull();
                     return;
@@ -284,7 +286,7 @@ public final class JsonFormatSupport {
             }
 
             @Override
-            void writeValue(io.trino.spi.block.BlockBuilder blockBuilder, Object value) {
+            void writeValue(BlockBuilder blockBuilder, Object value) {
                 if (!(value instanceof Long longValue)) {
                     blockBuilder.appendNull();
                     return;
@@ -302,7 +304,7 @@ public final class JsonFormatSupport {
             }
 
             @Override
-            void writeValue(io.trino.spi.block.BlockBuilder blockBuilder, Object value) {
+            void writeValue(BlockBuilder blockBuilder, Object value) {
                 if (!(value instanceof Double doubleValue)) {
                     blockBuilder.appendNull();
                     return;
@@ -326,12 +328,12 @@ public final class JsonFormatSupport {
             }
 
             @Override
-            void writeValue(io.trino.spi.block.BlockBuilder blockBuilder, Object value) {
+            void writeValue(BlockBuilder blockBuilder, Object value) {
                 if (!(value instanceof String text)) {
                     blockBuilder.appendNull();
                     return;
                 }
-                ((VarcharType) type).writeSlice(blockBuilder, io.airlift.slice.Slices.utf8Slice(text));
+                ((VarcharType) type).writeSlice(blockBuilder, Slices.utf8Slice(text));
             }
         };
 
@@ -347,7 +349,7 @@ public final class JsonFormatSupport {
 
         abstract Object read(JsonParser parser, JsonToken token) throws IOException;
 
-        abstract void writeValue(io.trino.spi.block.BlockBuilder blockBuilder, Object value);
+        abstract void writeValue(BlockBuilder blockBuilder, Object value);
 
         static ColumnType fromSpecification(String value) {
             String normalized = value.trim().toUpperCase(Locale.ROOT);

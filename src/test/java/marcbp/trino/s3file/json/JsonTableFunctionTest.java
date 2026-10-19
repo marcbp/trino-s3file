@@ -18,6 +18,7 @@ import marcbp.trino.s3file.S3FileColumnHandle;
 import marcbp.trino.s3file.file.Compression;
 import marcbp.trino.s3file.file.FileSelection;
 import marcbp.trino.s3file.file.FileSplit;
+import marcbp.trino.s3file.file.PageSettings;
 import marcbp.trino.s3file.file.S3ObjectRef;
 import marcbp.trino.s3file.file.ScanSettings;
 import marcbp.trino.s3file.s3.S3ClientBuilder.ObjectMetadata;
@@ -143,7 +144,7 @@ class JsonTableFunctionTest {
 
         Map<String, Argument> arguments = Map.of(
                 "PATH", new ScalarArgument(VarcharType.VARCHAR, Slices.utf8Slice(PATH)),
-                "SPLIT_SIZE_MB", new ScalarArgument(io.trino.spi.type.BigintType.BIGINT, 2L)
+                "SPLIT_SIZE_MB", new ScalarArgument(BigintType.BIGINT, 2L)
         );
 
         TableFunctionAnalysis analysis = function.analyze(
@@ -217,7 +218,7 @@ class JsonTableFunctionTest {
         ConnectorPageSource pageSource = function.createPageSource(
                 mock(ConnectorSession.class),
                 handle,
-                handle.createSplits(false).getFirst(),
+                FileSplit.forWholeFile(handle.selection().objects().getFirst()),
                 allColumns(handle));
         SourcePage page = nextPage(pageSource);
 
@@ -242,7 +243,7 @@ class JsonTableFunctionTest {
         ConnectorPageSource pageSource = function.createPageSource(
                 mock(ConnectorSession.class),
                 handle,
-                handle.createSplits(false).getFirst(),
+                FileSplit.forWholeFile(handle.selection().objects().getFirst()),
                 List.of(new S3FileColumnHandle("meta", 1)));
         SourcePage page = nextPage(pageSource);
 
@@ -267,7 +268,7 @@ class JsonTableFunctionTest {
         ConnectorPageSource pageSource = function.createPageSource(
                 mock(ConnectorSession.class),
                 handle,
-                handle.createSplits(false).getFirst(),
+                FileSplit.forWholeFile(handle.selection().objects().getFirst()),
                 List.of());
 
         assertThrows(TrinoException.class, () -> countRows(pageSource));
@@ -374,7 +375,7 @@ class JsonTableFunctionTest {
         ConnectorPageSource pageSource = function.createPageSource(
                 mock(ConnectorSession.class),
                 handle,
-                handle.createSplits(false).getFirst(),
+                FileSplit.forWholeFile(handle.selection().objects().getFirst()),
                 List.of());
 
         assertEquals(2, countRows(pageSource));
@@ -426,7 +427,7 @@ class JsonTableFunctionTest {
             Charset charset) {
         return new JsonTableFunction.Handle(
                 new FileSelection(List.of(new S3ObjectRef(PATH, fileSize, null, null, Compression.NONE)), ""),
-                new ScanSettings(splitSizeBytes, new marcbp.trino.s3file.file.PageSettings(JsonTableFunction.Handle.DEFAULT_BATCH_SIZE, 8L * 1024L * 1024L), charset.name()),
+                new ScanSettings(splitSizeBytes, new PageSettings(PageSettings.DEFAULT.batchSize(), 8L * 1024L * 1024L), charset.name()),
                 new JsonTableFunction.JsonSchema(columns, columnTypes));
     }
 

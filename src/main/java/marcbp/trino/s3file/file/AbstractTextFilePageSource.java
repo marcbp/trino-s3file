@@ -14,29 +14,17 @@ import io.trino.spi.type.VarcharType;
 import marcbp.trino.s3file.S3FileColumnHandle;
 import marcbp.trino.s3file.s3.S3ClientBuilder;
 
-import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 import java.util.List;
 import java.util.OptionalLong;
 
 import static io.airlift.slice.SizeOf.instanceSize;
-import static io.airlift.slice.SizeOf.sizeOfByteArray;
-import static io.airlift.slice.SizeOf.sizeOfCharArray;
 import static java.util.Objects.requireNonNull;
 
-public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> implements ConnectorPageSource {
-    protected static final int READER_BUFFER_SIZE = 8192;
-    // Shallow reader sizes, BufferedReader's configured char array and the Java 25
-    // InputStreamReader's default 8 KiB byte array. Charset decoder state and other
-    // JDK/parser internals are not counted.
-    private static final long BUFFERED_READER_MEMORY = instanceSize(BufferedReader.class)
-            + instanceSize(InputStreamReader.class)
-            + sizeOfCharArray(READER_BUFFER_SIZE)
-            + sizeOfByteArray(READER_BUFFER_SIZE);
+public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle, T> implements ConnectorPageSource {
     private final long instanceSize = instanceSize(getClass());
 
     protected final Logger logger;
@@ -50,18 +38,12 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
     private final List<Type> projectedTypes;
     private final List<S3FileColumnHandle> outputColumns;
 
-    protected BufferedReader reader;
     private FileInput input;
     private long physicalBytes;
-    protected boolean finished;
-    protected boolean sessionClosed;
-    private boolean sourceOpened;
+    private boolean finished;
     protected long bytesWithinPrimary;
     protected long completedPositions;
     protected long readTimeNanos;
-    protected long skippedRows;
-    protected long pagesProduced;
-    protected long s3Requests;
 
     protected AbstractTextFilePageSource(
             ConnectorSession session,
@@ -70,11 +52,10 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
             FileSplit split,
             List<S3FileColumnHandle> projectedColumns) {
         this.logger = Logger.get(getClass());
-        this.sessionClient = requireNonNull(s3ClientBuilder, "s3ClientBuilder is null").forSession(session);
         this.handle = requireNonNull(handle, "handle is null");
         this.split = requireNonNull(split, "split is null");
         this.charset = handle.charset();
-        this.primaryLength = split.getPrimaryLength();
+        this.primaryLength = split.primaryLength();
         this.outputColumns = List.copyOf(requireNonNull(projectedColumns, "projectedColumns is null"));
         this.projectedColumns = outputColumns.stream()
                 .filter(column -> column.getOrdinalPosition() < handle.dataColumnNames().size())
@@ -83,6 +64,7 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
         this.projectedTypes = this.projectedColumns.stream()
                 .map(column -> allTypes.get(column.getOrdinalPosition()))
                 .toList();
+        this.sessionClient = requireNonNull(s3ClientBuilder, "s3ClientBuilder is null").forSession(session);
     }
 
     protected final List<Type> projectedTypes() {
@@ -93,102 +75,22 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
         bytesWithinPrimary += delta;
     }
 
-    protected final void recordS3Request() {
-        s3Requests++;
-    }
-
-    protected final BufferedReader reader() {
-        return reader;
-    }
-
     protected boolean finishWhenEmptySplit() {
         return primaryLength == 0 && split.object().compression() == Compression.NONE;
     }
 
-    protected void afterReaderOpened(BufferedReader reader) throws IOException {
-        // Default no-op.
-    }
+    protected abstract void openSource() throws IOException;
 
-    protected void openSource() throws IOException {
-        reader = openReader();
-        afterReaderOpened(reader);
-    }
+    protected abstract RecordReadResult<T> readNextRecord() throws IOException;
 
-    protected abstract RecordReadResult<?> readNextRecord() throws IOException;
+    protected abstract void appendRecord(PageBuilder pageBuilder, T payload);
 
-    protected abstract void appendRecord(PageBuilder pageBuilder, Object payload);
-
-    protected final BufferedReader openReader() throws IOException {
-        return new BufferedReader(new InputStreamReader(openStream(), charset), READER_BUFFER_SIZE);
-    }
+    protected abstract void closeReader() throws IOException;
 
     protected final InputStream openStream() throws IOException {
-        recordS3Request();
-        input = FileInput.open(sessionClient, split.object(), split.getStartOffset(),
-                split.isWholeFile() ? null : split.getRangeEndExclusive());
+        input = FileInput.open(sessionClient, split.object(), split.startOffset(),
+                split.isWholeFile() ? null : split.rangeEndExclusive());
         return input;
-    }
-
-    private void ensureReader() throws IOException {
-        if (sourceOpened || finished) {
-            return;
-        }
-        if (finishWhenEmptySplit()) {
-            markFinished();
-            return;
-        }
-        openSource();
-        sourceOpened = true;
-    }
-
-    protected void closeReader() {
-        if (reader == null) {
-            return;
-        }
-        try {
-            reader.close();
-        }
-        catch (IOException e) {
-            logger.warn(e, "Failed to close reader for %s", split.object().path());
-        }
-        finally {
-            reader = null;
-            sourceOpened = false;
-        }
-    }
-
-    protected void closeSession() {
-        if (sessionClosed) {
-            return;
-        }
-        sessionClosed = true;
-        try {
-            if (input != null) {
-                physicalBytes = input.physicalBytes();
-                try {
-                    input.close();
-                }
-                finally {
-                    input = null;
-                }
-            }
-        }
-        catch (IOException e) {
-            logger.warn(e, "Failed to close input for %s", split.object().path());
-        }
-        finally {
-            sessionClient.close();
-        }
-    }
-
-    protected void markFinished() {
-        finished = true;
-        closeSession();
-    }
-
-    protected void completeProcessing() {
-        closeReader();
-        markFinished();
     }
 
     @Override
@@ -216,43 +118,39 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
         long startNanos = System.nanoTime();
         try {
             if (finished) {
-                closeSession();
                 return null;
             }
-            ensureReader();
-            if (finished) {
-                closeSession();
+            if (finishWhenEmptySplit()) {
+                close();
                 return null;
+            }
+            if (input == null) {
+                openSource();
             }
 
             PageBuilder pageBuilder = new PageBuilder(handle.scan().page().batchSize(), projectedTypes);
             long pageStartBytes = input.decodedBytes();
             recordLoop:
             while (!pageBuilder.isFull()) {
-                if (!split.isLast() && bytesWithinPrimary >= primaryLength) {
-                    completeProcessing();
+                if (!split.last() && bytesWithinPrimary >= primaryLength) {
+                    close();
                     break;
                 }
                 switch (readNextRecord()) {
-                    case RecordReadResult.End<?> ignored -> {
-                        completeProcessing();
+                    case RecordReadResult.End<T> ignored -> {
+                        close();
                         break recordLoop;
                     }
-                    case RecordReadResult.Skip<?> skipped -> {
-                        if (skipped.bytesConsumed() > 0) {
-                            addBytesWithinPrimary(skipped.bytesConsumed());
-                        }
-                        skippedRows++;
+                    case RecordReadResult.Skip<T> skipped -> {
+                        addBytesWithinPrimary(skipped.bytesConsumed());
                         continue;
                     }
-                    case RecordReadResult.Produce<?> produced -> {
-                        if (produced.bytesConsumed() > 0) {
-                            addBytesWithinPrimary(produced.bytesConsumed());
-                        }
+                    case RecordReadResult.Produce<T> produced -> {
+                        addBytesWithinPrimary(produced.bytesConsumed());
                         appendRecord(pageBuilder, produced.payload());
                         completedPositions++;
-                        if (produced.finishesSplit()) {
-                            completeProcessing();
+                        if (!split.last() && bytesWithinPrimary > primaryLength) {
+                            close();
                             break recordLoop;
                         }
                     }
@@ -263,7 +161,7 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
             }
 
             if (pageBuilder.isEmpty()) {
-                markFinished();
+                close();
                 return null;
             }
             Page page = pageBuilder.build();
@@ -279,7 +177,6 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
                 }
                 page = new Page(page.getPositionCount(), blocks);
             }
-            pagesProduced++;
             return SourcePage.create(page);
         }
         catch (IOException e) {
@@ -300,24 +197,45 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
     // and transient records/page builders are excluded; emitted pages belong to Trino.
     @Override
     public long getMemoryUsage() {
-        return instanceSize + (reader == null ? 0 : BUFFERED_READER_MEMORY)
-                + (input == null ? 0 : input.getRetainedSizeInBytes());
+        return instanceSize + (input == null ? 0 : input.getRetainedSizeInBytes());
     }
 
     @Override
-    public void close() {
+    public final void close() {
         if (finished) {
-            closeSession();
             return;
         }
         finished = true;
-        closeReader();
-        closeSession();
+        try {
+            closeReader();
+        }
+        catch (IOException | RuntimeException e) {
+            logger.warn(e, "Failed to close reader for %s", split.object().path());
+        }
+        finally {
+            try {
+                if (input != null) {
+                    physicalBytes = input.physicalBytes();
+                    try {
+                        input.close();
+                    }
+                    finally {
+                        input = null;
+                    }
+                }
+            }
+            catch (IOException e) {
+                logger.warn(e, "Failed to close input for %s", split.object().path());
+            }
+            finally {
+                sessionClient.close();
+            }
+        }
     }
 
     public sealed interface RecordReadResult<T>
             permits RecordReadResult.End, RecordReadResult.Skip, RecordReadResult.Produce {
-        static RecordReadResult<?> finished() {
+        static <T> RecordReadResult<T> finished() {
             return new End<>();
         }
 
@@ -325,15 +243,15 @@ public abstract class AbstractTextFilePageSource<H extends BaseTextFileHandle> i
             return new Skip<>(bytesConsumed);
         }
 
-        static <T> RecordReadResult<T> produce(T payload, long bytesConsumed, boolean finishesSplit) {
-            return new Produce<>(requireNonNull(payload, "payload is null"), bytesConsumed, finishesSplit);
+        static <T> RecordReadResult<T> produce(T payload, long bytesConsumed) {
+            return new Produce<>(requireNonNull(payload, "payload is null"), bytesConsumed);
         }
 
         record End<T>() implements RecordReadResult<T> {}
 
         record Skip<T>(long bytesConsumed) implements RecordReadResult<T> {}
 
-        record Produce<T>(T payload, long bytesConsumed, boolean finishesSplit) implements RecordReadResult<T> {
+        record Produce<T>(T payload, long bytesConsumed) implements RecordReadResult<T> {
             public Produce {
                 payload = requireNonNull(payload, "payload is null");
             }
